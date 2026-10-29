@@ -153,8 +153,9 @@ ISO9660 files (2048B user data at sector offset 16); findings:
   bytes = sec6's size = **24 song slots × 4,228 bytes**. `M_DATA01–73.BIN`
   (4,228 B each) are the preset songs: DAIOH-g0's sec6 is literally
   `M_DATA01..14` concatenated; Ramsie's sec6 matches 12 other presets
-  slot-for-slot. Song format: small header (`0c 0f 05 xx …`) then 8-byte
-  step rows, `0x80` = rest.
+  slot-for-slot. Song format: see "Song playback" below (a 4-byte header,
+  then 32 measures of 4 control bytes and 4 parts of a voice column and a
+  pitch column over 16 steps).
 - **`MDLDT_01–56.CMP` = the ポリ吉 PART LIBRARY** (the 3D-to-sprite editor,
   overlay `POLYKITI`, whose literal pool names all 56 plus `POLYBTN` /
   `POLY_LF` / `POLY_RI` / `POLYHELP`) — corrected 2026-09-02: not "preset
@@ -217,7 +218,7 @@ assembly, 音まろ music, ポリ吉 3D):
 | sec0–3  | **CG art pages 1–4**: each a headerless **128×512** 8bpp bitmap stored as 256 consecutive 16×16-px cells of 256 B (cell t at t·256; in-cell offset = y·16+x; **8 cells per row**). Pixel byte = `(palette<<4) \| colorIndex` — the high nibble *is* the palette selector, so no external sprite-attribute table exists. Byte 0x00 = background; empty cells are zero-filled. | confirmed |
 | sec4    | **Palette bank**: 16 palettes × 16 colors, u16be RGB555 (R bits 0–4, G 5–9, B 10–14, bit15 = CRAM RGB-mode flag). Rows 0–11 (0x000–0x17F) = 12 preset ramps, byte-identical across all games, bit15 clear; rows 12–15 (0x180–0x1FF) = the 4 user palettes (= the editor's "192 system + 64 user colors"), stored `0x8000\|color`, 0x0000 empty. u16[0] varies per game (meaning open). | confirmed |
 | sec5    | **Game assembly data** (組み子さん) — see the sec5 region map below. Regions are proven from engine-code multiplications and tile exactly; the background tilemap, placement grid, enemy records, boss record and sprite composition banks are decoded, the scroll curve's field meaning and parts of the settings block remain open. | mostly decoded |
-| sec6    | **BGM**: 24 song slots × 4,228 B (disc `M_DATA*` presets match verbatim). Song = 4-byte header + **32 measures × 132 B**, each measure = 4 control bytes + **4 parts × 32 steps**, part-major. Step: 0x00 empty, 0x01–0x3B note (~5 octaves), 0x80–0x88 sustain. | confirmed |
+| sec6    | **BGM**: 24 song slots × 4,228 B (disc `M_DATA*` presets match verbatim). Song = 4-byte header + **32 measures × 132 B**, each measure = 4 control bytes + **4 parts × (16 voice bytes + 16 pitch bytes)**, part-major: the pitch column alone keys a note on (1–59), the voice column names its instrument and bit 7 is a tie (only `0x80` occurs). See "Song playback". | confirmed |
 | sec7    | **3D models** (ポリ吉): u32be magic `0x12345678` (absent = never opened the 3D editor; section then all-zero or residual RAM — ELFI's "custom" sec7 is just uninitialized garbage), then 16 model slots × 328 B (u16be part count 0–9, u16be model color, 9 part records × 36 B), then 576 residual bytes. Part record, offsets pinned against SGM_DAIO's 37 parts (2026-08-28): `+0x00` u16 **shape word** = `family:bits 12–15` (0–5, the editor's six part pages) \| `colourSet:bits 8–11` (0–2) \| `meshIndex:bits 0–7` (the masks POLYKITI's resolver applies; bits 7, 10, 11, 15 never set across 2,814 corpus parts, bits 8–9 never 3), `+0x02` of the SLOT (not the part) = the RGB555 whole-model tint (traced; see below), `+0x02` u16 pad (0), `+0x04` s32be×3 X/Y/Z position 16.16, `+0x10` u16be×3 rotations (65536 = 360°), `+0x16` u16 pad (0), `+0x18` s32be×3 scales, signed 16.16, negative = mirror. POLYKITI.bin literal pools confirm the slot stride (HWRAM working base `0x06097E90`, stride 0x148, end 0x1484). The meshes are the disc's `MDLDT_01–56.CMP` part library (above), family slices of 32/72/36/36/36/12 meshes = files 01–08 / 09–26 / 27–35 / 36–44 / 45–53 / 54–56 (traced from the overlay's resolver); parts compose as `T·Rx·Ry·Rz·S` in SGL (traced); see "sec7 shape word and the ポリ吉 part library" below. Decoder: `lib/decode/decode-model.js`; encoder: `lib/write/encode-model.js` (`decodeModels(encodeModels(x)) === x` over all 84 corpus saves that carry models; 22 re-encode byte-identically and the other 62 differ only in bytes the reader ignores — stale part records past the part count, and the 576-byte tail); library index and renderer maths: `lib/model/mesh-library.js`, `lib/model/model-mesh.js`. | confirmed |
 
 ### sec5 region map
@@ -990,8 +991,11 @@ The runtime plays exactly this: 16-step measures, one voice per part taking
 its pitch from the pitch column and holding it through ties,
 `stepSeconds = divisor/240`, loop points (pass 0 from the top, later passes
 rewind to loop-start), and the echo send approximated as a feedback-delay
-tap scaled by `header[2]/7`. The two missing halves are now EXTRACTED
-(2026-08-28) though not yet played: the kernel ROM accompaniment pattern
+tap scaled by `header[2]/7`. The two halves extracted on 2026-08-28 are
+played too: the auto-accompaniment (`buildAccompParts`, and the engine's
+`src/audio/song-streams.js`, held equal to it) and, since 2026-10-28, the
+real samples (`assets/tone-bank/`, published with the game). The kernel ROM
+accompaniment pattern
 table (0KERNEL `+0x1B490`, 1260 rows × 16 steps; row = `ctrl0*140 +
 (ctrl1*5 + ((ctrl2&0x7F)>>1))*7 + channel` — the `>>1` binds to ctrl2 only)
 ships in `data/bgm-accompaniment.json`, and the 116-instrument tone bank map

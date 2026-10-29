@@ -7663,36 +7663,33 @@
   // instrument map also carries each layer's byte offset INTO SNDPAC.BIN and
   // its loop points, which is enough to play the samples themselves.
   //
-  // SNDPAC.BIN is disc content: it is not in this repo and is never published.
-  // A Dezaemon 2 disc image dropped into the gitignored dev-fixtures/ is cut
-  // up by packages/shmup-engine/src/audio/tone-bank.js and served, DEV ONLY,
-  // by the vite.config.ts route below. In production both requests 404 and
-  // every note falls back to the periodic-wave voice, exactly as before.
+  // The cut bank is PUBLISHED with the game (decision 2026-10-28): the samples
+  // SNDPAC.BIN holds, cut by packages/shmup-engine/src/audio/tone-bank.js and
+  // written by `deno task deza:tonebank --web` into assets/tone-bank/. The raw
+  // disc file itself stays out of the repo. A build that leaves the bank out
+  // (Steam without the members' Dezaemon 2 disc pack, an export of a level
+  // with no soundtrack) gets two 404s and every note falls back to the
+  // periodic-wave voice, exactly as before.
   //
-  //   /dev/tone-bank.json  slices (offset, length, loop point) + which layer
-  //                        of which instrument plays which slice
-  //   /dev/tone-bank.pcm   the slices themselves, Int16 little-endian,
-  //                        loop-baked so reverse and ping-pong are already
-  //                        ordinary forward loops
+  //   assets/tone-bank/tone-bank.json  slices (offset, length, loop point) +
+  //                                    which layer of which instrument plays
+  //                                    which slice
+  //   assets/tone-bank/tone-bank.pcm   the slices themselves, Int16 little-
+  //                                    endian, loop-baked so reverse and
+  //                                    ping-pong are ordinary forward loops
   var DEZA_TONE_BANK = null;
   var dezaToneBankPending = null;
   function loadDezaToneBank() {
     if (DEZA_TONE_BANK || dezaToneBankPending) return dezaToneBankPending;
     if (typeof fetch !== "function") return null;
-    // The bank only exists behind the vite dev route; asking for it on the
-    // deployed site is two guaranteed 404s in everyone's console.
-    var host = typeof location === "object" && location ? location.hostname : "";
-    var isDev = host === "localhost" || host === "127.0.0.1" || host === "[::1]" ||
-      /(^|\.)localhost$/.test(host) || /\.ngrok(-free)?\.(app|io|dev)$/.test(host);
-    if (!isDev) return null;
     var grab = function(url, as) {
       return fetch(url).then(function(r) {
         return r.ok ? r[as]() : null;
       });
     };
     dezaToneBankPending = Promise.all([
-      grab("/dev/tone-bank.json", "json"),
-      grab("/dev/tone-bank.pcm", "arrayBuffer")
+      grab(ASSET_BASE + "assets/tone-bank/tone-bank.json", "json"),
+      grab(ASSET_BASE + "assets/tone-bank/tone-bank.pcm", "arrayBuffer")
     ]).then(function(both) {
       if (!both[0] || !both[1]) return null;
       var bank = both[0];
@@ -7705,7 +7702,7 @@
     return dezaToneBankPending;
   }
   // One slice as an AudioBuffer, cached across every instrument using it. The
-  // buffer keeps the bank's own 44.1kHz rate whatever the context runs at;
+  // buffer keeps the bank's own 14,848 Hz rate whatever the context runs at;
   // Web Audio folds that ratio into playbackRate for us.
   function dezaSampleBuffer(st, sliceIndex) {
     var cache = st.buffers || (st.buffers = {});
@@ -7827,6 +7824,12 @@
   function startDezaemonBgm(scene, which) {
     var bgm = (scene.recipe || gameState._phaserRecipe || {}).dezaemonBgm;
     if (!bgm) return false;
+    // Fire-and-forget, and early: any level with a soundtrack asks at its
+    // title (which always tries its title tape), so the samples are usually in
+    // before the first stage. Notes scheduled before the bank lands play as
+    // periodic waves, the ones after it play the real samples; a missing bank
+    // costs two 404s and nothing else.
+    loadDezaToneBank();
     var ctx = audioCtx(scene);
     if (!ctx) return false;
     var idx;
@@ -7861,10 +7864,6 @@
       idx = pair ? which === "boss" ? pair[1] : pair[0] : null;
     }
     if (idx == null || !bgm.songs || bgm.songs[idx] == null) return false;
-    // Fire-and-forget: notes scheduled before the bank lands play as periodic
-    // waves, and the ones after it play the real samples. No load gate, so a
-    // missing bank costs one 404 and nothing else.
-    loadDezaToneBank();
     stopDezaemonBgm(scene);
     var st = scene._dezaBgm = {
       ctx,
@@ -7938,7 +7937,13 @@
             }
           }
           if (allDone) {
+            // A loop with no note in it is silence, not a reason to spin: a
+            // song whose notes all sit before its loop start (a play-once
+            // jingle — two of the disc's presets and hundreds of cart slots)
+            // would otherwise wrap here forever and freeze the page.
+            if (st.silentLoop) return;
             st.loop += 1;
+            var looped = false;
             for (var r = 0; r < n; r++) {
               var evs = streams[r];
               var at = evs.length;
@@ -7949,6 +7954,11 @@
                 }
               }
               st.cursor[r] = at;
+              if (at < evs.length && evs[at].step < song.loopEndStep) looped = true;
+            }
+            if (!looped) {
+              st.silentLoop = true;
+              return;
             }
             continue;
           }
@@ -8683,7 +8693,11 @@
       }
       this.playTitleVoice = false;
       this.startIntroAnimation();
-      if (this.dezaTitle && !gameState.lowModeFlg) {
+      // The soundtrack's TITLE track: a cart's drawn title's, and any level's
+      // whose set list (the editor's MUSIC) names a title tape that sounds.
+      // startDezaemonBgm declines a level without one, and this title has no
+      // stock music to clash with.
+      if (!gameState.lowModeFlg) {
         startDezaemonBgm(this, "title");
       }
       this.enterKey = null;
@@ -16899,6 +16913,12 @@
       if (this.stageCleared) return;
       this.stageCleared = true;
       stopDezaemonBgm(this);
+      // The cart's STAGE CLEAR track over the clear card, when the set list
+      // names one that sounds. A soundtrack played as one piece (`sequence`)
+      // keeps its pause here instead, for the next stage to resume.
+      if (this.recipe && this.recipe.dezaemonBgm && !dezaBgmSequence(this.recipe.dezaemonBgm) && !gameState.lowModeFlg) {
+        startDezaemonBgm(this, "clear");
+      }
       this.gameStarted = false;
       gameState.score = this.scoreCount;
       // Both ships' state has to ride to the next stage, or player 2 starts it
@@ -18323,6 +18343,9 @@
       // hits, since GO TO TITLE is then the card's only way out.
       this._gotoTitleReady = false;
       this._gotoTitleDone = false;
+      // A GAME OVER track (selectNo) plays on this scene's own Web Audio
+      // player; it stops with the scene, wherever the scene goes next.
+      this.events.once("shutdown", () => stopDezaemonBgm(this));
       this._gamepadTitlePressed = false;
       // Same reason, for the handles update() dereferences every frame: their
       // objects went down with the last display list.
@@ -18483,7 +18506,12 @@
         this.countdownTimer.remove();
       }
       this.playSound("voice_gameover", 0.7);
-      this.playSound("bgm_gameover", 0.4);
+      // The cart's GAME OVER track when the set list names one that sounds;
+      // the stock jingle otherwise.
+      var deza = gameState._phaserRecipe && gameState._phaserRecipe.dezaemonBgm;
+      if (!(deza && !gameState.lowModeFlg && startDezaemonBgm(this, "gameover"))) {
+        this.playSound("bgm_gameover", 0.4);
+      }
       try {
         this.cntText.setFrame("countdown0.gif");
         this.cntText.setAlpha(0.2);

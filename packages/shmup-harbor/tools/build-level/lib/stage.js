@@ -76,9 +76,9 @@ function patchBundleForOffline(bundleSrc) {
 // questions the runtime's isImportedLevel() asks. A hand-kept mirror of
 // packages/shmup-harbor/lib/imported-level.ts: that module is Deno TypeScript
 // and this tool is plain Node with no build step, so the rule is written twice
-// rather than shared. tests/imported_level_test.ts pins the two together.
+// rather than shared. tests/imported_level_test.ts pins the two together. A
+// soundtrack (dezaemonBgm) is not provenance — web levels carry one too.
 const DEZAEMON_KEYS = [
-  "dezaemonBgm",
   "dezaemonTitle",
   "dezaemonTitleScreen",
   "dezaemonModels",
@@ -201,9 +201,14 @@ function stageWww(opts) {
   // it for keys the LEVEL's customAudioURLs names. Copied in, every export
   // carried its 41 MB track whether it played it or not; a level's own
   // custom BGM is lib/download-bgm.js's to stage.
+  //
+  // And tone-bank/: the Saturn samples a Dezaemon soundtrack plays on (1.3 MB),
+  // which a level without `dezaemonBgm` never asks for.
   const stockCustomBgm = path.join(gameDir, "assets", "custom-bgm");
+  const toneBank = path.join(gameDir, "assets", "tone-bank");
+  const playsToneBank = !!(levelData && levelData.dezaemonBgm);
   copyDir(path.join(gameDir, "assets"), path.join(wwwRoot, "assets"), (s) =>
-    s === stockCustomBgm);
+    s === stockCustomBgm || (s === toneBank && !playsToneBank));
 
   // Phaser runtime + the (patched) game bundle.
   copyFile(

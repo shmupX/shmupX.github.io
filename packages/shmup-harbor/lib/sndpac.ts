@@ -1,22 +1,23 @@
 // Finding SNDPAC.BIN, and cutting it into something a browser can play.
 //
 // SNDPAC.BIN is the Dezaemon 2 disc's sample bank: 505,774 bytes holding every
-// timbre the Saturn's SCSP played. It is disc content, so it is not in this
-// repo and never will be. Tables DERIVED from the disc's binaries are a
-// different matter and are committed — the instrument map below, and the
-// ポリ吉 part-library JSON the model viewer loads (README-Technical.md "PlayStation 2").
-// What IS here is the instrument map that indexes it
-// (packages/shmup-engine/data/bgm-instruments.json), so anyone holding a disc
-// can have the real samples and everyone else falls back to the synthesised
-// voices the runtime has always used.
-//
-// The bank is looked for in dev-fixtures/, which is gitignored: drop a
+// timbre the Saturn's SCSP played. The raw file is disc content and stays out
+// of the repo; it is looked for in dev-fixtures/, which is gitignored — drop a
 // Dezaemon 2 disc image in there and the ISO 9660 reader pulls the file out
-// (lib/disc-file.ts, the scan shared with the part library).
+// (lib/disc-file.ts, the scan shared with the part library). The instrument
+// map that indexes it is committed (packages/shmup-engine/data/bgm-instruments.json).
 //
-// lib/ps2/tone-bank-pack.ts renders this for the console (audsrv ADPCM);
-// buildWebToneBank() below renders it for the browser (raw PCM plus an index),
-// so the cutting and loop-baking happen once, in the engine, for both.
+// The CUT bank is published (decision 2026-10-28): buildWebToneBank() below
+// renders it for the browser (raw PCM plus an index), and
+// `deno task deza:tonebank --web` writes that into
+// static/games/2028-ai/assets/tone-bank/, committed and served with the game,
+// which the runtime and the editor's MUSIC play everywhere. On Steam it ships
+// only in the members' Dezaemon 2 disc pack (lib/member-content.ts), like the
+// ポリ吉 part library. Without it, the runtime falls back to the analysed
+// periodic-wave voices.
+//
+// lib/ps2/tone-bank-pack.ts renders the bank for the console (audsrv ADPCM);
+// the cutting and loop-baking happen once, in the engine, for both.
 
 import { join } from "@std/path";
 import { findDiscFile } from "./disc-file.ts";
@@ -144,4 +145,34 @@ export interface WebToneBank {
       pan: number;
     }[];
   }[];
+}
+
+/** Where the published web bank lives, relative to the repo root. */
+export const WEB_TONE_BANK_DIR = "static/games/2028-ai/assets/tone-bank";
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>),
+  );
+  return [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The two published files, exactly as written: tone-bank.json (the index with
+ * a header saying what it is and what it was cut from) and tone-bank.pcm.
+ * Deterministic — the same SNDPAC.BIN gives the same bytes.
+ */
+export async function webToneBankFiles(
+  sndpac: Uint8Array,
+): Promise<{ index: WebToneBank; json: string; pcm: Uint8Array }> {
+  const { index, pcm } = buildWebToneBank(sndpac);
+  const header = {
+    format: "deza-web-tone-bank",
+    version: 1,
+    pcmBytes: pcm.length,
+    pcmSha256: await sha256(pcm),
+    sndpacSha256: await sha256(sndpac),
+  };
+  const json = JSON.stringify({ ...header, ...index }) + "\n";
+  return { index, json, pcm };
 }

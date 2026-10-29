@@ -252,6 +252,13 @@ export function buildPayload(
     payload[k] = v;
     kept.push(k);
   }
+  // Music composed in the editor's MUSIC mode (bgm-record.js stamps
+  // `edited`) is the author's, not the cart's: a reimport keeps it.
+  const music = existing.dezaemonBgm as { edited?: unknown } | undefined;
+  if (music && typeof music === "object" && music.edited) {
+    payload.dezaemonBgm = music as Json;
+    kept.push("dezaemonBgm");
+  }
   // A story the author wrote in the editor comes with the author's own
   // no-story setting; a cart alone has no story and says so.
   if (existing.storyData && typeof existing.noStory === "boolean") {

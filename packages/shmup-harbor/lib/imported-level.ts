@@ -15,9 +15,13 @@
 // opens on somebody else's story, in somebody else's voice, under somebody
 // else's title. The flag has to survive every hop, and this is what makes it.
 
-/** The whole-game records only a Dezaemon import carries. */
+/**
+ * The whole-game records only a Dezaemon import carries. Not `dezaemonBgm`:
+ * as in the runtime's isImportedLevel(), a soundtrack alone is not
+ * provenance — `deno task bgm:tone` and the editor's MUSIC mode write one into
+ * web levels, which keep their story.
+ */
 const DEZAEMON_KEYS = [
-  "dezaemonBgm",
   "dezaemonTitle",
   "dezaemonTitleScreen",
   "dezaemonModels",

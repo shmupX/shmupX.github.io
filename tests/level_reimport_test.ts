@@ -139,6 +139,30 @@ Deno.test("the cart decides everything a cart knows", () => {
   assert(report.fromCart.includes("stages"));
 });
 
+Deno.test("music composed in the editor's MUSIC mode survives a reimport; the cart's own does not stick", () => {
+  const composed = { songs: { 0: "AAAA" }, table: new Array(24).fill(0), edited: 1793200000000 };
+  const existing = augustRecord();
+  existing.dezaemonBgm = composed;
+  const kept = buildPayload({
+    existing,
+    cart: cartRecord(),
+    key: "Ramsie",
+    index: INDEX_ROW,
+    deriveGameId: derive,
+  });
+  assertEquals(kept.payload.dezaemonBgm, composed);
+  assert(kept.report.kept.includes("dezaemonBgm"));
+  // An import nobody composed into takes the cart's soundtrack, as before.
+  const plain = buildPayload({
+    existing: augustRecord(),
+    cart: cartRecord(),
+    key: "Ramsie",
+    index: INDEX_ROW,
+    deriveGameId: derive,
+  });
+  assertEquals(plain.payload.dezaemonBgm, cartRecord().dezaemonBgm);
+});
+
 Deno.test("what only the editor knows is kept, the leaderboard id first", () => {
   const existing = augustRecord();
   existing.cabinet = { frame: "arcade" };

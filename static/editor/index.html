@@ -38,6 +38,10 @@
     <!-- PUBLISH panel (window.PublishPanel): one saved game to the stores,
          every build on a GitHub runner (static/editor/publish-panel.js). -->
     <script src="/editor/publish-panel.js"></script>
+    <!-- MUSIC (music-maker.js): 音まろ, the cart's own music editor, in
+         place of the grid — the level's dezaemonBgm as an icon staff. -->
+    <script src="/editor/music-maker-icons.js"></script>
+    <script src="/editor/music-maker.js"></script>
     <script type="module">
         // Dezaemon 2 (Saturn) save importer. The whole .sav/game.json pipeline
         // lives in the shmup-engine JSR module (packages/shmup-engine), bundled
@@ -1377,6 +1381,8 @@
             <button id="play-badge" class="badge" title="Play in Phaser" onclick="playCurrentStage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>
             <!-- Boss Lab toggle: every boss live + attack-pattern assignment, in place of the grid -->
             <button id="boss-lab-btn" class="badge" title="Boss lab — view every boss live and assign attack patterns" onclick="toggleBossLab()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 2 4h12l2-4 2 4v8h-3v3h-3v-3H8v3H5v-3H2V6z"/><path d="m8 9 2.5 1.5M16 9l-2.5 1.5"/><path d="m8 12.5 2 1.5 2-1.5 2 1.5 2-1.5"/></svg></button>
+            <!-- Music (Lucide music): 音まろ — the soundtrack's tapes, in place of the grid -->
+            <button id="music-btn" class="badge" title="Music — compose the soundtrack (音まろ)" onclick="toggleMusicMaker()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
             <!-- Model Viewer (Lucide box): a Dezaemon save's ポリ吉 3D models -->
             <a id="model-viewer-link" href="model-viewer.html" class="badge" title="3D model viewer (Dezaemon sec7 compositions)" onclick="openModelViewer(); return false;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg></a>
             <!-- Tilemap Editor (Lucide map): this stage's scenery, vertical or horizontal -->
@@ -1413,6 +1419,9 @@
         <!-- PIXEL EDITOR (pixel-editor.js) — the frames a character sheet
              sent, in place of the grid, or of the lab when X PIXELS sent them -->
         <div id="pixel-editor-host"></div>
+
+        <!-- MUSIC (music-maker.js) — the soundtrack's 24 tapes, in place of the grid -->
+        <div id="music-maker-host"></div>
 
         <!-- NES CABINET STRIPE (nintendo theme only) -->
         <div id="nes-stripe"></div>
@@ -1811,6 +1820,7 @@
         <div class="adv-grid">
             <button class="menu-row" onclick="showCharacterEditor()"><span class="mono-badge sm">CH</span>CHARACTER</button>
             <button class="menu-row" id="menu-boss-lab" onclick="toggleBossLab()" title="Boss lab — view every boss live and assign attack patterns"><span class="mono-badge sm">BL</span><span id="menu-boss-lab-label">BOSS LAB</span></button>
+            <button class="menu-row" id="menu-music" onclick="toggleMusicMaker()" title="Music — compose the soundtrack the way 音まろ does: four parts, the band, 24 tapes"><span class="mono-badge sm">MU</span><span id="menu-music-label">MUSIC</span></button>
             <button class="menu-row" onclick="showStoryEditor()"><span class="mono-badge sm">ST</span>STORY</button>
             <button class="menu-row" onclick="showAtlasManager()"><span class="mono-badge sm">AT</span>ATLAS</button>
             <button class="menu-row" onclick="showTitleEditor()"><span class="mono-badge sm">TI</span>TITLE</button>
@@ -4048,6 +4058,7 @@
             const gameJsonFile = findFile('game.json') || findFile('assets/game.json');
             if (!gameJsonFile) { alert('game.json not found in selected folder'); return; }
             gameData = JSON.parse(await gameJsonFile.text());
+            musicGameReplaced();
             // A folder's game.json may carry the gameId of a cloud game it
             // was saved beside, but not the key that id is for: drop the
             // last cloud game's key so PLAY and SAVE never pair it with this
@@ -4112,6 +4123,7 @@
                 catch { alert("game.json not found"); return; }
             }
             gameData = JSON.parse(jsonText);
+            musicGameReplaced();
             cloudGameKey = '';   // its gameId, if any, is not the last cloud game's (loadGameFilesFromFileList)
             normalizeLegacyNames(gameData);
             ssRestoreFromGameData();
@@ -5089,6 +5101,7 @@
             flash('PATTERNS APPLIED · ' + n + ' CHANGED · VIEWER SYNCED');
         }
         function openBossLab(key) {
+            if (musicOpen) closeMusicMaker();
             if (!bossLabOpen) {
                 if (!ensureBossLab()) { alert('boss-lab.js did not load — reload the editor'); return; }
                 bossLabOpen = true;
@@ -5167,6 +5180,7 @@
         // job = { subject: { name, code, kind }, frames: [{ name, anim }], active, origin }
         function openPixelEditor(job) {
             if (!ensurePixelEditor()) { alert('pixel-editor.js did not load — reload the editor'); return; }
+            if (musicOpen) closeMusicMaker();
             if (!pixelOpen) {
                 pixelOverLab = bossLabOpen;
                 pixelOpen = true;
@@ -5217,6 +5231,12 @@
         function updateModeStatus() {
             const long = document.getElementById('lab-status-long'), short = document.getElementById('lab-status-short');
             if (!long || !short) return;
+            if (musicOpen && musicMaker) {
+                const st = musicMaker.status();
+                long.textContent = 'MUSIC · ' + st.label + (st.bpm ? ' · ' + st.bpm + ' BPM' : '') + ' · EDITS WRITE INTO THE SOUNDTRACK';
+                short.textContent = 'MUSIC · ' + st.label;
+                return;
+            }
             if (pixelOpen && pixelJob) {
                 const n = pixelJob.frames.length, inbound = n + (n === 1 ? ' FRAME' : ' FRAMES') + ' INBOUND';
                 long.textContent = 'PIXEL EDITOR · ' + String(pixelJob.subject.name || '').toUpperCase() + ' · ' + inbound
@@ -5267,6 +5287,12 @@
             if (row) row.classList.toggle('hi', bossLabOpen);
             const lbl = document.getElementById('menu-boss-lab-label');
             if (lbl) lbl.textContent = bossLabOpen ? 'BOSS LAB · ON' : 'BOSS LAB';
+            const mb = document.getElementById('music-btn');
+            if (mb) mb.classList.toggle('active', musicOpen);
+            const mrow = document.getElementById('menu-music');
+            if (mrow) mrow.classList.toggle('hi', musicOpen);
+            const mlbl = document.getElementById('menu-music-label');
+            if (mlbl) mlbl.textContent = musicOpen ? 'MUSIC · ON' : 'MUSIC';
             if (bossLab) bossLab.updateFoot();
             // The drawer's SAVE row says what a save will do from here.
             const forked = lineageForked();
@@ -5306,6 +5332,11 @@
         // ================== OSD CHROME ==================
         function updateStageBanner() {
             updateModeStatus();
+            if (musicOpen) {
+                document.getElementById('stage-banner-title').textContent = 'MUSIC';
+                document.getElementById('stage-banner-waves').textContent = '24 TAPES · ' + GAME_ID.toUpperCase();
+                return;
+            }
             if (pixelOpen && pixelJob) {
                 const n = pixelJob.frames.length;
                 document.getElementById('stage-banner-title').textContent = 'PIXEL EDITOR';
@@ -5335,6 +5366,108 @@
         updateOsdClock();
         setInterval(updateOsdClock, 1000);
 
+        // ================== MUSIC ==================
+        // music-maker.js, mounted in place of the grid: the level's soundtrack
+        // (gameData.dezaemonBgm) as the cart's 24 tapes, edited the way 音まろ
+        // edits them — every byte it writes is one the console writes, every
+        // other byte goes back as it came (packages/shmup-engine/src/audio/).
+        // Edits are written straight back into gameData, so SAVE, PLAY and
+        // EXPORT .SAV carry them; flushMusic() lands the last one first.
+        // `var`: updateStageBanner runs from init code above.
+        var musicMaker = null;
+        var musicOpen = false;
+        var musicGame = null;        // the gameData MUSIC was opened on
+        function musicStages() {
+            const keys = Object.keys(gameData || {}).filter((k) => /^stage\d+$/.test(k))
+                .sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
+            return keys.map((k) => ({ id: Number(k.slice(5)), label: 'STAGE ' + String(Number(k.slice(5)) + 1).padStart(2, '0') }));
+        }
+        function ensureMusicMaker() {
+            if (musicMaker || !window.MusicMaker) return musicMaker;
+            musicMaker = MusicMaker.mount(document.getElementById('music-maker-host'), {
+                engine: () => window.Dezaemon || null,
+                getBgm: () => (gameData && gameData.dezaemonBgm) || null,
+                setBgm: applyMusicBgm,
+                stages: musicStages,
+                flash,
+                onBack: closeMusicMaker,
+                onSave: () => quickSave(),
+                canSave: hasSaveTarget,
+                // SET LIST ▶ PLAY STAGE: that stage, the way its pill opens it, then PLAY.
+                onPlayStage: (s) => {
+                    closeMusicMaker();
+                    const key = 'stage' + s;
+                    if (gameData && gameData[key] && currentStageKey !== key) {
+                        commitCurrentGrid(); currentStageKey = key; populateStagePills(); loadCurrentStage();
+                    }
+                    playCurrentStage();
+                },
+                theme: document.body.classList.contains('theme-nintendo') ? 'nintendo' : 'xbox',
+                atlas: labAtlas,
+                playerFrames: labPlayerFrames,
+                onStatus: updateModeStatus,
+                // The drawer or any of the editor's sheets open over MUSIC: the keys are theirs.
+                keysBlocked: () => !!document.querySelector('#menu-panel:not(.hidden), .picker-overlay:not(.hidden)'),
+            });
+            return musicMaker;
+        }
+        // A write from MUSIC lands in the game it was opened on; a write that
+        // arrives after another game was loaded is dropped.
+        function applyMusicBgm(rec) {
+            if (!gameData || gameData !== musicGame) { musicGameReplaced(); return; }
+            if (rec) gameData.dezaemonBgm = rec; else delete gameData.dezaemonBgm;
+            lineageCheckSoon();
+        }
+        // A NEW GAME, a cart import or a folder load put another gameData in
+        // place while MUSIC was open on the old one: close it, say so.
+        function musicGameReplaced() {
+            if (!musicOpen || !musicMaker || musicGame === gameData) return;
+            musicMaker.discard();
+            closeMusicMaker();
+            flash('MUSIC CLOSED · ANOTHER GAME WAS LOADED');
+        }
+        function flushMusic() {
+            if (musicMaker && musicOpen) musicMaker.flush();
+        }
+        // A level loaded over the one MUSIC is open on: its tapes are stale.
+        function musicLevelReplaced() {
+            if (!musicOpen || !musicMaker) return;
+            musicMaker.discard();
+            closeMusicMaker();
+        }
+        async function openMusicMaker() {
+            // A cloud level still loading would hand MUSIC a soundtrack that
+            // is not there yet, and the first edit would write over the real one.
+            if (!(await awaitCloudLoad('MUSIC'))) return;
+            if (!gameData) { flash('LOAD OR START A GAME FIRST'); return; }
+            if (!ensureMusicMaker()) { alert('music-maker.js did not load — reload the editor'); return; }
+            if (pixelOpen) closePixelEditor();
+            if (bossLabOpen) closeBossLab();
+            if (!musicOpen || musicGame !== gameData) {
+                musicGame = gameData;
+                musicOpen = true;
+                document.body.classList.add('music-maker');
+                closeMenu();
+                musicMaker.open();
+                flash('MUSIC · 24 TAPES · TAP THE STAFF TO PLACE A NOTE');
+            }
+            updateStageBanner();
+            updateContextualToolbar();
+        }
+        function closeMusicMaker() {
+            if (!musicOpen) return;
+            musicMaker.close();
+            musicOpen = false;
+            document.body.classList.remove('music-maker');
+            renderGrid();
+            flash('BACK TO STAGE ' + getCurrentStageId());
+            updateStageBanner();
+            updateContextualToolbar();
+        }
+        function toggleMusicMaker() {
+            if (musicOpen && musicGame === gameData) closeMusicMaker(); else return openMusicMaker();
+        }
+
         // ================== TOAST ==================
         let _toastTimer = null;
         function flash(msg) {
@@ -5356,6 +5489,7 @@
             document.body.classList.toggle('theme-nintendo', t === 'nintendo');
             if (bossLab) bossLab.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
             if (pixelEditor) pixelEditor.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
+            if (musicMaker) musicMaker.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
             const x = document.getElementById('seg-xbox'), n = document.getElementById('seg-nintendo');
             if (x && n) {
                 x.classList.toggle('on', t !== 'nintendo');
@@ -8806,6 +8940,7 @@
         }
 
         function quickSave() {
+            flushMusic();
             // An opened cart saves as a mod of itself, on the shelf — never
             // over the cart it came from, and never to the cloud by accident.
             if (lineageActive()) {
@@ -8845,6 +8980,10 @@
 
         function buildRuntimeRecipe() {
             if (storyEditorOpen()) syncStoryFromUI();   // the STORY EDITOR's text, as typed
+            flushMusic();
+            // The whole soundtrack rides along, bank and tape labels too: the
+            // runtime plays only `songs`, but this recipe is also what the
+            // editor reopens from after PLAY (restoreFromPlayRecipe).
             const r = JSON.parse(JSON.stringify(gameData || {}));
             r.enemyData = JSON.parse(JSON.stringify(enemyData || {}));
             r.bossData = JSON.parse(JSON.stringify(bossData || {}));
@@ -9500,6 +9639,7 @@
             replacedFrames = {}; extraSprites = []; customFrameKeys = new Set();
             resetUiAtlases(null);
             gameData = blank;
+            musicGameReplaced();
             enemyData = gameData.enemyData;
             bossData = gameData.bossData;
             playerData = gameData.playerData;
@@ -9771,6 +9911,7 @@
         // what a LOAD GAME of this level would.
         async function buildLevelRecordForSav() {
             syncEnemyEditorForm();
+            flushMusic();
             await pullAllArtFromLibrary();
             const record = {
                 name: dezaSavGameName(),
@@ -12396,6 +12537,7 @@
                 customFrameKeys.add(key);
             }
             gameData = gameJson;
+            musicGameReplaced();
             enemyData = gameData.enemyData;
             bossData = gameData.bossData;
             playerData = gameData.playerData;
@@ -12446,9 +12588,11 @@
             if (sprites.length) notes.push(sprites.length + ' sprites from the save were packed into the atlas.');
             if (gameData.dezaemonBgm) {
                 const bankNames = { 1: 'REAL', 2: 'COMIC', 3: 'SF' };
-                notes.push(Object.keys(gameData.dezaemonBgm.songs).length +
-                    ' songs from the save play as its soundtrack (chiptune-voiced), with the ' +
-                    (bankNames[gameData.dezaemonBgm.sfxSet] || 'REAL') + ' effect bank.');
+                const playing = Object.keys(gameData.dezaemonBgm.songs || {}).length;
+                const banked = Object.keys(gameData.dezaemonBgm.bank || {}).length;
+                notes.push(playing + ' songs from the save play as its soundtrack, through the Saturn tone bank, with the ' +
+                    (bankNames[gameData.dezaemonBgm.sfxSet] || 'REAL') + ' effect bank' +
+                    (banked ? '; ' + banked + ' more tapes ride along for MUSIC.' : '.'));
             }
             // Player-mode (silent) imports go straight to play — no notes popup.
             if (notes.length && !(opts && opts.silent)) alert('Import notes:\n- ' + notes.join('\n- '));
@@ -15407,6 +15551,7 @@ function GAME3D_RUNTIME(DATA) {
         // some other way — every failure has already said so in an alert.
         async function saveToFirebase() {
             if (!(await awaitCloudLoad('SAVE'))) return;
+            flushMusic();
             // Sync any pending editor form changes into bossData/enemyData before saving
             syncEnemyEditorForm();
             if (storyEditorOpen()) syncStoryFromUI();   // the STORY EDITOR's text, as typed
@@ -15748,6 +15893,7 @@ function GAME3D_RUNTIME(DATA) {
                 setCabinet(d.cabinet);
                 if (d.dezaemonBgm) gameData.dezaemonBgm = d.dezaemonBgm;
                 else delete gameData.dezaemonBgm;
+                musicLevelReplaced();
                 if (d.dezaemonBullets) gameData.dezaemonBullets = d.dezaemonBullets;
                 else delete gameData.dezaemonBullets;
                 if (d.dezaemonItems) gameData.dezaemonItems = d.dezaemonItems;

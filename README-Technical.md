@@ -2929,8 +2929,9 @@ deno task bgm:tone song.mp3 --out foo-bgm.json --stages 5 --report report.md --r
 listens to a recording (a path or an https URL; ffmpeg decodes it to mono
 22.05 kHz) and writes it as 音まろ songs — the level record's `dezaemonBgm`,
 the same object an import carries, which `build:sav` puts into a cart's sec6
-and the runtime plays through the Saturn tone bank (the real SNDPAC samples on
-localhost, the analysed periodic waves everywhere else). The listening is
+and the runtime plays through the Saturn tone bank (the real SNDPAC samples,
+published with the game since 2026-10-28; the analysed periodic waves where a
+build leaves them out). The listening is
 [`lib/bgm-transcribe.ts`](packages/shmup-harbor/lib/bgm-transcribe.ts), with
 no dependencies beyond ffmpeg: an onset envelope and a tempo path by section
 (a 40 s window, octave ties broken by whether the faster reading's sixteenths
@@ -3901,7 +3902,7 @@ whose rule names it:
 | ------------------------ | -------------------------------------------------------------------- |
 | `dezaemon-sfc`           | the Super Famicom cartridge `sfc:stage` puts in `static/snes/`       |
 | `dezaemon-3d`            | the Dezaemon 3D cartridge, the 64DD IPL, and the translation's patch |
-| `dezaemon-2-disc`        | `mesh-library.json`, the part library decoded off the Saturn disc    |
+| `dezaemon-2-disc`        | the Saturn tone bank, `mesh-library.json` and 音まろ's sample songs  |
 | `dezaemon-saves`         | the community save collection and its manifest                       |
 | `arcade`                 | every arcade romset (`/games/<id>/<romset>.zip`)                     |
 | `2028-ai-soundtrack`     | 2028.Ai's custom BGM                                                 |
@@ -5261,14 +5262,27 @@ was loaded, and the first call into it without the module — `Sound.setVolume` 
 init — never returns: the console sat on a black screen. The runtime reads the
 flag and stays silent.
 
-The samples come from `SNDPAC.BIN`, which is disc content: it is not in this
-repo and is never published. Drop a Dezaemon 2 disc image into the gitignored
-`dev-fixtures/` and [`lib/sndpac.ts`](packages/shmup-harbor/lib/sndpac.ts) pulls
-the file out of it with the engine's ISO 9660 reader
+The samples come from `SNDPAC.BIN`, which is disc content: the raw file is not
+in this repo. Drop a Dezaemon 2 disc image into the gitignored `dev-fixtures/`
+and [`lib/sndpac.ts`](packages/shmup-harbor/lib/sndpac.ts) pulls the file out
+of it with the engine's ISO 9660 reader
 ([`lib/disc-file.ts`](packages/shmup-harbor/lib/disc-file.ts) is the shared
 scan); `--sndpac <path>` points at a bank directly and `--no-audio` forces a
-silent build. **A fresh checkout has no disc, so it gets no tone bank** — the
-effects and the music still come through, since they are the game's own files.
+silent build. **A fresh checkout has no disc, so its PS2 export gets no tone
+bank** — the effects and the music still come through, since they are the
+game's own files.
+
+**The web plays the real samples** (decided 2026-10-28): the bank CUT for the
+browser — 85 loop-baked slices of Int16 PCM at 14,848 Hz plus their index, 1.3
+MB — is committed in `static/games/2028-ai/assets/tone-bank/` and served with
+the game. `deno task deza:tonebank --web` writes it from a local bank,
+deterministically (`tests/tone_bank_published_test.ts` checks it against the
+cutter and against the engine's instrument map). The runtime's
+`loadDezaToneBank` and the editor's MUSIC (`bgm-player.js` `loadToneBank`)
+fetch it from there online and from `assets/tone-bank/` in an exported app;
+build-level leaves it out of a level with no `dezaemonBgm`, and the Steam build
+ships it only in the members' `dezaemon-2-disc` pack. The old localhost-only
+`/dev/tone-bank.*` Vite route is gone.
 
 **Derived tables are a different matter**, and one of them is new (decided
 2026-09-02): the ポリ吉 3D part library. Reverse-engineered tables extracted

@@ -23,6 +23,7 @@
 import { DUKE_PLAYER, decodePlayerArt } from "./player-art.js";
 import { decodePlayer2Art, TROOPER_PLAYER } from "./player2-art.js";
 import { BOSS_HP_TABLE } from "./decode/decode-boss.js";
+import { bgmFromSave } from "./audio/bgm-record.js";
 import { ITEM_TYPE_DROPS, zakoPlacementId } from "./decode/decode-stage.js";
 import { APPEARANCE_SCRIPTS, appearanceScript } from "./decode/appearance-table.js";
 
@@ -682,46 +683,19 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
     if (backgroundCells.length) gameJson.backgroundCells = backgroundCells;
     gameJson.enemyData = enemyData;
     gameJson.bossData = bossData;
-    // The save's own soundtrack. The settings BGM table is FOUR special
-    // tracks — title, game over, stage clear, all-clear/ending — then a
-    // (main, boss) pair per stage row from +0x45 (engine-traced 2026-09-01;
-    // the earlier three-then-pairs reading shifted every stage's music by one
-    // entry), every entry indexing sec6's 24 song slots; only the songs the
-    // table references (and that hold any
-    // notes) ship, as base64 of their raw 4228-byte slot. The runtime
-    // (dezaemon-runtime.js) sequences them through WebAudio, and sfxSet picks
-    // the synthesized effect bank (1 REAL / 2 COMIC / 3 SF).
+    // The save's own soundtrack, all of it (audio/bgm-record.js). The settings
+    // BGM table is FOUR special tracks — title, game over, stage clear,
+    // all-clear/ending — then a (main, boss) pair per stage row from +0x45
+    // (engine-traced 2026-09-01), every entry indexing sec6's 24 song slots.
+    // The slots the table names that hold notes or an accompaniment ship in
+    // `songs` (the runtime sequences them through WebAudio); every other slot
+    // that is not the blank rides in `bank`, and the raw table in `table`, so
+    // the music maker can open any of them and an export writes sec6, the
+    // table and the SFX set back byte for byte. sfxSet picks the effect bank
+    // (1 REAL / 2 COMIC / 3 SF).
     const sec6 = decoded.sections && decoded.sections[6] && decoded.sections[6].decompressed;
-    if (decoded.settings && sec6 && decoded.songs) {
-        const table = decoded.settings.bgmTable;
-        const special = table.slice(0, 4);
-        const stagePairs = [];
-        for (let s2 = 0; s2 * 2 + 5 < table.length && s2 < stageCount; s2++) {
-            stagePairs.push([table[4 + s2 * 2], table[5 + s2 * 2]]);
-        }
-        const used = new Set([...special, ...stagePairs.flat()]);
-        const songs = {};
-        for (const idx of used) {
-            if (idx == null || idx < 0 || idx >= 24) continue;
-            const song = decoded.songs[idx];
-            if (!song || !song.noteCount) continue;
-            songs[idx] = bytesToBase64(sec6.subarray(idx * 4228, (idx + 1) * 4228));
-        }
-        if (Object.keys(songs).length) {
-            // Song timing is engine-traced (decode-song.js): header byte 3
-            // indexes the kernel's divisor table, header byte 2 is the echo
-            // send. Both live inside the raw song bytes the runtime parses,
-            // so `tempos` here is informational (step seconds per song).
-            const tempos = {};
-            for (const idx of Object.keys(songs)) tempos[idx] = decoded.songs[idx].stepSeconds;
-            gameJson.dezaemonBgm = {
-                sfxSet: decoded.settings.sfxSet,
-                special,
-                stages: stagePairs,
-                songs,
-                tempos,
-            };
-        }
+    if (decoded.settings && sec6 && sec6.length === 4228 * 24) {
+        gameJson.dezaemonBgm = bgmFromSave(decoded.settings, sec6, stageCount);
     }
 
     // The save's three global bullet configs + blast anims, one record for

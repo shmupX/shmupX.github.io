@@ -2,11 +2,12 @@
 //
 // The instrument map (packages/shmup-engine/data/bgm-instruments.json) says
 // where each of the 116 instruments' PCM sits inside SNDPAC.BIN and how it
-// loops. SNDPAC.BIN is disc content and is not in this repo, so the bank is
-// located at build time: a Dezaemon 2 disc image dropped into dev-fixtures/
-// (gitignored) is opened with the engine's ISO 9660 reader and the file is
-// pulled straight out of it. No disc, no pack — the export stays silent
-// exactly as it does today.
+// loops. The raw SNDPAC.BIN is disc content and is not in this repo (the web's
+// cut copy is, in static/games/2028-ai/assets/tone-bank/, but it is PCM for
+// Web Audio, not the bank this re-encodes), so the bank is located at build
+// time: a Dezaemon 2 disc image dropped into dev-fixtures/ (gitignored) is
+// opened with the engine's ISO 9660 reader and the file is pulled straight out
+// of it. No disc, no pack — the export stays silent exactly as it does today.
 //
 // Output, under assets/sounds/tonebank/ on the disc:
 //

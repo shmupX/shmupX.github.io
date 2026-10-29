@@ -285,6 +285,90 @@ export {
   tempoIndexForBpm,
   tempoIndexForStepSeconds,
 } from "./src/audio/song-write.js";
+
+// --- The music maker's song model: a slot is its 4,228 bytes, read without
+// normalising (song-view), edited a cell at a time in values 音まろ itself
+// writes (song-edit), played as the runtime plays it (song-streams), and
+// carried with the whole 24-slot bank in the level record (bgm-record) ---
+export {
+  decodeSong,
+  decodeSongs,
+  readPartEvents,
+  SONG_SIZE,
+  SONG_SLOTS,
+  TEMPO_TABLE,
+  TRANSPOSE_TABLE,
+} from "./src/decode/decode-song.js";
+export {
+  bpmOf,
+  cellAt,
+  controlAt,
+  controlOffset,
+  headerOf,
+  isFfMeasure,
+  issueCounts,
+  NATIVE,
+  noteAt,
+  partCells,
+  partNotes,
+  songShape,
+  stepOffsets,
+} from "./src/audio/song-view.js";
+export {
+  clearRhythm,
+  copyMeasures,
+  deleteMeasures,
+  eraseNote,
+  insertMeasures,
+  moveNote,
+  paintInstrument,
+  pasteMeasures,
+  placeNote,
+  placeNotes,
+  resizeNote,
+  setHeader,
+  setRhythm,
+  tidyMeasures,
+  transposeMeasures,
+} from "./src/audio/song-edit.js";
+export {
+  ACCOMP_CHANNELS,
+  ACCOMP_DELAY,
+  ACCOMP_INSTRUMENT_BASE,
+  ACCOMP_PITCHED,
+  accompRow,
+  accompSteps,
+  accompStreams,
+  describeAccomp,
+  isAudible,
+  songStreams,
+} from "./src/audio/song-streams.js";
+export { ACCOMP_ROWS, ACCOMP_TABLE_B64, BGM_VOICE_ROWS } from "./src/audio/bgm-tables.js";
+export {
+  ACCOMP_VOICE,
+  BGM_GAIN,
+  createBgmPlayer,
+  dezaNoteFreq,
+  loadToneBank,
+  MIX_STREAMS,
+  PART_VOICES,
+  renderSongOffline,
+  TONE_BANK_PATH,
+} from "./src/audio/bgm-player.js";
+export {
+  b64ToBytes,
+  bankFromBgm,
+  BGM_TABLE_SIZE,
+  bgmFromBank,
+  bgmFromSave,
+  bgmTableOf,
+  bytesToB64,
+  isEmptySong,
+  MAX_STAGE_PAIRS,
+  sec6FromBgm,
+  shipsAsSong,
+  SPECIAL_ROLES,
+} from "./src/audio/bgm-record.js";
 export {
   exportLevelToSav,
   savComment,

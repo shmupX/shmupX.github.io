@@ -78,11 +78,18 @@ export function memberPacks(arcadeRomsets: readonly string[]): MemberPack[] {
     },
     {
       id: "dezaemon-2-disc",
-      title: "Dezaemon 2's 3D part library",
+      title: "Dezaemon 2's tone bank, 3D part library and sample songs",
       why: "ポリ吉's meshes, decoded off Athena's Saturn disc " +
         "(`deno task deza:meshlib`); the model viewer draws placeholders " +
-        "without them",
-      match: re(/^\/editor\/dezaemon\/mesh-library\.json$/),
+        "without them — 音まろ's 73 sample songs (`deno task " +
+        "deza:samplesongs`), which MUSIC's LOAD SAMPLE SONG offers — and the " +
+        "Saturn tone bank cut for the browser (`deno task deza:tonebank " +
+        "--web`); without it every soundtrack plays on the analysed voices",
+      match: re(
+        /^\/editor\/dezaemon\/mesh-library\.json$/,
+        /^\/editor\/dezaemon\/sample-songs\.(bin|json)$/,
+        /^\/games\/2028-ai\/assets\/tone-bank\//,
+      ),
     },
     {
       id: "dezaemon-saves",

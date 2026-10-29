@@ -36,7 +36,6 @@ const IMPORTS: [string, Record<string, unknown>][] = [
   ["a cart's own game mode, when the stamp is all that was lost", {
     meta: { version: "1.0", dezaemonSettings: { ships: 3 } },
   }],
-  ["the save's soundtrack", { dezaemonBgm: { 0: "…" } }],
   ["the save's drawn title", { dezaemonTitle: { title1: "gsp_12" } }],
   ["the title's entrance program", { dezaemonTitleScreen: { entrance: [1] } }],
   ["the ポリ吉 models", { dezaemonModels: { 0: {} } }],
@@ -53,7 +52,13 @@ const NOT_IMPORTS: [string, Record<string, unknown>][] = [
   ["an empty record", {}],
   ["a stock level", { name: "My Level", enemylist: [["01"]] }],
   ["meta from a level that is not a cart", { meta: { version: "1.0" } }],
-  ["a Dezaemon key that is present but empty", { dezaemonBgm: null }],
+  ["a Dezaemon key that is present but empty", { dezaemonTitle: null }],
+  // The runtime's own rule (isImportedLevel): `bgm:tone` and the editor's
+  // MUSIC mode give web levels a soundtrack, and they keep their story.
+  ["a web level with a Saturn soundtrack", {
+    meta: { version: "1.0" },
+    dezaemonBgm: { songs: { 0: "…" }, stages: [[0, 0]] },
+  }],
   ["an enemy with no Dezaemon block", { enemyData: { enemyA: { hp: 3 } } }],
   ["an enemy entry that is null", { enemyData: { enemyA: null } }],
 ];

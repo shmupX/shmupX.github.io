@@ -25,6 +25,8 @@ import * as bup from "../src/bup-parse.js";
 import { decodeSave } from "../src/decode/index.js";
 import { isGameSave } from "../src/payload-table.js";
 import { decodeSettings } from "../src/decode/decode-settings.js";
+import { isEmptySong } from "../src/audio/bgm-record.js";
+import { isAudible } from "../src/audio/song-streams.js";
 import {
   devFixtureUrl,
   hasFixtures,
@@ -933,12 +935,22 @@ Deno.test({
     assert(bgm, "dezaemonBgm present");
     assertStrictEquals(bgm.sfxSet, d.settings.sfxSet);
     assertStrictEquals(bgm.stages.length, d.stageCount);
-    // every referenced, non-empty song ships as a full raw slot
+    // every referenced song that sounds — notes, or only an accompaniment —
+    // ships as a full raw slot
+    const sec6 = d.sections[6].decompressed;
+    const slot = (i) => sec6.subarray(i * 4228, (i + 1) * 4228);
     for (const [idx, b64] of Object.entries(bgm.songs)) {
-      assert(d.songs[idx].noteCount > 0, `song ${idx} has notes`);
+      assert(d.songs[idx].noteCount > 0 || isAudible(slot(idx)), `song ${idx} sounds`);
       const rawLen = Math.floor(b64.replace(/=+$/, "").length * 3 / 4);
       assertStrictEquals(rawLen, 4228);
     }
+    // and every other slot that is not the blank rides along in the bank
+    for (let i = 0; i < 24; i++) {
+      if (!isEmptySong(slot(i))) {
+        assert(bgm.songs[i] !== undefined || bgm.bank[i] !== undefined, `slot ${i} carried`);
+      }
+    }
+    assertEquals(bgm.table, d.settings.bgmTable);
     // and every table entry that points at a non-empty song is shipped
     for (const pair of bgm.stages) {
       for (const idx of pair) {

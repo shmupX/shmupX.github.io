@@ -123,6 +123,65 @@ Deno.test("mod.js exports the Nintendo 64 surface", () => {
   );
 });
 
+// The music maker's song model (src/audio/song-*.js, bgm-record.js), which
+// the editor's MUSIC mode reaches through window.Dezaemon.
+const EXPECTED_MUSIC = [
+  "decodeSong",
+  "readPartEvents",
+  "TEMPO_TABLE",
+  "TRANSPOSE_TABLE",
+  "SONG_SIZE",
+  "SONG_SLOTS",
+  "NATIVE",
+  "headerOf",
+  "controlAt",
+  "cellAt",
+  "partNotes",
+  "partCells",
+  "songShape",
+  "placeNote",
+  "eraseNote",
+  "resizeNote",
+  "moveNote",
+  "paintInstrument",
+  "setRhythm",
+  "clearRhythm",
+  "setHeader",
+  "tidyMeasures",
+  "copyMeasures",
+  "pasteMeasures",
+  "insertMeasures",
+  "deleteMeasures",
+  "transposeMeasures",
+  "songStreams",
+  "isAudible",
+  "describeAccomp",
+  "ACCOMP_TABLE_B64",
+  "BGM_VOICE_ROWS",
+  "bankFromBgm",
+  "bgmFromBank",
+  "bgmFromSave",
+  "bgmTableOf",
+  "sec6FromBgm",
+  "isEmptySong",
+  "createBgmPlayer",
+  "loadToneBank",
+  "renderSongOffline",
+  "TONE_BANK_PATH",
+];
+
+Deno.test("mod.js exports the music maker's song model", () => {
+  for (const name of EXPECTED_MUSIC) {
+    assert(name in engine, `missing export ${name}`);
+  }
+  const blank = engine.emptySong();
+  assertStrictEquals(engine.isEmptySong(blank), true);
+  assertStrictEquals(engine.songShape(blank).canonical, true);
+  assertStrictEquals(engine.isAudible(blank), false);
+  const one = engine.placeNote(blank, { part: 0, step: 0, pitch: 25, inst: 13 });
+  assertStrictEquals(engine.partNotes(one, 0).length, 1);
+});
+
 // The story: what the editor's cart exports compose in the page and hand
 // every writer as `storyBackdrops` (src/story/).
 Deno.test("mod.js exports the story surface", () => {

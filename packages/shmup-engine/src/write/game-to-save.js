@@ -75,7 +75,7 @@ import {
     BOSS_TRAILER_SIZE,
 } from "../decode/decode-boss.js";
 import { ANIM_PERIOD_TABLE, FIRE_INTERVAL_TABLE, HP_TABLE, SCORE_TABLE } from "../decode/decode-enemy.js";
-import { MEASURE_SIZE, MEASURES, SONG_SIZE, SONG_SLOTS } from "../decode/decode-song.js";
+import { bgmTableOf, emptySong, emptySongBank, sec6FromBgm } from "../audio/bgm-record.js";
 import { SECTION_SIZES } from "../decompress.js";
 import { decodePlayerArt } from "../player-art.js";
 import { ALPHA_CUTOFF, bankToSec4, frameGroup, indexWithBank, quantizeFrames } from "../palette/palette-target.js";
@@ -608,21 +608,9 @@ export function encodeSettings({
     return s;
 }
 
-/** An unused 音まろ song slot: the header and per-measure control bytes every save carries. */
-export function emptySong() {
-    const song = new Uint8Array(SONG_SIZE);
-    song.set([0x00, 0x1f, 0x03, 0x0f], 0);
-    for (let m = 0; m < MEASURES; m++) song.set([0x00, 0x00, 0x80, 0x03], 4 + m * MEASURE_SIZE);
-    return song;
-}
-
-/** sec6 with every slot empty. */
-export function emptySongBank() {
-    const sec6 = new Uint8Array(SECTION_SIZES[6]);
-    const song = emptySong();
-    for (let s = 0; s < SONG_SLOTS; s++) sec6.set(song, s * SONG_SIZE);
-    return sec6;
-}
+// The blank song slot and bank live with the rest of the music record
+// (audio/bgm-record.js); re-exported here, where they have always been.
+export { emptySong, emptySongBank };
 
 // --- procedural art -----------------------------------------------------------------
 
@@ -1844,13 +1832,9 @@ export function buildSaveFromGame(level, art, options = {}) {
 
     // Settings.
     const bgm = level.dezaemonBgm && typeof level.dezaemonBgm === "object" ? level.dezaemonBgm : null;
-    const bgmTable = new Array(24).fill(0);
-    if (bgm) {
-        (bgm.special || []).slice(0, 4).forEach((v, i) => { bgmTable[i] = v; });
-        (bgm.stages || []).slice(0, 10).forEach((pair, s) => {
-            if (Array.isArray(pair)) { bgmTable[4 + s * 2] = pair[0] ?? 0; bgmTable[5 + s * 2] = pair[1] ?? 0; }
-        });
-    }
+    // The raw table an import carried (`table`), under the special tracks and
+    // stage pairs wherever those say otherwise (audio/bgm-record.js).
+    const bgmTable = bgmTableOf(bgm);
     const bulletBytes = [0, 1, 2].map((t) => {
         const cfg = level.dezaemonBullets && level.dezaemonBullets.configs && level.dezaemonBullets.configs[t];
         if (cfg && Number.isInteger(cfg.raw)) return cfg.raw;
@@ -1880,21 +1864,9 @@ export function buildSaveFromGame(level, art, options = {}) {
     });
     sec5.set(settings, SEC5_REGIONS.settings.offset);
 
-    // --- sec6: the level's soundtrack, or silence ---
-    const sec6 = emptySongBank();
-    if (bgm && bgm.songs && typeof bgm.songs === "object") {
-        for (const [idx, b64] of Object.entries(bgm.songs)) {
-            const slot = Number(idx);
-            if (!Number.isInteger(slot) || slot < 0 || slot >= SONG_SLOTS) continue;
-            try {
-                const bytes = b64ToBytes(b64);
-                if (bytes.length === SONG_SIZE) sec6.set(bytes, slot * SONG_SIZE);
-                else warn(`song slot ${slot} is ${bytes.length} bytes, not ${SONG_SIZE} — skipped`);
-            } catch (e) {
-                warn(`song slot ${slot} could not be read (${e.message})`);
-            }
-        }
-    }
+    // --- sec6: the level's soundtrack, or silence: the blank bank, then the
+    // slots an import (or the music maker) banked, then the ones it plays ---
+    const sec6 = sec6FromBgm(bgm, warn);
 
     // --- sec7: the level's ポリ吉 3D models, or the never-opened section ---
     // An import carries them back verbatim in `dezaemonModels`; a level that

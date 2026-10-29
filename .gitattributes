@@ -30,3 +30,8 @@
 *.wasm binary
 *.data binary
 *.zip binary
+
+# Disc-derived music data the editor and the runtime serve byte for byte
+# (tests check them against a SHA-256): never let autocrlf touch them.
+static/editor/dezaemon/sample-songs.* -text
+static/games/2028-ai/assets/tone-bank/* -text

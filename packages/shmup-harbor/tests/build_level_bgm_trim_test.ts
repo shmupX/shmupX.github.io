@@ -107,3 +107,27 @@ Deno.test("staging leaves out the stock custom-bgm and the unplayed themes", asy
   }).output();
   assert(check.success, new TextDecoder().decode(check.stderr));
 });
+
+Deno.test("the Saturn tone bank is staged only for a level with a Dezaemon soundtrack", async () => {
+  const stage = async (levelData: Record<string, unknown>) => {
+    const root = await Deno.makeTempDir();
+    const gameDir = join(root, "game");
+    const www = join(root, "www");
+    await Deno.mkdir(join(gameDir, "assets", "tone-bank"), { recursive: true });
+    await Deno.mkdir(join(gameDir, "lib"), { recursive: true });
+    await Deno.copyFile(BUNDLE, join(gameDir, "game.bundle.js"));
+    await Deno.writeTextFile(join(gameDir, "lib", "phaser.min.js"), "");
+    await Deno.writeTextFile(join(gameDir, "assets", "tone-bank", "tone-bank.json"), "{}");
+    await Deno.writeFile(join(gameDir, "assets", "tone-bank", "tone-bank.pcm"), new Uint8Array(4));
+    const log = console.log;
+    console.log = () => {};
+    try {
+      stageWww({ gameDir, wwwRoot: www, levelName: "x", levelData: { enemylist: ENEMYLIST, ...levelData }, gameId: null });
+    } finally {
+      console.log = log;
+    }
+    return await Deno.stat(join(www, "assets", "tone-bank", "tone-bank.pcm")).then(() => true, () => false);
+  };
+  assertEquals(await stage({}), false);
+  assertEquals(await stage({ dezaemonBgm: { songs: { 0: "AA==" } } }), true);
+});
