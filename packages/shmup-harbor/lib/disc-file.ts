@@ -37,12 +37,14 @@ export function fixturesDir(root: string): string {
   return join(root, "dev-fixtures");
 }
 
-/** Every disc image in dev-fixtures/, opened, in name order. */
-export async function openDiscImages(root: string): Promise<DiscImage[]> {
-  const fixtures = fixturesDir(root);
+/**
+ * Every disc image directly inside `dir`, opened, in name order. Files that
+ * carry no ISO 9660 volume (a CD audio track, a memory card) are skipped.
+ */
+export async function openDiscImagesIn(dir: string): Promise<DiscImage[]> {
   let entries: Deno.DirEntry[];
   try {
-    entries = [...Deno.readDirSync(fixtures)];
+    entries = [...Deno.readDirSync(dir)];
   } catch {
     return [];
   }
@@ -51,11 +53,39 @@ export async function openDiscImages(root: string): Promise<DiscImage[]> {
     if (!entry.isFile) continue;
     const lower = entry.name.toLowerCase();
     if (!DISC_EXTENSIONS.some((ext) => lower.endsWith(ext))) continue;
-    const image = await readIfPresent(join(fixtures, entry.name));
+    const image = await readIfPresent(join(dir, entry.name));
     if (!image) continue;
     const disc = openDisc(image);
     if (disc) images.push({ name: basename(entry.name), disc });
   }
+  return images;
+}
+
+/** Every disc image in dev-fixtures/, opened, in name order. */
+export function openDiscImages(root: string): Promise<DiscImage[]> {
+  return openDiscImagesIn(fixturesDir(root));
+}
+
+/**
+ * The disc image(s) at a path the caller named: an image file, or a folder
+ * scanned like dev-fixtures/ (a Redump set's folder holds the data track
+ * beside its audio tracks and .cue, and only the data track opens). Throws
+ * when the path cannot be read or holds no ISO 9660 volume — the caller asked
+ * for it by name, so finding nothing there is an error, not the normal case.
+ */
+export async function openDiscPath(path: string): Promise<DiscImage[]> {
+  let info: Deno.FileInfo;
+  try {
+    info = await Deno.stat(path);
+  } catch {
+    throw new Error(`cannot read ${path}`);
+  }
+  const images = info.isDirectory ? await openDiscImagesIn(path) : [];
+  if (info.isFile) {
+    const disc = openDisc(await Deno.readFile(path));
+    if (disc) images.push({ name: basename(path), disc });
+  }
+  if (!images.length) throw new Error(`no disc image at ${path}`);
   return images;
 }
 

@@ -16,7 +16,11 @@
 // they say so and exit 0, like the other disc tasks.
 
 import { dirname, fromFileUrl, resolve } from "@std/path";
-import { openDiscImages } from "@shmupx/shmup-harbor/disc-file";
+import {
+  type DiscImage,
+  openDiscImages,
+  openDiscPath,
+} from "@shmupx/shmup-harbor/disc-file";
 import {
   listFiles,
   readFile,
@@ -40,8 +44,11 @@ const USAGE = `usage:
   deza:disc png <NAME> --out <path> [--width N] [--bpp 4|8]
                                     [--rows A:B] [--scale N]
                                     [--grey [--raw-palette]]
+  any of them also takes --disc PATH
 
-  --plain         write the file as stored, without undoing its LZSS
+  --disc          the disc image, or a folder holding it (default: the first
+                  image at the dev-fixtures/ top level)
+  --plain        write the file as stored, without undoing its LZSS
   --lzss          undo LZSS on a .BIN not in the known-compressed list
   --width         pixels per row (default 320 — the editor's screen width)
   --bpp           bits per pixel (default 8)
@@ -58,7 +65,14 @@ if (!command || command === "--help" || command === "-h") {
   Deno.exit(command ? 0 : 2);
 }
 
-const VALUE_FLAGS = new Set(["--out", "--width", "--bpp", "--rows", "--scale"]);
+const VALUE_FLAGS = new Set([
+  "--disc",
+  "--out",
+  "--width",
+  "--bpp",
+  "--rows",
+  "--scale",
+]);
 const flags: Record<string, string | true> = {};
 const positional: string[] = [];
 for (let i = 0; i < args.length; i++) {
@@ -74,7 +88,18 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const images = await openDiscImages(ROOT);
+// --disc names the image (or the folder holding it) when it does not sit at
+// the dev-fixtures/ top level — e.g. a Redump set kept in its own folder.
+let images: DiscImage[];
+if (typeof flags["--disc"] === "string") {
+  try {
+    images = await openDiscPath(flags["--disc"]);
+  } catch (err) {
+    fail(`--disc: ${(err as Error).message}`);
+  }
+} else {
+  images = await openDiscImages(ROOT);
+}
 if (!images.length) {
   console.log(
     "[deza-disc] no disc image in dev-fixtures/ — drop a Dezaemon 2 disc " +

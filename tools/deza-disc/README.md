@@ -20,6 +20,14 @@ deno task deza:disc png <NAME> --out <path> [--width N] [--bpp 4|8]
 `ls` hides the bulk files (`M_DATA*`, `DEMO_*`, `MDLDT_*`, `BACK*`) unless you
 pass `--all`.
 
+Every command also takes `--disc PATH` for a disc kept anywhere else: the image
+itself, or the folder holding it. A Redump set's folder works as it is — the
+data track opens, and the audio track and `.cue` beside it are skipped.
+
+```
+deno task deza:disc ls --disc "dev-fixtures/Saturn/Dezaemon 2 (Japan)"
+```
+
 ## What this adds
 
 Nothing about the disc itself — the engine already had all of it:
@@ -41,11 +49,19 @@ Established 2026-09-02 by rendering until the screens came out legible, and
 cross-checked against what the screens say about themselves (the `SPEED` panel
 carries MIN/MAX 1-8, which is the `maxSpeedLevel` nibble at settings `+0x0D`).
 
-| What                                  | Layout                                                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `*_PIC.BIN` editor screen backgrounds | 8bpp linear, **320 px** wide, no tiling                                                                 |
-| `DEZA2SW.CMP` shared label atlas      | 8bpp linear, **64 px** wide (3405 rows)                                                                 |
-| `HL_*.BIN` help overlays              | 4bpp linear, **256 px** wide (first panel only — later panels drift, so the file is not one flat image) |
+| What                                  | Layout                                                                                        |
+| ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `*_PIC.BIN` editor screen backgrounds | 8bpp linear, **320 px** wide, no tiling                                                       |
+| `DEZA2SW.CMP` shared label atlas      | 8bpp linear, **64 px** wide (3405 rows)                                                       |
+| `HL_*.BIN` help overlays              | 4bpp linear, **256 px** wide, one-line panels — each panel is its own LZSS stream (see below) |
+
+A help file is not one stream. Each one-line panel (256×16) is compressed on its
+own and the panels are stored back to back. The offset/length table that splits
+them lives in the editor overlay that shows the help, not in the file. `png`
+decodes the whole file as one stream, so only the first panel comes out clean.
+After that the ring buffer is wrong and the text "drifts" into noise.
+`HL_MUSIC.CMP` is a `.CMP` wrapped around 35 such panels, split by the table at
+`S_EDIT` `+0x15A04` (see `packages/shmup-engine/data/README.md`, "音まろ").
 
 Both layouts are plain scanline order, which is why a wrong `--width` _shears_
 the image diagonally instead of scrambling it — a useful signal when probing an
