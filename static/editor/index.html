@@ -9138,11 +9138,13 @@
         // Debug flags the game page inherits: ?debug=1 turns its engine
         // comparison on (static/phaser-plugins/engine-compare.js), ?builder=
         // names the desktop to run it on, and `source` says which cart this is.
+        // ?turbo=1 rides along too: PLAY then runs the game's world at 2×.
         function debugPlayParams() {
             let out = '';
             try {
                 const q = new URLSearchParams(location.search);
                 if (q.get('debug') === '1') out += '&debug=1';
+                if (q.get('turbo') === '1') out += '&turbo=1';
                 const b = q.get('builder') || '';
                 if (b) out += '&builder=' + encodeURIComponent(b);
                 const src = window.__dezaPlaySource || '';

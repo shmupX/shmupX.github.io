@@ -251,6 +251,10 @@ they are written out in full.
     and must pause the game itself; routing through this one closure keeps a
     single `cmgPaused` flag and the per-`Sound` bookkeeping. The plugin falls
     back to its own `loop.sleep()` if the line goes missing.
+  - `cmgSetTurbo` / `cmgWrapLoop` are the Guide's Turbo (see **Turbo** below):
+    the page advertises it with `cmg-turbo` beside the pause listener, and
+    `create2028Game` wraps the game loop's callback so every scene gets its
+    delta times the factor.
   - `cmgBroadcastCheats` posts the Guide's Cheats submenu to the launcher once
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
@@ -2748,6 +2752,46 @@ WebGL that offset is a texture coordinate, the GPU's to sample.
 `tests/refresh_compare_test.ts` pins what the metrics say about motion of a
 known shape, on screen too, at 240 and 500 Hz; `tests/refresh_results_test.ts`
 pins the result file and the comparison.
+
+## Turbo
+
+The Guide's **Turbo · 2×** row runs a game's world at double speed. It shows
+only for a game that asks for it: the 2028-ai runtime posts `{ type: "cmg-turbo" }`
+to the launcher when it boots inside a frame, and the launcher answers with
+`{ type: "cmg-turbo-set", value }`. It answers again every time a game asks, so
+a frame that reloads with Turbo on (a cheat toggle, the editor's PLAY) comes
+back at 2×. The choice is never saved. Every game starts at 1×, and closing the
+game or opening the level editor turns Turbo off.
+
+`?turbo=1` starts a game at 2× instead, standalone or in the launcher. The
+runtime reads it when the bundle loads. Its `cmg-turbo` advert then carries
+`value: true`, and the Guide's row comes up on. On the launcher's own URL,
+`?turbo=1` rides into every game it starts, the way `?debug=1` does, and the
+editor passes it on to PLAY (`debugPlayParams`). A cheat
+reload keeps the frame's URL, so it comes back at 2× even if the row was turned
+off in between.
+
+In the runtime, `cmgWrapLoop` wraps the callback Phaser's `TimeStep` drives and
+multiplies the delta it hands the game by 2. That one delta drives a lot. The
+fixed 120 Hz steps run 240 a second, so `worldTime` advances twice as fast
+(measured 118-120 steps a second at 1× and 238-240 at 2×, at the same 59 fps).
+Scene clocks (`delayedCall`, timer events), sprite animations, particles and
+camera effects double too. Tweens are the exception: they time themselves off
+`Date.now()`, and every scene start sets their `timeScale` back to 1. So the
+wrapper sets each scene's `tweens.timeScale` to the factor on every frame. No
+game code sets a tween `timeScale` of its own, which is why it can. A 1 s
+`delayedCall` and a 1 s tween both finish in about half a second.
+
+Two things stay at 1×. The music and sound effects keep their pitch and tempo:
+the Dezaemon synth schedules its notes on the AudioContext clock, not on the
+steps. And the time value each scene is handed, `scene.time.now` among them, stays on
+the wall clock. The few things that read it are fine on the wall clock: a
+boss's one-second contact grace, the shot-flash colour cycle, the SP lens's
+scan line, the once-a-frame gamepad sample, and the online host's snapshot
+rate.
+The refresh-rate blend (above) measures the scaled delta too. At 2× it reads
+twice the frame time, so it blends only on a display faster than about 260 Hz.
+At 2× a 240 Hz display already gets a step every frame.
 
 ## Two players
 

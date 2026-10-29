@@ -4945,6 +4945,47 @@
   // the PAUSE panel, so extract mode needs the same loop-sleep + audio
   // suspend this closure owns rather than keeping a rival paused flag.
   try { window.__cmgSetPaused = cmgSetPaused; } catch (e) {}
+  // cmg: Turbo — the launcher Guide's 2x world clock (cmg-turbo-set). Every
+  // scene is handed the game loop's delta times cmgTimeScale (cmgWrapLoop), so
+  // the fixed 120 Hz steps, the scene clocks' delayed calls, sprite
+  // animations and camera effects all run twice as fast. Tweens keep a
+  // Date.now() clock of their own and reset their timeScale to 1 on every
+  // scene start, so it is matched to the factor every frame. Music and sound
+  // effects keep their pitch and tempo: the Dezaemon synth is scheduled on the
+  // AudioContext's clock, not on the steps. ?turbo=1 boots at 2x, standalone
+  // or embedded (the cmg-turbo advert below tells the launcher it is on).
+  var CMG_TURBO_SCALE = 2;
+  var cmgTimeScale = 1;
+  function cmgSetTurbo(on) {
+    cmgTimeScale = on ? CMG_TURBO_SCALE : 1;
+  }
+  cmgSetTurbo(readBooleanSearchParam("turbo", false));
+  function cmgWrapLoop(game) {
+    var loop = game && game.loop;
+    if (!loop || loop.__cmgTurbo) return;
+    loop.__cmgTurbo = true;
+    function wrap(step) {
+      return function (time, delta) {
+        var scenes = game.scene && game.scene.scenes;
+        if (scenes) {
+          for (var i = 0; i < scenes.length; i++) {
+            var tweens = scenes[i].tweens;
+            if (tweens && tweens.timeScale !== cmgTimeScale) tweens.timeScale = cmgTimeScale;
+          }
+        }
+        return step.call(this, time, delta * cmgTimeScale);
+      };
+    }
+    // The loop hands Phaser's bound step to TimeStep.start once the textures
+    // are ready, after the constructor returns; wrap it on the way in.
+    if (loop.started) loop.callback = wrap(loop.callback);
+    else {
+      var start = loop.start;
+      loop.start = function (callback) {
+        return start.call(this, wrap(callback));
+      };
+    }
+  }
   var cmgPanelEl = null;
   function cmgPanelVisible() {
     return !!(cmgPanelEl && cmgPanelEl.style.display !== "none");
@@ -5033,6 +5074,7 @@
       if (!d || typeof d !== "object") return;
       if (d.type === "cmg-volume") cmgSetVolumes(d.bgm, d.sfx, false);
       else if (d.type === "cmg-pause") cmgSetPaused(!!d.paused);
+      else if (d.type === "cmg-turbo-set") cmgSetTurbo(!!d.value);
       // cmg: the launcher's Split Controller mode (a Legion Go's halves as
       // two pads, static/gamepad-compatibility-plugin.js) — a second player
       // asking to be let in; twoPlayerAllowed reads it.
@@ -5057,7 +5099,16 @@
     } catch (e) {
       standalone = false;
     }
-    if (!standalone) return;
+    if (!standalone) {
+      // The Guide shows its Turbo row for a game that says it has one, on if
+      // ?turbo=1 booted it so; the listener above is up, so the launcher's
+      // cmg-turbo-set reply lands.
+      try {
+        window.parent.postMessage({ type: "cmg-turbo", value: cmgTimeScale !== 1 }, "*");
+      } catch (e) {
+      }
+      return;
+    }
     // ESC toggles the PAUSE panel. (Embedded builds never get here — the host
     // page's OSD_BRIDGE forwards ESC to the launcher instead.)
     window.addEventListener("keydown", function (ev) {
@@ -20492,6 +20543,7 @@
     const game = new Phaser.Game(config);
     globalThis.__PHASER_4_GAME__ = game;
     globalThis.__PHASER_GAME__ = game;
+    cmgWrapLoop(game);
     console.log("[2028.Ai] Phaser game started");
     if (typeof window !== "undefined") {
       if (typeof window.__fitCanvas === "function") window.__fitCanvas();

@@ -3607,6 +3607,27 @@
     try { iframe?.contentWindow?.postMessage({ type: 'cmg-pause', paused }, '*'); } catch (_) { /* ignore */ }
   });
 
+  // ── Turbo: the game's world at 2× ─────────────────────────────────────────
+  // A game that can run its world clock double-speed says so with a boot-time
+  // postMessage { type: 'cmg-turbo' } (the 2028-ai runtime does, embedded);
+  // the Guide's Game section then shows a Turbo toggle, pushed into the frame
+  // as { type: 'cmg-turbo-set', value }. It is a session choice, never saved:
+  // every game starts at 1×, and closeGame drops it with the rest of the
+  // game's advertised capabilities. A frame that reloads under it (a cheat,
+  // the editor's PLAY) re-advertises and is told again.
+  let turboAvail = $state(false);
+  let turboOn = $state(false);
+  function setTurbo(v) {
+    turboOn = !!v;
+    applyTurbo();
+  }
+  // '*' targetOrigin for the same reason as setPlugin: the payload is a
+  // benign boolean and a Turbo-capable game could load cross-origin.
+  function applyTurbo() {
+    const iframe = document.getElementById('gameframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-turbo-set', value: turboOn }, '*'); } catch (_) { /* ignore */ }
+  }
+
   // Cheats are boot-time URL params on the running game's iframe. A game
   // advertises which ones it supports by postMessage'ing
   // { type: 'cmg-cheats', cheats: [...] } on boot (handled in onWindowMessage);
@@ -3826,6 +3847,7 @@
     // Clear the editor's own capability too, so the "Edit Levels" button doesn't
     // linger in the OSD while the editor is the active frame.
     osdLevelEditor = null;
+    turboAvail = false; turboOn = false;
     twinStickAvail = false; twinStickOn = false;
     resetSplitPads();
     touchCtlAvail = false; touchCtlOn = false;
@@ -5077,6 +5099,10 @@
     // Game-advertised OSD action buttons (opt-in per game over cmg-actions).
     // Activating one posts { type:'cmg-action', id } back into the frame.
     for (const a of osdActions) game.push({ key: a.key, kind: 'button', label: a.label, action: a.id });
+    // Turbo appears only for games that advertise it (cmg-turbo).
+    if (turboAvail) {
+      game.push({ key: 'turbo', kind: 'toggle', label: 'Turbo · 2×', value: turboOn });
+    }
     // Twin-Stick mode appears only for games that opt in (built-in list,
     // catalog `twinStick` flag, or a cmg-twinstick broadcast).
     // Split Controller (Lenovo Legion Go): each half of one pad as its own
@@ -5214,6 +5240,7 @@
     else if (it.key === 'breathe') setTweak('breatheSpeed', Math.round(v * 10) / 10);
     else if (it.key === 'scanlines') setTweak('scanlines', !!v);
     else if (it.key === 'disco') setTweak('discoMode', !!v);
+    else if (it.key === 'turbo') setTurbo(!!v);
     else if (it.key === 'splitpads') setSplitPads(!!v);
     else if (it.key === 'twinstick') setTwinStick(!!v);
     else if (it.key === 'twinstick-touch') setTwinTouch(!!v);
@@ -6152,6 +6179,10 @@
     if (lq.get('debug') === '1' && url.indexOf('debug=') === -1) {
       url += (url.indexOf('?') === -1 ? '?' : '&') + 'debug=1';
     }
+    // ?turbo=1 on the launcher starts every game that has Turbo at 2×.
+    if (lq.get('turbo') === '1' && url.indexOf('turbo=') === -1) {
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'turbo=1';
+    }
     const builderCode = lq.get('builder') || '';
     if (builderCode && url.indexOf('builder=') === -1) {
       url += (url.indexOf('?') === -1 ? '?' : '&') + 'builder=' + encodeURIComponent(builderCode);
@@ -7015,6 +7046,8 @@
     osdActions = [];
     osdExtras = [];
     osdLevelEditor = null;
+    turboAvail = false;
+    turboOn = false;
     twinStickAvail = false;
     twinStickOn = false;
     twinGameId = null;
@@ -8260,6 +8293,18 @@
       // The game is listening now: repeat the split-mode toggle in case the
       // onload copy ran ahead of its listener.
       applySplitPads();
+      return;
+    }
+    if (d.type === 'cmg-turbo') {
+      // The running game advertises Turbo (see turboAvail). Benign — worst
+      // case a toggle appears whose cmg-turbo-set the game ignores — so accept
+      // it from our own frame at any origin, like cmg-cheats. A game booted
+      // with ?turbo=1 says it is on, and the row follows. Then reply with the
+      // choice: a frame that reloaded with Turbo on and no ?turbo=1 boots at 1×
+      // until it is told.
+      turboAvail = true;
+      if (d.value === true) turboOn = true;
+      applyTurbo();
       return;
     }
     if (d.type === 'cmg-splitpads-ack') {
