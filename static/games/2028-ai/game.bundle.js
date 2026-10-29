@@ -4351,7 +4351,7 @@
     [".: PLAN :.", "JC BUSTILLOS"],
     [".: PROGRAM :.", "CODEMONKEY.GAMES"],
     [".: SOUND :.", "2-D"],
-    [".: STORY :.", "BRANDON, JULIAN BENAQUISTA"]
+    [".: STORY :.", "BRANDON, AGENT BENAQUISTA"]
   ];
   // A game that brought its own staff roll plate — staffrollName.gif in its
   // game_ui set (customTitleArt), as 2019-PS2 carries 2019's — shows that
