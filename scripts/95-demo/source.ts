@@ -309,6 +309,101 @@ export const DIVE_SPEED_BONUS = { boss: 40, single: 20 };
 /** Bullets are spawned this far below the shooter. */
 export const BULLET_DROP = 14;
 
+// --- the foo raiders: src/consts.ts, src/game/fooRaid.ts, src/FooRaider.svelte
+
+/**
+ * From the second cycle on — once the first boss is down — a raid row drops
+ * through every 7 s while the formation is locked: blobHeads and flyBrains
+ * out of foo-v1-ground-shooter, on its 256-wide grid scaled up to the field.
+ * Raiders never hold a level open.
+ */
+export const FOO_SCALE = GAME_WIDTH / 256;
+export const FOO_SPAWN_Y = -64;
+/** Descent, px/s. */
+export const FOO_BLOBHEAD_SPEED = 96;
+export const FOO_FLYBRAIN_SPEED = 144;
+/** A blobHead below this drifts across, toward the far side. */
+export const FOO_FUNNEL_Y = GAME_HEIGHT / 3;
+/** A flyBrain below this homes on the nearest ship. */
+export const FOO_HOMING_Y = GAME_HEIGHT / 1.5;
+/** The blobHead's sideways drift, px/s. */
+export const FOO_FUNNEL_DRIFT = 60 * FOO_SCALE;
+/** Per 60 Hz frame: x += rate * (playerX - x). */
+export const FOO_HOMING_RATE = 0.005;
+/** A blobHead spawned at or right of this drifts left, else right. */
+export const FOO_SIDE_SPLIT = 152 * FOO_SCALE;
+/** A blobHead fires straight down every 5 s from its spawn. */
+export const FOO_BLOBHEAD_FIRE_INTERVAL = 5000;
+export const FOO_BULLET_SPEED = 120;
+export const FOO_BLOBHEAD_HP = 1;
+export const FOO_FLYBRAIN_HP = 2;
+export const FOO_BLOBHEAD_SCORE = 100;
+export const FOO_FLYBRAIN_SCORE = 200;
+export const FOO_RAID_INTERVAL = 7000;
+/** No row drops while this many raiders are alive. */
+export const FOO_RAID_MAX = 12;
+/** A level's raids start at row `levelNum * 7` and wrap. */
+export const FOO_RAID_ROW_STRIDE = 7;
+
+/**
+ * foo's stage0 rows, in spawn order: A a blobHead at x = 24 + 32 col, B a
+ * flyBrain at 16 + 32 col (foo px, x FOO_SCALE). R and S were never defined
+ * and spawn nothing; the item digit did nothing. An empty or R/S row still
+ * spends its raid.
+ */
+export const FOO_RAID_ROWS: string[][] = [
+  ["00", "00", "00", "A0", "00", "00", "00", "00"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["A0", "00", "00", "A0", "00", "00", "00", "A0"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["00", "00", "00", "A3", "00", "00", "00", "00"],
+  ["A0", "00", "00", "00", "A0", "00", "00", "A0"],
+  ["00", "00", "00", "A0", "00", "00", "00", "00"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["00", "A0", "A0", "A0", "A0", "A0", "A0", "00"],
+  ["B3", "00", "00", "A0", "00", "00", "00", "B9"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["R0", "S0", "00", "A0", "00", "00", "S0", "R0"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["S0", "R0", "00", "A0", "00", "00", "R0", "S0"],
+  ["00", "00", "00", "00", "A1", "00", "00", "00"],
+  ["00", "00", "00", "A0", "00", "00", "00", "00"],
+  ["R0", "S0", "A0", "A3", "A0", "A0", "S0", "R0"],
+  ["B9", "00", "00", "00", "00", "00", "00", "B3"],
+  ["S0", "R0", "S0", "00", "00", "S0", "R0", "S0"],
+  ["00", "00", "00", "A2", "A0", "00", "00", "00"],
+  ["R0", "S0", "R0", "00", "00", "R0", "S0", "R0"],
+  ["00", "00", "00", "A0", "A3", "00", "00", "00"],
+  ["00", "00", "00", "A0", "A0", "00", "00", "00"],
+  ["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+  ["A0", "A0", "A0", "00", "00", "A0", "A0", "A0"],
+  ["A0", "A0", "00", "00", "00", "00", "A0", "A0"],
+  ["A0", "00", "00", "00", "00", "00", "00", "A0"],
+  ["B0", "00", "00", "00", "00", "00", "00", "B0"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["A0", "00", "00", "00", "00", "00", "00", "A1"],
+  ["S0", "R0", "S0", "A2", "A3", "S0", "R0", "S0"],
+  ["00", "00", "00", "00", "A0", "00", "00", "00"],
+  ["R0", "S0", "00", "A0", "00", "00", "S0", "R0"],
+  ["B0", "00", "00", "00", "A0", "00", "00", "B0"],
+  ["B0", "00", "00", "00", "00", "00", "00", "B0"],
+  ["00", "00", "00", "00", "A3", "00", "00", "00"],
+  ["B0", "00", "00", "00", "00", "00", "00", "B0"],
+  ["00", "00", "A0", "A0", "A0", "A0", "00", "00"],
+  ["A0", "A0", "A0", "00", "00", "A0", "A0", "A0"],
+  ["B0", "00", "00", "00", "00", "00", "00", "B0"],
+  ["B0", "00", "00", "00", "00", "00", "00", "B3"],
+  ["B1", "00", "00", "00", "00", "00", "00", "00"],
+  ["R0", "S0", "R0", "A0", "A0", "R0", "S0", "R0"],
+];
+
+export type FooKind = "blobHead" | "flyBrain";
+
+/** A raider's x on foo's grid (foo px), for row cell `col`. */
+export function fooRaiderX(kind: FooKind, col: number): number {
+  return (kind === "blobHead" ? 24 : 16) + 32 * col;
+}
+
 // --- src/App.svelte (preload and animations) -------------------------------
 
 export interface SheetArt {
@@ -355,6 +450,26 @@ export const ANIMS = {
   },
   devilBlastBurn: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 12 },
   poof: { frames: [0, 1, 2], fps: 12 },
+  // the foo raiders, off the foo_asset multiatlas
+  fooBlobHeadWalk: {
+    frames: [
+      "blobHead0.png",
+      "blobHead1.png",
+      "blobHead2.png",
+      "blobHead3.png",
+    ],
+    fps: 8,
+  },
+  fooFlyBrainFly: {
+    frames: [
+      "flyBrain0.png",
+      "flyBrain1.png",
+      "flyBrain2.png",
+      "flyBrain3.png",
+    ],
+    fps: 6,
+  },
+  fooBullet: { frames: ["blobHeadBullet0.png", "blobHeadBullet1.png"], fps: 6 },
 } as const;
 
 /** Display scales the source draws each piece of art at, on its own field. */
@@ -372,6 +487,8 @@ export const DRAW_SCALE = {
   devilBlast: 0.8,
   /** The RedDevil's death poof, blown up x9. */
   bossPoof: 9,
+  /** foo's art, its 256-wide field blown up to the source's. */
+  foo: FOO_SCALE,
 } as const;
 
 // --- src/game/paths.ts -----------------------------------------------------

@@ -2,7 +2,7 @@
 /**
  * Convert EVIL INVADERS '95 (easierbycode/95-demo-sp) into the shmupX cloud
  * game `95-demo`: its ten formation levels as ten stages, each ended by one
- * of its three bosses in turn.
+ * of its three bosses in turn, with its foo raiders dropping through.
  *
  *   deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts            # dry run
  *   deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --out x.json
@@ -55,6 +55,16 @@
  *     frames at the source's one-tint-per-frame rate. `keepOnScreen` keeps
  *     their whole ~100 px body on the screen through every slide, as the
  *     source's bounce off the walls does (the butt-devil trio's too).
+ * - the foo raiders, in the same rows. From its second cycle the source drops
+ *   one of foo-v1-ground-shooter's stage rows through the formation every
+ *   7 s while it is locked and fewer than 12 raiders are up; here they drop
+ *   from the second stage on, after the first boss as there, on the replay's
+ *   own frames (planRaids). A blobHead marches down its foo column and
+ *   funnels across to the far side, firing foo's shot 5 s after it mounts
+ *   (blobHeadRows, a script per stage for the stage's fire gate); a flyBrain
+ *   is the runtime's plain-path soliderA, whose homing on the ship is foo's.
+ *   Their records carry `blocksClear: false`, so the formation's last kill
+ *   still ends the stage with raiders on the field (game.bundle.js).
  * - `playerData`/`playerData2`, the source's two ships and the red/white
  *   shot; three hits, as the source's three lives.
  * - the art all of that names, packed into the level's own sheet, and a
@@ -70,9 +80,9 @@
  *   web build is not, so the record carries them.
  *
  * The source's later cycles are not here: a cloud game has ten stages, and
- * those ten are the source's own ten levels, so the foo raiders that only
- * fly from its second cycle on have no stage to be in, and its bosses meet
- * the player one a stage rather than one a cycle.
+ * those ten are the source's own ten levels, so its bosses meet the player one
+ * a stage rather than one a cycle, and the foo raiders, which the source drops
+ * from its second cycle on, drop from the second stage on.
  *
  * Without --apply nothing is written. --out writes the record to a file;
  * --serve plays it on a local server (the way mcp/lib/preview.ts previews a
@@ -108,7 +118,26 @@ import {
   DRAW_SCALE,
   ENEMY_TYPES,
   type EnemyKind,
+  FOO_BLOBHEAD_FIRE_INTERVAL,
+  FOO_BLOBHEAD_HP,
+  FOO_BLOBHEAD_SCORE,
+  FOO_BLOBHEAD_SPEED,
+  FOO_FLYBRAIN_HP,
+  FOO_FLYBRAIN_SCORE,
+  FOO_FLYBRAIN_SPEED,
+  FOO_FUNNEL_DRIFT,
+  FOO_FUNNEL_Y,
+  FOO_RAID_INTERVAL,
+  FOO_RAID_MAX,
+  FOO_RAID_ROW_STRIDE,
+  FOO_RAID_ROWS,
+  FOO_SCALE,
+  FOO_SIDE_SPLIT,
+  FOO_SPAWN_Y,
+  type FooKind,
+  fooRaiderX,
   GAME_HEIGHT,
+  GAME_WIDTH,
   INVADER_BOSS_BULLET_SPEED,
   INVADER_BOSSES,
   type InvaderBossKind,
@@ -117,12 +146,14 @@ import {
   SHEETS,
   SOURCE,
   STAGES,
+  STAGES_PER_CYCLE,
   STARTING_LIVES,
 } from "./source.ts";
 import {
   FIELD_H,
   FIELD_W,
   type FlightRecord,
+  FRAME_MS,
   type HalfSizes,
   hiddenAt,
   HIDE,
@@ -227,6 +258,9 @@ const F = {
   coolShot: (i: number) => `ei95CoolInvaderShot${i}`,
   rainbowInvader: (i: number) => `ei95RainbowInvader${i}`,
   rainbowShot: (i: number) => `ei95RainbowInvaderShot${i}`,
+  fooBlobHead: (i: number) => `ei95FooBlobHead${i}`,
+  fooFlyBrain: (i: number) => `ei95FooFlyBrain${i}`,
+  fooShot: (i: number) => `ei95FooShot${i}`,
   cutin: (i: number) => `cutin${i}.gif`,
 };
 
@@ -285,6 +319,11 @@ const ENEMY_FRAMES: Record<EnemyKind, string[]> = {
   eyeDude: ANIMS.eyeDudeFlap.frames.map((_, i) => F.eyeDude(i)),
   pinkBunny: ANIMS.pinkBunnyFlap.frames.map((_, i) => F.pinkBunny(i)),
   goldGirl: ANIMS.goldGirlNormal.frames.map((_, i) => F.goldGirl(i)),
+};
+
+const RAIDER_FRAMES: Record<FooKind, string[]> = {
+  blobHead: ANIMS.fooBlobHeadWalk.frames.map((_, i) => F.fooBlobHead(i)),
+  flyBrain: ANIMS.fooFlyBrainFly.frames.map((_, i) => F.fooFlyBrain(i)),
 };
 
 /** Animation fps as the runtime's animPeriod: 60 Hz frames per frame. */
@@ -545,6 +584,18 @@ export async function buildArt(): Promise<LevelArt> {
     )
   );
 
+  // The foo raiders, off foo's multiatlas: drawn x FOO_SCALE on the source's
+  // 540-wide field, which is foo's own size on the 256-wide one.
+  const foo = [
+    ...ANIMS.fooBlobHeadWalk.frames.map((n, i) => [F.fooBlobHead(i), n]),
+    ...ANIMS.fooFlyBrainFly.frames.map((n, i) => [F.fooFlyBrain(i), n]),
+    ...ANIMS.fooBullet.frames.map((n, i) => [F.fooShot(i), n]),
+  ];
+  for (const [name, frame] of foo) {
+    const raw = await atlasFrame("foo_asset.png", "foo_asset.json", frame);
+    add(name, toFieldArt(raw, DRAW_SCALE.foo, true), `foo_asset.json#${frame}`);
+  }
+
   // rando's cut-in as it is: its frames are already 256x142 on the 256-wide
   // field, cut straight off the sheet, nothing resampled.
   const cutin = await decodePng(await Deno.readFile(CUTIN_SHEET));
@@ -616,6 +667,8 @@ export interface StageBuild {
   /** Wave frame the stage's last row is due: its end if nobody is shot. */
   endFrame: number;
   lockFrame: number;
+  /** The foo raiders it drops, in spawn order. */
+  raiders: RaiderSpawn[];
 }
 
 /** Inside the box the runtime culls enemies outside of (and below the top). */
@@ -803,28 +856,55 @@ export function buildStage(stage: number, half: HalfSizes): StageBuild {
     spawnFrame: c.spawnFrame - shift,
   }));
 
+  const endFrame =
+    Math.max(...enemies.map((e) => e.spawnFrame + e.lifeFrames)) +
+    30;
+
+  // The foo raiders, on the wave's clock, each spawned as late as the 16 px
+  // the runtime spawns it lower take (raiderLag); none due after the end.
+  const raiders: RaiderSpawn[] = planRaids(
+    stage,
+    replay.lockFrame,
+    replay.endFrame,
+  ).map((r) => ({
+    kind: r.kind,
+    col: r.col,
+    column: raiderSpawn(r.kind, r.col).column,
+    spawnFrame: r.frame - shift + raiderLag(r.kind),
+    lifeFrames: raiderLife(r.kind, r.col, stage),
+    row: r.row,
+  })).filter((r) => r.spawnFrame < endFrame);
+
   // One grid row per spawn frame (two if two enemies share a column), in
   // spawn order, between an empty first row (frame 0, the row the rest are
   // counted from) and an empty last row once every enemy has gone.
   const spawnRows: { frame: number; cells: string[] }[] = [
     { frame: 0, cells: new Array(GRID_COLS).fill("00") },
   ];
-  const sorted = [...enemies].sort((a, b) =>
-    a.spawnFrame - b.spawnFrame || a.letters.localeCompare(b.letters)
+  const spawns = [
+    ...enemies.map((e) => ({
+      frame: e.spawnFrame,
+      column: e.column,
+      key: e.letters,
+    })),
+    ...raiders.map((r) => ({
+      frame: r.spawnFrame,
+      column: r.column,
+      key: raiderKey(r.kind, stage),
+    })),
+  ].sort((a, b) =>
+    a.frame - b.frame || a.key.localeCompare(b.key) || a.column - b.column
   );
-  for (const e of sorted) {
+  for (const e of spawns) {
     let row = spawnRows.find((r) =>
-      r.frame === e.spawnFrame && r.cells[e.column] === "00"
+      r.frame === e.frame && r.cells[e.column] === "00"
     );
     if (!row) {
-      row = { frame: e.spawnFrame, cells: new Array(GRID_COLS).fill("00") };
+      row = { frame: e.frame, cells: new Array(GRID_COLS).fill("00") };
       spawnRows.push(row);
     }
-    row.cells[e.column] = `${e.letters}0`;
+    row.cells[e.column] = `${e.key}0`;
   }
-  const endFrame =
-    Math.max(...enemies.map((e) => e.spawnFrame + e.lifeFrames)) +
-    30;
   spawnRows.push({ frame: endFrame, cells: new Array(GRID_COLS).fill("00") });
 
   // The runtime plays enemylist bottom-up.
@@ -836,6 +916,7 @@ export function buildStage(stage: number, half: HalfSizes): StageBuild {
     waveRows: ordered.map((r) => ROW_BASE + r.frame),
     endFrame,
     lockFrame: replay.lockFrame - shift,
+    raiders,
   };
 }
 
@@ -882,6 +963,298 @@ function enemyRecord(e: CompiledEnemy): Json {
         death: { mode: 0, param: 0, silent: false, small: false },
       },
       entry: { rows: e.rows },
+    },
+  };
+}
+
+// --- the foo raiders --------------------------------------------------------
+
+/**
+ * Raids drop through from the second stage on. The source flies them from
+ * its second cycle, once the first boss is down; every stage here after the
+ * first has had a boss before it.
+ */
+export const RAID_FIRST_STAGE = 1;
+
+/**
+ * A raider's enemyData key on stage s: Z (clear of the stages' A..J), the
+ * stage letter, and foo's own letter for it — A the blobHead, B the
+ * flyBrain. One a stage, as the blobHead's fire gate is the stage's.
+ */
+export function raiderKey(kind: FooKind, stage: number): string {
+  return `Z${String.fromCharCode(65 + stage)}${
+    kind === "blobHead" ? "A" : "B"
+  }`;
+}
+
+/** Source px/s down the field, as field px per 60 Hz frame. */
+const fieldDown = (pxPerSecond: number) =>
+  pxPerSecond * (FIELD_H / GAME_HEIGHT) * FRAME_MS / 1000;
+/** Source px/s across the field, as field px per 60 Hz frame. */
+const fieldAcross = (pxPerSecond: number) =>
+  pxPerSecond * (FIELD_W / GAME_WIDTH) * FRAME_MS / 1000;
+
+/** How fast each raider comes down, field px per frame: foo's 0.8 and 1.2. */
+export const RAIDER_DESCENT: Record<FooKind, number> = {
+  blobHead: fieldDown(FOO_BLOBHEAD_SPEED),
+  flyBrain: fieldDown(FOO_FLYBRAIN_SPEED),
+};
+
+/**
+ * Frames a raider spawns after its raid. The source mounts it at y -32 on
+ * the field and the runtime spawns at SPAWN_Y, 16 px lower, so it comes in
+ * as late as those 16 px take: from then on it is where the source's is.
+ */
+export function raiderLag(kind: FooKind): number {
+  return Math.round(
+    (SPAWN_Y - FOO_SPAWN_Y * (FIELD_H / GAME_HEIGHT)) / RAIDER_DESCENT[kind],
+  );
+}
+
+/** A blobHead's gun: once every 5 s from its mount, as frames after spawn. */
+const BLOBHEAD_FIRE_FRAMES = Math.round(FOO_BLOBHEAD_FIRE_INTERVAL / FRAME_MS);
+
+/** True once the runtime has culled an enemy here. */
+const culled = (p: Point) =>
+  p.y > FIELD_H + 20 || p.x < -40 || p.x > FIELD_W + 40;
+
+/** Frames from spawn until the runtime culls a scripted enemy. */
+function scriptLife(rows: EntryRow[], spawn: Point, mirror: boolean): number {
+  const run = runEntryScript(rows, spawn, mirror, 2000);
+  const k = run.findIndex(culled);
+  if (k < 0) throw new Error("a raider never leaves the field");
+  return k;
+}
+
+/** Where a raider spawns: its grid column and whether the runtime mirrors it. */
+export function raiderSpawn(kind: FooKind, col: number) {
+  // A flyBrain's x (16 + 32 col) is on the grid. A blobHead's (24 + 32 col)
+  // is 8 px off it: it spawns 8 px out, on the side it funnels away from,
+  // and its script steps it in, which the mirror turns round on the right.
+  const x = fooRaiderX(kind, col);
+  const right = x * FOO_SCALE >= FOO_SIDE_SPLIT;
+  const gx = kind === "blobHead" ? x + (right ? 8 : -8) : x;
+  const column = (gx - 16) / 16;
+  return {
+    column,
+    spawn: { x: gx, y: SPAWN_Y },
+    mirror: gx > FIELD_W / 2,
+  };
+}
+
+/**
+ * The blobHead's script, for one spawned left of the centre (the runtime
+ * mirrors it on the right). It steps the 8 px onto its foo column as it
+ * comes down, marches down at 0.8 px a frame to the funnel line (y 160),
+ * then drifts across at 1 px a frame, still coming down, until it leaves by
+ * the far side, as foo's does. Its gun is open for one fire gate every 5 s
+ * from the source's mount: straight down, one bullet a gate.
+ */
+export function blobHeadRows(stage: number): EntryRow[] {
+  const down = RAIDER_DESCENT.blobHead;
+  const drift = fieldAcross(FOO_FUNNEL_DRIFT);
+  const funnelY = FOO_FUNNEL_Y * (FIELD_H / GAME_HEIGHT);
+  const amp = (v: number) => Math.round(v * 256);
+
+  // The moves, one a frame: the sidestep, the march, then the drift forever.
+  const step = Math.round(8 / down);
+  const sidestep: EntryRow = [
+    step - 1,
+    angleFor(8 / step, down, false),
+    0,
+    amp(Math.hypot(8 / step, down)),
+    ENTRY_ADVANCE,
+  ];
+  const stepped = runEntryScript([sidestep], { x: 0, y: SPAWN_Y }, false, step);
+  const marchAmp = amp(down);
+  const march = Math.round(
+    (funnelY - stepped[step].y) / (marchAmp / 256),
+  );
+  const drifting = step + march;
+  const legs = [
+    { frames: step, angle: sidestep[1], amp: sidestep[3] },
+    { frames: march, angle: angleFor(0, 1, false), amp: marchAmp },
+    {
+      frames: Infinity,
+      angle: angleFor(drift, down, false),
+      amp: amp(Math.hypot(drift, down)),
+    },
+  ];
+  // Rows up to move `until`, one per run of moves with the gate one way,
+  // then the drift on forever with the gun shut.
+  const script = (open: (k: number) => boolean, until: number) => {
+    const rows: EntryRow[] = [];
+    let k = 0;
+    for (const leg of legs) {
+      const end = Math.min(k + leg.frames, until);
+      while (k < end) {
+        const gate = open(k);
+        let n = 1;
+        while (k + n < end && open(k + n) === gate) n++;
+        const flags = ENTRY_ADVANCE | (gate ? 0 : ENTRY_NO_FIRE);
+        rows.push([n - 1, leg.angle, 0, leg.amp, flags]);
+        k += n;
+      }
+    }
+    const last = legs[legs.length - 1];
+    rows.push([
+      ROW_FOREVER,
+      last.angle,
+      0,
+      last.amp,
+      ENTRY_ADVANCE | ENTRY_NO_FIRE,
+    ]);
+    return rows;
+  };
+
+  // Gates while the longest-lived of them is up.
+  const flight = script(() => false, drifting);
+  const life = Math.max(
+    ...FOO_RAID_ROWS[0].map((_, col) => {
+      const { spawn, mirror } = raiderSpawn("blobHead", col);
+      return scriptLife(flight, spawn, mirror);
+    }),
+  );
+  const gate = fireGateFrames(stage);
+  const opens: number[] = [];
+  for (
+    let t = BLOBHEAD_FIRE_FRAMES - raiderLag("blobHead");
+    t <= life;
+    t += BLOBHEAD_FIRE_FRAMES
+  ) {
+    opens.push(t - 1);
+  }
+  const until = Math.max(drifting, ...opens.map((k0) => k0 + gate));
+  return script((k) => opens.some((k0) => k >= k0 && k < k0 + gate), until);
+}
+
+export interface RaiderSpawn {
+  kind: FooKind;
+  /** Its foo column, 0..7. */
+  col: number;
+  /** Its grid column, 0..15. */
+  column: number;
+  /** Wave frame it spawns on (after the stage's shift). */
+  spawnFrame: number;
+  /** Frames from spawn until the runtime culls it, if never shot. */
+  lifeFrames: number;
+  /** The FOO_RAID_ROWS row it drops with. */
+  row: number;
+}
+
+/** Frames from spawn until the runtime culls a raider, if never shot. */
+export function raiderLife(kind: FooKind, col: number, stage: number): number {
+  if (kind === "flyBrain") {
+    // Straight down at its speed; its homing only ever moves it across.
+    return Math.ceil(
+      (FIELD_H + 20 - SPAWN_Y) / RAIDER_DESCENT.flyBrain,
+    );
+  }
+  const { spawn, mirror } = raiderSpawn(kind, col);
+  return scriptLife(blobHeadRows(stage), spawn, mirror);
+}
+
+/**
+ * A stage's raids, in replay frames, as the source's raid timer drops them:
+ * every 7 s from the level's mount, while its formation is locked and still
+ * on the field, and fewer than 12 raiders are. Each raid takes the next of
+ * foo's rows, starting at row `levelNum * 7` of the source level this stage
+ * plays as in the second cycle; an empty row, or one of foo's undefined R
+ * and S raiders, still spends its raid.
+ */
+export function planRaids(
+  stage: number,
+  lockFrame: number,
+  endFrame: number,
+): { frame: number; row: number; kind: FooKind; col: number }[] {
+  if (stage < RAID_FIRST_STAGE) return [];
+  const out: { frame: number; row: number; kind: FooKind; col: number }[] = [];
+  const alive: { from: number; to: number }[] = [];
+  const levelNum = STAGES_PER_CYCLE + stage + 1;
+  let row = levelNum * FOO_RAID_ROW_STRIDE;
+  const every = FOO_RAID_INTERVAL / FRAME_MS;
+  for (let k = 1;; k++) {
+    const frame = Math.ceil(k * every - 1e-9);
+    if (frame >= endFrame) break;
+    if (frame < lockFrame) continue;
+    const up = alive.filter((a) => a.from <= frame && frame < a.to).length;
+    if (up >= FOO_RAID_MAX) continue;
+    const r = row++ % FOO_RAID_ROWS.length;
+    FOO_RAID_ROWS[r].forEach((cell, col) => {
+      const kind: FooKind | null = cell[0] === "A"
+        ? "blobHead"
+        : cell[0] === "B"
+        ? "flyBrain"
+        : null;
+      if (!kind) return;
+      // up from the raid, as the source mounts it, until the runtime culls it
+      alive.push({
+        from: frame,
+        to: frame + raiderLag(kind) + raiderLife(kind, col, stage),
+      });
+      out.push({ frame, row: r, kind, col });
+    });
+  }
+  return out;
+}
+
+/** A raider's record: foo's art, hp and score, and how it flies. */
+function raiderRecord(kind: FooKind, stage: number): Json {
+  const common = {
+    texture: RAIDER_FRAMES[kind],
+    spgage: 1,
+    interval: -1,
+    shadowReverse: false,
+    shadowOffsetY: SHADOW_PARK,
+    // a raider drops through; it never holds the stage open (game.bundle.js)
+    blocksClear: false,
+  };
+  if (kind === "flyBrain") {
+    // The plain path: down at its speed a tick, and from y 320 the
+    // runtime's soliderA homing, x += 0.005 (ship x - x) — foo's own, both.
+    return {
+      ...common,
+      name: "soliderA",
+      hp: FOO_FLYBRAIN_HP,
+      score: FOO_FLYBRAIN_SCORE,
+      speed: RAIDER_DESCENT.flyBrain / 2,
+    };
+  }
+  return {
+    ...common,
+    name: "blobHead",
+    hp: FOO_BLOBHEAD_HP,
+    score: FOO_BLOBHEAD_SCORE,
+    speed: RAIDER_DESCENT.blobHead / 2,
+    bulletData: {
+      texture: ANIMS.fooBullet.frames.map((_, i) => F.fooShot(i)),
+      frameRate: ANIMS.fooBullet.fps,
+      damage: 1,
+      hp: 1,
+      score: 10,
+      spgage: 1,
+      speed: ZAKO_BULLET_SPEED,
+    },
+    dezaemon: {
+      behavior: {
+        animPeriod: Math.round(60 / ANIMS.fooBlobHeadWalk.fps),
+        ground: false,
+        movePattern: 0,
+        move: { mode: 0, flag: false },
+        fire: {
+          enabled: true,
+          geometry: 1,
+          aimed: false,
+          mode: 0,
+          window: FIRE_WINDOW,
+        },
+        rotation: { enabled: false },
+        scale: { enabled: false },
+        zoom: { enabled: false },
+        direction: { enabled: false },
+        death: { mode: 0, param: 0, silent: false, small: false },
+      },
+      entry: { rows: blobHeadRows(stage) },
     },
   };
 }
@@ -1150,6 +1523,12 @@ export async function buildLevel(): Promise<Build> {
     for (const e of st.enemies) {
       enemyData[`enemy${e.letters}`] = enemyRecord(e);
     }
+    for (const kind of new Set(st.raiders.map((r) => r.kind))) {
+      enemyData[`enemy${raiderKey(kind, st.stage)}`] = raiderRecord(
+        kind,
+        st.stage,
+      );
+    }
   }
   const stageRecords: Json = {};
   for (const st of stages) {
@@ -1244,6 +1623,7 @@ export function summary(b: Build): Json {
     stages: b.stages.map((s) => ({
       stage: s.stage,
       enemies: s.enemies.length,
+      raiders: s.raiders.length,
       rows: s.enemylist.length,
       scriptRows: s.enemies.reduce((n, e) => n + e.rows.length, 0),
       lockS: Math.round(s.lockFrame / 6) / 10,

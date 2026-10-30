@@ -723,12 +723,16 @@ they are written out in full.
     enemy (`lastLiveRow`); once that row has spawned and no enemy but the boss
     is left on the field — shot down or flown off — the wave block skips the
     empty rows behind it and runs the wave's own end, `bossAdd`, which fights
-    the stage's boss or clears a stage that has none. Without the flag a stage
-    ends on its wave timer as before, so a runtime without this edit plays such
-    a record to the end of its rows. The cloud game `95-demo` uses it: a Space
-    Invaders level is over when its formation is (see **EVIL INVADERS '95 as a
-    cloud game** below). `tests/95_demo_test.ts` pins both copies and the wave
-    block. Upstream home is `2019-es7/src/phaser/GameScene.js`.
+    the stage's boss or clears a stage that has none. An enemy record with
+    `blocksClear: false` stays out of both halves (`zakoBlocksClear`): a row of
+    nothing else is not the last live one, and one on the field is not left
+    over, so an enemy that only drops through never holds a stage open. Without
+    the flag a stage ends on its wave timer as before, so a runtime without this
+    edit plays such a record to the end of its rows. The cloud game `95-demo`
+    uses it: a Space Invaders level is over when its formation is, whatever foo
+    raiders are still dropping through (see **EVIL INVADERS '95 as a cloud
+    game** below). `tests/95_demo_test.ts` pins both copies, the wave block and
+    the helper. Upstream home is `2019-es7/src/phaser/GameScene.js`.
   - A boss can keep its whole body on the screen through Barlog's slides.
     `bossPatternBarlog` clamps where it slides a boss — its reposition, its dash
     to the ship, the dash before its dive — to 30 px from each wall, whatever
@@ -5939,12 +5943,13 @@ deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --apply    # 
 deno run -A --node-modules-dir=none scripts/95-demo/build-level.ts --revert   # delete it again
 ```
 
-The source's ten levels are the cloud game's ten stages, and its three bosses
-end them in turn. Its numbers are ported verbatim into
-`scripts/95-demo/source.ts` (the stage table, the tuning constants, the
-CORE_GALAGA flight paths, the animation table, the boss roster) and its art is
-copied byte for byte into `scripts/95-demo/art/`, so a conversion needs neither
-the network nor the source checkout, and comes out the same every time.
+The source's ten levels are the cloud game's ten stages, its three bosses end
+them in turn, and its foo raiders drop through from the second on. Its numbers
+are ported verbatim into `scripts/95-demo/source.ts` (the stage table, the
+tuning constants, the CORE_GALAGA flight paths, the animation table, the boss
+roster, foo's raid rows) and its art is copied byte for byte into
+`scripts/95-demo/art/`, so a conversion needs neither the network nor the source
+checkout, and comes out the same every time.
 
 **The formation is choreography.** A shmupX stage scrolls rows of enemies down
 the screen; the source flies squadrons in on Galaga loops, holds an Invaders
@@ -5981,6 +5986,26 @@ aims when most of its own shots are dive shots and fires straight down
 otherwise. The runtime still applies its own rules: no zako shot from within 16
 px of a side edge, none at a ship closer than 40 px, and every zako bullet at
 the one fixed speed.
+
+**The foo raiders drop through.** From its second cycle on the source drops
+foo-v1-ground-shooter's blobHeads and flyBrains through the formation: one of
+foo's own stage rows every 7 s while the formation is locked and fewer than 12
+raiders are up, starting `levelNum × 7` rows in (`FOO_RAID_ROWS`). The cloud
+game drops them from stage 2 on — every stage after the first boss, as the
+source's come after its first — on the same frames of the replay (`planRaids`),
+so they come only while the formation is up. Each raider spawns as late as the
+16 px the runtime spawns it lower take (`raiderLag`), so from then on it is
+where the source's would be. A blobHead (hp 1, 100 points) comes down its foo
+column at 0.8 px a frame and from y 160 drifts across toward the far side at 1
+px a frame until it leaves; its appearance script is built row by row
+(`blobHeadRows`) — an 8 px sidestep off the 16 px grid onto foo's column, the
+march, the drift — with its gun open for one fire gate 5 s after the source
+would have mounted it, foo's bullet straight down. A flyBrain (hp 2, 200 points)
+is a plain-path zako named `soliderA`: it comes down at 1.2 px a frame and from
+y 320 homes on the ship with the runtime's own `x += 0.005 (ship x − x)`, which
+is foo's. Both carry `blocksClear: false`, so the stage still ends on the
+formation's last kill with raiders on the field: the source never lets them hold
+a level open.
 
 **What differs from the source,** and why:
 
@@ -6024,10 +6049,15 @@ the one fixed speed.
   (`RAINBOW_SHOT_FRAMES`). The source's player shots pass through it where the
   runtime's are spent on any enemy bullet they meet, so it has DevilBlast's hp
   and score: it can be shot down.
+- A flyBrain homes twice as hard as foo's: the runtime runs its `soliderA` drift
+  on every 120 Hz tick, where foo ran it once a 60 Hz frame. A blobHead's bullet
+  flies at the runtime's one zako speed (0.675 px a tick, foo's 0.5), and a
+  blobHead neither bounces off the formation and the other raiders nor bursts on
+  a pink bunny, as the source's do: the runtime has no enemy-on-enemy contact.
 - The source's later cycles are not here. A cloud game has ten stages and they
-  are the source's ten levels, so the foo raiders, which only appear from its
-  second cycle on, have nowhere to go, and its bosses meet the player one a
-  stage rather than one a cycle.
+  are the source's ten levels, so its bosses meet the player one a stage rather
+  than one a cycle, and the foo raiders, which the source drops from its second
+  cycle on, drop from the second stage on.
 - The title is set in the repo's 8×8 arcade face rather than Press Start 2P,
   which the CLI cannot rasterise, in the source title's colours.
 - The player's shot art is packed a quarter turn clockwise (`shotArt`): the

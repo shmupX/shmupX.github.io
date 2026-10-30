@@ -11094,6 +11094,15 @@
     scene.enemies.push(enemy);
     return enemy;
   }
+  // endsOnClear: whether an enemy record holds its stage open. One with
+  // `blocksClear: false` — a raider that drops through, not part of the
+  // wave — neither makes its row the stage's last live one nor counts as
+  // left on the field.
+  function zakoBlocksClear(scene, enemyKey) {
+    var data = scene.recipe && scene.recipe.enemyData
+      ? scene.recipe.enemyData["enemy" + enemyKey] : null;
+    return !(data && data.blocksClear === false);
+  }
   function enemyWave(scene) {
     if (scene.waveCount >= scene.stageEnemyPositionList.length) {
       scene.bossAdd();
@@ -16505,7 +16514,8 @@
       for (var lr = 0; lr < this.stageEnemyPositionList.length; lr++) {
         var liveRow = this.stageEnemyPositionList[lr] || [];
         for (var lc = 0; lc < liveRow.length; lc++) {
-          if (String(liveRow[lc]) !== "00") {
+          var liveCode = String(liveRow[lc]);
+          if (liveCode !== "00" && zakoBlocksClear(this, liveCode.slice(0, -1))) {
             this.lastLiveRow = lr;
             break;
           }
@@ -18193,7 +18203,9 @@
             this.waveCount < this.stageEnemyPositionList.length) {
           var liveZako = 0;
           for (var lz = 0; lz < this.enemies.length; lz++) {
-            if (this.enemies[lz] && this.enemies[lz].getData("type") !== "boss") liveZako++;
+            var lzEnemy = this.enemies[lz];
+            if (lzEnemy && lzEnemy.getData("type") !== "boss" &&
+                zakoBlocksClear(this, lzEnemy.getData("enemyKey"))) liveZako++;
           }
           if (liveZako === 0) {
             this.waveCount = this.stageEnemyPositionList.length;

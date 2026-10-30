@@ -10,7 +10,8 @@
 //   through, at every rank the stage can reach (dezaFirePulse, zakoReload).
 //
 // Then the record itself: ten stages that spawn every enemy they name, every
-// frame it names packed, keys RTDB takes, the schema's shape, and the boss.
+// frame it names packed, keys RTDB takes, the schema's shape, and the boss;
+// and the foo raiders, which drop through without holding a stage open.
 
 import { assert, assertEquals } from "@std/assert";
 import { createLevelLoaderPlugin } from "../static/phaser-plugins/level-loader.js";
@@ -31,10 +32,15 @@ import {
 import {
   ANIMS,
   DRAW_SCALE,
+  FOO_HOMING_Y,
+  FOO_RAID_ROWS,
+  fooRaiderX,
+  GAME_HEIGHT,
   RAINBOW_BULLET_TINTS,
   STAGES,
 } from "../scripts/95-demo/source.ts";
 import {
+  blobHeadRows,
   buildArt,
   buildLevel,
   buildStage,
@@ -43,6 +49,11 @@ import {
   enemyLetters,
   fireGateFrames,
   HORIZON_MS,
+  planRaids,
+  RAID_FIRST_STAGE,
+  raiderKey,
+  raiderLag,
+  raiderSpawn,
   SEED,
   TEXTURE_LIMIT,
 } from "../scripts/95-demo/build-level.ts";
@@ -147,7 +158,7 @@ Deno.test("an endsOnClear stage skips its empty tail once the field is clear", a
       "this.endsOnClear = !!(this.recipe && this.recipe.endsOnClear)",
     ),
   );
-  assert(create.includes('String(liveRow[lc]) !== "00"'));
+  assert(create.includes('liveCode !== "00"'));
   // ...and the wave block jumps to the wave's end when nothing is left.
   const tick = slice(
     bundle,
@@ -389,6 +400,15 @@ Deno.test("enemy letters are unique per stage and never the stock A or B", () =>
       seen.add(l);
     }
   }
+  // the raiders' keys are clear of every stage's
+  for (let s = 0; s < 10; s++) {
+    for (const kind of ["blobHead", "flyBrain"] as const) {
+      const l = raiderKey(kind, s);
+      assert(/^Z[A-Z]{2}$/.test(l));
+      assert(!seen.has(l), l);
+      seen.add(l);
+    }
+  }
 });
 
 Deno.test("an enemy aims as most of its own shots do", async () => {
@@ -460,6 +480,102 @@ Deno.test("keepOnScreen widens Barlog's slide margin to half the boss's width", 
   assert(!/clamp2\([^;]*, 30, GW6 - 30\)/.test(barlog));
 });
 
+// --- the foo raiders ---------------------------------------------------------
+
+Deno.test("a blocksClear: false record never holds an endsOnClear stage open", async () => {
+  const bundle = await read("static/games/2028-ai/game.bundle.js");
+  const blocks = new Function(
+    `${lift(bundle, "zakoBlocksClear")}\nreturn zakoBlocksClear;`,
+  )();
+  const field = {
+    recipe: {
+      enemyData: { enemyZBA: { blocksClear: false }, enemyAAA: { hp: 1 } },
+    },
+  };
+  assertEquals(blocks(field, "ZBA"), false);
+  assertEquals(blocks(field, "AAA"), true);
+  // a record without the flag, or no record at all, holds it as stock does
+  assertEquals(blocks(field, "QQQ"), true);
+  assertEquals(blocks({ recipe: null }, "ZBA"), true);
+  // both halves of the clear ask it: the last live row and the live count
+  const create = slice(
+    bundle,
+    "// endsOnClear: the spawn-order index",
+    "this.stageBgOverlay = null;",
+  );
+  assert(create.includes("zakoBlocksClear(this, liveCode.slice(0, -1))"));
+  const tick = slice(
+    bundle,
+    "// A record with endsOnClear ends the stage",
+    "if (this.bossTimerStartFlg",
+  );
+  assert(tick.includes('zakoBlocksClear(this, lzEnemy.getData("enemyKey"))'));
+});
+
+Deno.test("raids drop every 7 s while the formation is up, through foo's rows in turn", () => {
+  assertEquals(planRaids(0, 0, 100_000), [], "none before the first boss");
+  const lock = 1000, end = 4000;
+  for (let s = RAID_FIRST_STAGE; s < STAGES.length; s++) {
+    // the source's raid timer, from the level's mount; only the ones that
+    // find the formation locked and still up drop a row
+    const due = [...Array(12).keys()].map((k) => 420 * (k + 1))
+      .filter((f) => f >= lock && f < end);
+    // the second cycle's level for this stage starts foo's rows at 7 x it,
+    // and each raid spends one, empty or not
+    const level = 11 + s + 1;
+    const expected = due.flatMap((frame, i) => {
+      const row = (level * 7 + i) % FOO_RAID_ROWS.length;
+      return FOO_RAID_ROWS[row].flatMap((cell, col) =>
+        cell[0] === "A"
+          ? [{ frame, row, kind: "blobHead", col }]
+          : cell[0] === "B"
+          ? [{ frame, row, kind: "flyBrain", col }]
+          : []
+      );
+    });
+    assertEquals(planRaids(s, lock, end), expected, `stage ${s}`);
+  }
+});
+
+Deno.test("a blobHead marches down foo's column, funnels across and fires every 5 s", () => {
+  const lag = raiderLag("blobHead");
+  assertEquals(lag, 20, "16 px at 0.8 px a frame");
+  assertEquals(raiderLag("flyBrain"), 13);
+  for (const stage of [1, 9]) {
+    const rows = blobHeadRows(stage);
+    // one gate, fireGateFrames long, open from the move the source fires
+    // on: 5 s after it mounts the raider
+    const open = rowFlagsByFrame(rows, 900).flatMap((f, k) =>
+      f & ENTRY_NO_FIRE ? [] : [k]
+    );
+    assertEquals(
+      open,
+      [...Array(fireGateFrames(stage)).keys()].map((i) => 300 - lag - 1 + i),
+    );
+    for (let col = 0; col < 8; col++) {
+      const { spawn, mirror, column } = raiderSpawn("blobHead", col);
+      assertEquals(spawn.x, 16 + 16 * column, "on the wave grid");
+      const run = runEntryScript(rows, spawn, mirror, 900);
+      // past its 8 px sidestep, on foo's column, and where the source's is:
+      // y -32 + 0.8 t from its mount
+      for (const k of [10, 100, 200]) {
+        assert(Math.abs(run[k].x - fooRaiderX("blobHead", col)) < 0.1);
+        assert(Math.abs(run[k].y - (-32 + 0.8 * (k + lag))) < 0.3);
+      }
+      // from the funnel line, 1 px across to 0.8 down, toward the far side
+      const k0 = Math.round((160 + 32) / 0.8) - lag;
+      assert(Math.abs(run[k0].y - 160) < 0.5, `col ${col} funnels at y 160`);
+      const dx = run[k0 + 100].x - run[k0].x;
+      const dy = run[k0 + 100].y - run[k0].y;
+      assert(Math.abs(Math.abs(dx) - 100) < 2 && Math.abs(dy - 80) < 2);
+      assertEquals(Math.sign(dx), col < 4 ? 1 : -1);
+      // and off that side, on the screen's height, its one gate behind it
+      const gone = run.findIndex((p) => p.x < -40 || p.x > 296);
+      assert(gone > open[open.length - 1] && run[gone].y < 480, `col ${col}`);
+    }
+  }
+});
+
 Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
   const { record, stages } = await buildLevel();
   assertEquals(record.name, "95-demo");
@@ -480,7 +596,7 @@ Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
   ]);
   assertEquals(record.enemylist, record.stages.stage0.enemylist);
 
-  let enemies = 0;
+  let enemies = 0, raiders = 0;
   for (
     const [key, st] of Object.entries(record.stages) as [string, Stage][]
   ) {
@@ -494,16 +610,56 @@ Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
       assertEquals(row.length, record.width);
       for (const cell of row) {
         if (cell === "00") continue;
-        enemies++;
-        assert(record.enemyData[`enemy${cell.slice(0, -1)}`], cell);
+        const rec = record.enemyData[`enemy${cell.slice(0, -1)}`];
+        assert(rec, cell);
+        if (cell[0] === "Z") {
+          raiders++;
+          assert(key !== "stage0", "no raids before the first boss");
+          assertEquals(rec.blocksClear, false, cell);
+        } else {
+          enemies++;
+          assertEquals(rec.blocksClear, undefined, cell);
+        }
         assertEquals(cell.slice(-1), "0", "no item drops: the source has none");
       }
     }
   }
-  assertEquals(enemies, Object.keys(record.enemyData).length);
+  assertEquals(
+    enemies,
+    Object.keys(record.enemyData).filter((k) => !k.startsWith("enemyZ"))
+      .length,
+  );
   assertEquals(
     enemies,
     STAGES.reduce((n, d) => n + planSlots(d).length, 0),
+  );
+  assertEquals(raiders, stages.reduce((n, s) => n + s.raiders.length, 0));
+  for (const s of stages.slice(RAID_FIRST_STAGE)) {
+    assert(s.raiders.length > 0, `stage ${s.stage} has raids`);
+  }
+
+  // The raiders: a blobHead a stage, scripted, its gun the stage's gate...
+  for (const s of stages) {
+    const blob = record.enemyData[`enemy${raiderKey("blobHead", s.stage)}`];
+    if (!s.raiders.some((r) => r.kind === "blobHead")) continue;
+    assertEquals([blob.name, blob.hp, blob.score], ["blobHead", 1, 100]);
+    assertEquals(blob.dezaemon.entry.rows, blobHeadRows(s.stage));
+    assertEquals(blob.dezaemon.behavior.fire.aimed, false);
+    assertEquals(blob.bulletData.texture, ["ei95FooShot0", "ei95FooShot1"]);
+  }
+  // ...and the flyBrain on the plain path as the runtime's soliderA, whose
+  // homing (x += 0.005 (ship x - x) from y 320) is foo's own; it never fires.
+  const fly = record.enemyData[`enemy${raiderKey("flyBrain", 1)}`];
+  assertEquals([fly.name, fly.hp, fly.score], ["soliderA", 2, 200]);
+  assertEquals(fly.speed, 0.6, "1.2 px a frame, two ticks");
+  assertEquals(fly.interval, -1);
+  assertEquals(fly.dezaemon, undefined);
+  assertEquals(FOO_HOMING_Y * 480 / GAME_HEIGHT, 480 / 1.5);
+  const bundle = await read("static/games/2028-ai/game.bundle.js");
+  assert(
+    bundle.includes(
+      "var driftTo = enemy.y >= GH2 / 1.5 ? aimPlayer(scene) : null;",
+    ),
   );
   for (const s of stages) {
     for (const e of s.enemies) assert(e.maxVisibleError <= 0.75 + 1e-9);
