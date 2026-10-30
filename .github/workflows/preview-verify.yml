@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
-          deno-version: v2.9.7
+          deno-version: v2.9.8
 
       # Printed BEFORE the check, on purpose. verify-preview.ts searches for a
       # browser and, finding none, fails with a clean message — but if the

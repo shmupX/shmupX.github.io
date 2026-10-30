@@ -327,7 +327,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         if: steps.upload.outcome == 'success' && inputs.review
         with:
-          deno-version: v2.9.7
+          deno-version: v2.9.8
       - name: Submit the processed build for App Store review
         if: steps.upload.outcome == 'success' && inputs.review
         env:
