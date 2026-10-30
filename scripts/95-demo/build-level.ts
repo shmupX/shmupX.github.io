@@ -52,7 +52,9 @@
  *     end in a straight shot, a second or so apart, and its dive stands in
  *     for a drift that reaches the ship. Their flap is the idle; the
  *     RainbowInvader's bullet cycles the source's eight tints, baked as
- *     frames at the source's one-tint-per-frame rate.
+ *     frames at the source's one-tint-per-frame rate. `keepOnScreen` keeps
+ *     their whole ~100 px body on the screen through every slide, as the
+ *     source's bounce off the walls does (the butt-devil trio's too).
  * - `playerData`/`playerData2`, the source's two ships and the red/white
  *   shot; three hits, as the source's three lives.
  * - the art all of that names, packed into the level's own sheet, and a
@@ -958,6 +960,8 @@ export function redDevilRecord(stage = STAGES.length - 1): Json {
     stage2: {
       hpBelow: Math.round((BUTT_DEVIL_COUNT * devilHp / totalHp) * 1e4) / 1e4,
       attackPattern: "boss1",
+      // the trio slides on Barlog's routine too, whole on the screen
+      keepOnScreen: true,
       anim: {
         morph: [
           ...ANIMS.redDevilRelease.frames.slice(0, 5).map(F.redDevil),
@@ -1012,6 +1016,10 @@ export function invaderRecord(kind: InvaderBossKind, stage: number): Json {
   return {
     name: kind === "cool" ? "coolInvader" : "rainbowInvader",
     attackPattern: "boss1",
+    // Barlog's slides keep a boss's centre 30 px from the walls, and an
+    // Invader is ~100 px wide; the source's bounce off the walls keeps it
+    // whole, so its slides keep its whole body on (bossSlideMargin).
+    keepOnScreen: true,
     hp: scaledHp(BOSS_HP, stage),
     score: BOSS_SCORE,
     spgage: 30,

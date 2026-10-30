@@ -729,6 +729,17 @@ they are written out in full.
     Invaders level is over when its formation is (see **EVIL INVADERS '95 as a
     cloud game** below). `tests/95_demo_test.ts` pins both copies and the wave
     block. Upstream home is `2019-es7/src/phaser/GameScene.js`.
+  - A boss can keep its whole body on the screen through Barlog's slides.
+    `bossPatternBarlog` clamps where it slides a boss — its reposition, its dash
+    to the ship, the dash before its dive — to 30 px from each wall, whatever
+    the boss's size, so anything wider than 60 px hangs off the edge at the end
+    of a slide (2028.Ai's own 128 px Barlog does). A boss record with
+    `keepOnScreen: true` widens that margin to half its drawn width
+    (`bossSlideMargin`), read off the record being fought, so a `stage2` that
+    inherits the flag keeps it. Without the flag nothing changes. The cloud game
+    `95-demo`'s CoolInvader, RainbowInvader and butt-devil trio carry it;
+    `tests/95_demo_test.ts` pins the helper and the three clamps. Upstream home
+    is `2019-es7/src/phaser/bosses/BossBarlog.js`.
 - `lib/rtdb-root.ts` — where shmupX's own games sit in the Realtime Database it
   shares with cmg: `levels`, `levelAliases`, `atlases` and `characters` under
   `shmupX/`, beside cmg's root copies (see **shmupX's corner of the shared
@@ -5998,18 +6009,21 @@ the one fixed speed.
   `stage2`, one trio sprite on Barlog's routine below the devils' share of its
   bar — their 3 × 12 hp of the source's 86 in all, both scaled alike — since a
   boss cannot spawn enemies when it dies.
-- The two Invaders drift sideways, bounce off the walls and drop a huge
-  invader bullet straight down every two seconds. Barlog's routine (`"boss1"`)
-  is the stock one that slides across and drops straight shots, so they fly
-  it: its reposition and its slide to the ship each end in a straight shot,
-  about a second apart, and its dive stands in for a drift that reaches the
-  ship. Their flap is the idle (their hit frames are the same body flashed
-  red, which the runtime has no stance for). The bullet is the invader's own,
-  blown up to the source's 7.5× and 9×; the RainbowInvader's picks one of
-  eight tints at random every frame in the source, so its frames are baked in
-  the eight tints and cycled at 60 fps (`RAINBOW_SHOT_FRAMES`). The source's
-  player shots pass through it where the runtime's are spent on any enemy
-  bullet they meet, so it has DevilBlast's hp and score: it can be shot down.
+- The two Invaders drift sideways, bounce off the walls and drop a huge invader
+  bullet straight down every two seconds. Barlog's routine (`"boss1"`) is the
+  stock one that slides across and drops straight shots, so they fly it: its
+  reposition and its slide to the ship each end in a straight shot, about a
+  second apart, and its dive stands in for a drift that reaches the ship.
+  Barlog's slides keep only a boss's centre off the walls, so the Invaders
+  (about 100 px wide) and the butt-devil trio carry `keepOnScreen`, which keeps
+  their whole body on the screen as the source's bounce does. Their flap is the
+  idle (their hit frames are the same body flashed red, which the runtime has no
+  stance for). The bullet is the invader's own, blown up to the source's 7.5×
+  and 9×; the RainbowInvader's picks one of eight tints at random every frame in
+  the source, so its frames are baked in the eight tints and cycled at 60 fps
+  (`RAINBOW_SHOT_FRAMES`). The source's player shots pass through it where the
+  runtime's are spent on any enemy bullet they meet, so it has DevilBlast's hp
+  and score: it can be shot down.
 - The source's later cycles are not here. A cloud game has ten stages and they
   are the source's ten levels, so the foo raiders, which only appear from its
   second cycle on, have nowhere to go, and its bosses meet the player one a

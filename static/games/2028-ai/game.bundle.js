@@ -13919,12 +13919,24 @@
   function clamp2(v, lo, hi) {
     return v < lo ? lo : v > hi ? hi : v;
   }
+  // How far from each side wall the routine's slides keep the boss's centre.
+  // Stock is 30 px whatever the boss's size, so a body wider than 60 px hangs
+  // off the screen at the end of a slide (2028.Ai's own 128 px Barlog does).
+  // A record with `keepOnScreen: true` keeps its whole body on: the margin
+  // grows to half its drawn width. The record is the one being fought — the
+  // stage-2 record once the boss has turned (it inherits the flag).
+  function bossSlideMargin(scene, boss) {
+    var rec = scene.bossStage2Done && scene.bossStage2 ? scene.bossStage2 : scene.bossRecord;
+    if (!rec || !rec.keepOnScreen || !boss) return 30;
+    return Math.max(30, Math.ceil((boss.displayWidth || boss.width || 0) / 2));
+  }
   function bossPatternBarlog(scene, seed) {
     var boss = scene.bossSprite;
     var baseY = scene.bossBaseY || GH5 / 4;
     var diveY = GH5 - 40;
+    var margin = bossSlideMargin(scene, boss);
     if (seed < 0.3) {
-      var rx = clamp2(Math.random() * GW6, 30, GW6 - 30);
+      var rx = clamp2(Math.random() * GW6, margin, GW6 - margin);
       var ry = clamp2(60 + Math.random() * 120, 60, 200);
       scene.tweens.add({
         targets: boss,
@@ -13940,7 +13952,7 @@
         }
       });
     } else if (seed < 0.8) {
-      var px = clamp2(aimX(scene, boss.x), 30, GW6 - 30);
+      var px = clamp2(aimX(scene, boss.x), margin, GW6 - margin);
       scene.tweens.add({
         targets: boss,
         x: px,
@@ -13957,7 +13969,7 @@
         }
       });
     } else {
-      var px2 = clamp2(aimX(scene, boss.x), 30, GW6 - 30);
+      var px2 = clamp2(aimX(scene, boss.x), margin, GW6 - margin);
       scene.tweens.add({
         targets: boss,
         x: px2,

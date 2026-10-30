@@ -432,6 +432,34 @@ interface Stage {
   waveInterval: number;
 }
 
+Deno.test("keepOnScreen widens Barlog's slide margin to half the boss's width", async () => {
+  const bundle = await read("static/games/2028-ai/game.bundle.js");
+  const margin = new Function(
+    `${lift(bundle, "bossSlideMargin")}\nreturn bossSlideMargin;`,
+  )();
+  const body = (w: number) => ({ displayWidth: w, width: w });
+  const fight = (
+    rec: Record<string, unknown>,
+    stage2: Record<string, unknown> | null = null,
+  ) => ({ bossRecord: rec, bossStage2: stage2, bossStage2Done: !!stage2 });
+  // stock: only the centre keeps off the walls
+  assertEquals(margin(fight({}), body(102)), 30);
+  // the flag keeps the whole body on, an Invader's 102 px
+  assertEquals(margin(fight({ keepOnScreen: true }), body(102)), 51);
+  // and never pulls a narrow boss further in than stock
+  assertEquals(margin(fight({ keepOnScreen: true }), body(40)), 30);
+  // past its second stage the record fought is the stage-2 one
+  assertEquals(margin(fight({}, { keepOnScreen: true }), body(64)), 32);
+  // every slide the routine makes is clamped by it
+  const barlog = lift(bundle, "bossPatternBarlog");
+  assert(barlog.includes("var margin = bossSlideMargin(scene, boss);"));
+  assertEquals(
+    barlog.match(/clamp2\([^;]*, margin, GW6 - margin\)/g)?.length,
+    3,
+  );
+  assert(!/clamp2\([^;]*, 30, GW6 - 30\)/.test(barlog));
+});
+
 Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
   const { record, stages } = await buildLevel();
   assertEquals(record.name, "95-demo");
@@ -531,6 +559,17 @@ Deno.test("the 95-demo record: ten stages, its art, its boss", async () => {
   assertEquals(rainbow.bulletData.texture.length, RAINBOW_BULLET_TINTS.length);
   assertEquals(rainbow.bulletData.frameRate, 60);
   assertEquals(record.bossData.boss8.hp, 47);
+  // Barlog's slides keep the Invaders and the butt-devil trio whole on the
+  // screen; the RedDevil flies Fang's routine, which never slides it.
+  for (let s = 0; s < STAGES.length; s++) {
+    const b = record.bossData[`boss${s}`];
+    if (b.name === "redDevil") {
+      assertEquals(b.keepOnScreen, undefined, `boss${s}`);
+      assertEquals(b.stage2.keepOnScreen, true, `boss${s} stage2`);
+    } else {
+      assertEquals(b.keepOnScreen, true, `boss${s} ${b.name}`);
+    }
+  }
 
   // The SP bomb's cut-in is rando's nine — what every custom game plays —
   // carried as the level's own under the stock names, so the eShop's web
