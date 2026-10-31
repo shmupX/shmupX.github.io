@@ -15,6 +15,7 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   ANIMS,
+  BURST,
   ENEMY_CLASSES,
   GAME_WIDTH,
   LEVELS,
@@ -36,13 +37,22 @@ import {
   buildArt,
   buildLevel,
   buildStage,
+  BURST_ANIM_PERIOD,
+  BURST_BLANKS,
+  BURST_FRAMES,
+  BURST_HOLD,
+  BURST_ZOOM,
+  burstRecord,
   ENTRY_Y,
+  hitGateHits,
   RAINBOW_SHOT_CYCLE,
   SCORE_PER_HP,
   stagePlan,
   tickSpeed,
 } from "../scripts/evil-invaders/build-level.ts";
 import {
+  burstFrames,
+  FIELD_SCALE,
   gridFrame,
   loadArt,
   toFieldArt,
@@ -266,12 +276,18 @@ Deno.test("the evil-invaders record: two stages, its art, the RedDevil boss", as
       }
     }
   }
-  assertEquals(enemies, Object.keys(record.enemyData).length);
+  const bursts = Object.keys(record.enemyData).filter((k) =>
+    record.enemyData[k].name === "burst"
+  );
+  assertEquals(enemies + bursts.length, Object.keys(record.enemyData).length);
   assertEquals(
     enemies,
     LEVELS.reduce((n, l) => n + l.enemies.length, 0) - 1,
     "every spawn but the boss",
   );
+  // the two Invaders at the two sizes level 2 draws them: four bursts, none
+  // of them in a grid cell
+  assertEquals(bursts, ["enemyBAI", "enemyBAJ", "enemyBAK", "enemyBAL"]);
   // the table's hp, a hundred points an hp, the source's own gun
   const big = record.enemyData.enemyAAA;
   assertEquals(big.name, "bowser");
@@ -292,6 +308,30 @@ Deno.test("the evil-invaders record: two stages, its art, the RedDevil boss", as
   assertEquals(devil.bulletData.facing, 45);
   const rainbow = record.enemyData.enemyBAB;
   assertEquals(rainbow.name, "rainbowInvader");
+  // The Invaders' hit gate as hp: the table's 8, times the six bubbles one
+  // of the source's 360 ms gates lets through; the score stays the table's.
+  assertEquals(hitGateHits(), 6);
+  assertEquals(rainbow.hp, 8 * 6);
+  assertEquals(rainbow.score, 8 * SCORE_PER_HP);
+  assertEquals(record.enemyData.enemyBAA.hp, 60);
+  assertEquals(record.enemyData.enemyBAC.hp, 36);
+  assertEquals(record.enemyData.enemyBAH.hp, 24);
+  assertEquals(big.hp, 25, "Bowser takes every bullet, as in the source");
+  // An Invader vanishes into its burst: the death word spawns the burst
+  // record and draws no blast of the runtime's.
+  assertEquals(rainbow.dezaemon.behavior.death, {
+    mode: 2,
+    param: 0,
+    key: 0x80,
+    silent: true,
+    small: false,
+  });
+  assertEquals(rainbow.dezaemon.deathChild, "enemyBAJ");
+  assertEquals(record.enemyData.enemyBAA.dezaemon.deathChild, "enemyBAI");
+  assertEquals(record.enemyData.enemyBAC.dezaemon.deathChild, "enemyBAK");
+  assertEquals(record.enemyData.enemyBAH.dezaemon.deathChild, "enemyBAL");
+  assertEquals(big.dezaemon.behavior.death.mode, 0);
+  assertEquals("deathChild" in big.dezaemon, false);
   assertEquals(rainbow.bulletData.texture.length, RAINBOW_SHOT_CYCLE.length);
   assertEquals(rainbow.bulletData.frameRate, 60);
   assertEquals(new Set(rainbow.bulletData.texture).size, 16);
@@ -487,4 +527,121 @@ Deno.test("evil-invaders is listed as a web build, installed from this origin", 
   );
   // the field is the 256x480 the flight is scaled onto
   assertEquals(FIELD_H, 480);
+});
+
+// --- the Invaders' death bursts ----------------------------------------------
+
+Deno.test("a death burst plays its frames where the Invader died, then leaves by the top, out of every contact pass", async () => {
+  const rec = burstRecord("coolInvader", 0.5);
+  assertEquals(rec.name, "burst");
+  assertEquals(rec.hp, "infinity");
+  // the baked frames once, then blanks: the runtime's animation clock runs
+  // on milliseconds, so the blank tail has to outlast the hold
+  assertEquals(rec.texture.length, BURST_FRAMES + BURST_BLANKS);
+  assertEquals(
+    rec.texture.slice(BURST_FRAMES),
+    new Array(BURST_BLANKS).fill("eiBlank"),
+  );
+  assertEquals(rec.dezaemon.behavior.animPeriod, BURST_ANIM_PERIOD);
+  assertEquals(
+    BURST_FRAMES * BURST_ANIM_PERIOD,
+    30,
+    "the source's half second",
+  );
+  assert(BURST_HOLD >= BURST_FRAMES * BURST_ANIM_PERIOD);
+  assert(BURST_HOLD + 4 <= (BURST_FRAMES + BURST_BLANKS) * BURST_ANIM_PERIOD);
+  // a zoom off unity is what the runtime's shot and contact passes skip
+  const zoom = rec.dezaemon.behavior.zoom;
+  assertEquals(zoom.enabled, true);
+  assertEquals([zoom.from, zoom.to, zoom.step], [BURST_ZOOM, BURST_ZOOM, 0]);
+  assert(Math.abs(BURST_ZOOM - 1) > 0.02);
+  assertEquals(rec.dezaemon.behavior.fire.enabled, false);
+  assertEquals(rec.dezaemon.behavior.death.silent, true);
+  // the script: held where it spawned for the hold, then straight up at
+  // full speed, past the top (where a successor is retired) within four
+  // frames from the bottom of the field
+  const rows = rec.dezaemon.entry.rows;
+  for (const spawn of [{ x: 40, y: 470 }, { x: 200, y: 100 }]) {
+    const run = runEntryScript(rows, spawn, spawn.x > 128, BURST_HOLD + 10);
+    for (let k = 1; k <= BURST_HOLD; k++) {
+      assertEquals(run[k], spawn, `held at ${k}`);
+    }
+    // straight up: the runtime's cos(pi/2) leaves a femtometre of drift
+    assert(Math.abs(run[BURST_HOLD + 4].x - spawn.x) < 1e-9, "straight up");
+    assert(run[BURST_HOLD + 4].y < -16, `${run[BURST_HOLD + 4].y}`);
+  }
+  // every frame it names is packed
+  const { record } = await buildLevel();
+  for (const name of rec.texture) assert(record.atlasFrames[name], name);
+  assertEquals(record.enemyData.enemyBAI, rec);
+});
+
+Deno.test("burstFrames bakes the source's emitter: a hundred particles from the anchor, scattering, falling and fading", async () => {
+  const sheet = await loadArt(SHEETS.coolInvaderParticles.file);
+  const opts = {
+    spriteScale: 0.5,
+    anchorDrop: 49,
+    frames: 10,
+    periodMs: 50,
+    size: 160,
+    zoom: BURST_ZOOM,
+    seed: 7,
+  };
+  const frames = burstFrames(
+    sheet,
+    SHEETS.coolInvaderParticles,
+    BURST.sheets.coolInvader.frames,
+    BURST,
+    opts,
+  );
+  assertEquals(frames.length, 10);
+  for (const f of frames) assertEquals([f.width, f.height], [160, 160]);
+  // the same seed bakes the same pixels
+  const again = burstFrames(
+    sheet,
+    SHEETS.coolInvaderParticles,
+    BURST.sheets.coolInvader.frames,
+    BURST,
+    opts,
+  );
+  assertEquals(frames[3].data, again[3].data);
+  const lit = (r: { width: number; height: number; data: Uint8Array }) => {
+    let n = 0, sum = 0, cx = 0, cy = 0;
+    for (let i = 0; i < r.data.length; i += 4) {
+      const a = r.data[i + 3];
+      if (!a) continue;
+      n++;
+      sum += a;
+      cx += (i / 4) % r.width;
+      cy += Math.floor(i / 4 / r.width);
+    }
+    return { n, sum, cx: cx / n, cy: cy / n };
+  };
+  // frame 0: every particle still at the emitter, the sprite's bottom
+  // centre, which sits anchorDrop (over the zoom) below the frame's centre
+  const first = lit(frames[0]);
+  assert(Math.abs(first.cx - 80) < 2, `${first.cx}`);
+  assert(Math.abs(first.cy - (80 + 49 / BURST_ZOOM)) < 2, `${first.cy}`);
+  // then they scatter (more lit pixels) and fade (less alpha in all)
+  const mid = lit(frames[4]);
+  const late = lit(frames[9]);
+  assert(mid.n > first.n, `${mid.n} > ${first.n}`);
+  // (frame 0 piles every particle on one spot, where the additive blend
+  // clips at white, so its total alpha says nothing about fading)
+  assert(late.sum < mid.sum, "fading");
+  // and fall: one particle with no speed of its own drops under the
+  // emitter's gravity alone, g t^2 / 2 in source px, on the field over the zoom
+  const still = burstFrames(
+    sheet,
+    SHEETS.coolInvaderParticles,
+    BURST.sheets.coolInvader.frames,
+    { ...BURST, count: 1, minSpeed: 0, maxSpeed: 0 },
+    { ...opts, anchorDrop: 0 },
+  );
+  const t = 9 * opts.periodMs / 1000;
+  const drop = BURST.gravity * t * t / 2 * FIELD_SCALE / BURST_ZOOM;
+  const s0 = lit(still[0]), s9 = lit(still[9]);
+  assert(Math.abs(s0.cy - 80) < 2, `${s0.cy}`);
+  assert(Math.abs(s9.cy - (80 + drop)) < 2, `${s9.cy} vs ${80 + drop}`);
+  assert(Math.abs(s9.cx - s0.cx) < 1, "no drift sideways");
 });
