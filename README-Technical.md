@@ -733,6 +733,14 @@ they are written out in full.
     raiders are still dropping through (see **EVIL INVADERS '95 as a cloud
     game** below). `tests/95_demo_test.ts` pins both copies, the wave block and
     the helper. Upstream home is `2019-es7/src/phaser/GameScene.js`.
+  - Today's board names the browser that raised it. `submitHighScore` asks the
+    page for a champion id (`championHolder`, `__SHMUPX_CHAMPION__.holder()`,
+    offered by `static/champion/champion.js`), writes it as `holder` on the
+    daily board in the same transaction as the value, and fires
+    `shmupx:daily-best` on `window` when the committed board is this browser's.
+    Without the hook nothing changes. See **The daily world champion** below;
+    `tests/game_scores_test.ts` runs it through the submit path. Upstream home
+    is `2019-es7/src/firebaseScores.js`.
   - A boss can keep its whole body on the screen through Barlog's slides.
     `bossPatternBarlog` clamps where it slides a boss — its reposition, its dash
     to the ship, the dash before its dive — to 30 px from each wall, whatever
@@ -3013,6 +3021,106 @@ the packaged desktop app still read the shared cookie and push it up. The
 contaminated boards above are left as they are; cleaning them is a manual write,
 and it holds only once those bundles are gone. `tests/game_scores_test.ts` runs
 the bundle's own score code under a fake SDK and a cookie jar.
+
+## The daily world champion
+
+Whoever holds a game's TODAY'S BEST when the UTC day ends gets a push
+notification saying so: _🏆 You're the daily world champion! Your 114,500 in
+SQUAD was the world's best score on Oct 30 (UTC)._ Tapping it opens the game.
+
+**A board names the browser that raised it.** The boards are open to anyone and
+carried only `{value, updatedAt}`, so nothing said who set one. Now a page that
+can be told it won offers a champion id: `static/champion/champion.js` keeps a
+random secret in `localStorage` (`shmupx-champion-v1`, per origin, so each
+`<name>.codemonkey.games` is its own) and hands the bundle the secret's SHA-256
+as `__SHMUPX_CHAMPION__.holder()`. `submitHighScore` puts that `holder` on
+today's board in the same transaction as the value (`createScorePayload`,
+`championHolder`), never on the all-time one, and fires `shmupx:daily-best`
+(`{gameId, date, value, holder, name}`) on `window` when the board the
+transaction committed is this browser's: an equal score already there keeps its
+own holder, as it keeps its place. A page without the script, an exported app,
+an older bundle and a god run write no holder, and nobody is told about their
+records.
+
+**Opting in is one tap, and only where a push can arrive.** On that event (for
+today's board; one that only landed after midnight is past its job) a player who
+has not said yes on this page is offered NOTIFY ME, or NOT NOW, which holds for
+the rest of that UTC day. The offer goes in the top page when the game is in
+this origin's iframe, above the launcher's touch pad, and keeps its taps, clicks
+and keys from the game. Yes asks for notification permission from the tap,
+registers `static/champion/sw.js` at scope `/champion/` — a path no page lives
+under, so it never sits in front of a request, and the root scope stays
+`/emu-sw.js`'s — subscribes with the VAPID key in `static/champion/config.json`,
+and writes the subscription, together with the secret and the games this browser
+raised a board in (name and page, newest 40), **sealed** to the job's box key
+(`static/champion/box.js`: ECDH P-256, HKDF-SHA-256, AES-256-GCM) at
+`shmupX/champions/subs/<holder>`. The yes is kept (`optedIn`): permission the
+origin was given for something else, such as the editor's export alerts, is not
+one. A player who said yes gets a line that the new best is in hand, with TURN
+OFF, which deletes the box and drops the subscription; the box is sealed again
+for every new best, and on the next visit if a seal never made it in or the
+browser replaced the subscription. One who blocked notifications is never asked.
+The script runs only on the hosts `config.json` names (`codemonkey.games` and
+its level subdomains), in a secure context with service workers and the Push
+API, so the packaged launcher's loopback page, the itch.io channel and a browser
+without Web Push offer no holder. Safari on iOS has Web Push only for a site
+added to the Home Screen.
+
+**The job runs in GitHub Actions, not the server.**
+`.github/workflows/daily-champion.yml` runs `deno task champion:run --send` at
+00:07 UTC, and again at 04:07: GitHub starts scheduled runs late under load and
+can drop one, both crown the day that just ended, and the second finishes
+whatever the first could not. For each board, `lib/daily-champion/job.ts` reads
+yesterday's `leaderboards/<gameId>/daily/<date>` and opens the holder's box. It
+sends only if the secret inside hashes to the holder the board names (a box
+filed under another browser's holder is refused), only for a game that box lists
+(a board someone files under a player's public holder for a game they never
+played tells them nothing), and only to a known push service (FCM, Mozilla,
+Apple, Windows) with well-formed keys. The game's name is the one the player's
+page sealed, or its level's title, plain text of at most 40 characters. The push
+goes straight to the browser's push service — Web Push as RFC 8291 (aes128gcm)
+and RFC 8292 (VAPID) say, WebCrypto and nothing else
+(`lib/daily-champion/web-push.ts`), so it needs no Firebase or vendor SDK — with
+a 15 s timeout and no redirects, then records
+`shmupX/champions/sent/<date>/<gameId>`, so neither run sends anything twice. A
+subscription the push service has forgotten (404, 410) is deleted; one it turns
+away is reported and not tried again; a push service down (429, 5xx, a timeout)
+or the database out of reach is that game's failure, tried again by the 04:07
+run, and the only thing that turns the run red. Each game is crowned on its own,
+so one game's trouble never costs another its notification. It lives in a
+workflow, rather than `Deno.cron` with KV, because it needs only the open
+database and one secret: Deno Deploy is due to shut down in 2027, and this keeps
+working wherever the site moves. A day still being played cannot be sent for.
+
+```sh
+deno task champion:run                       # dry run: who would be told for yesterday (UTC)
+deno task champion:run --date 2026-10-30     # another day that has ended
+deno task champion:keys --secret-out ~/daily-champion-keys.json   # new key pairs: public halves into config.json
+deno task champion:keys --check              # DAILY_CHAMPION_KEYS against config.json
+```
+
+**Setting it up is one repository secret.** `DAILY_CHAMPION_KEYS` is the JSON
+`champion:keys` writes to `--secret-out` (the private VAPID and box JWKs and the
+VAPID subject, `https://codemonkey.games`); `config.json` carries the public
+halves and is committed. The script refuses a `--secret-out` inside the
+checkout, and `.gitignore` names the file anyway. Without the secret the
+workflow is a warning and a dry run, not a failure. New keys orphan every
+browser that subscribed under the old ones until it sets a TODAY'S BEST again.
+
+**What it trusts.** The database is open-write, so a board is exactly as
+trustworthy as it ever was: whoever writes a higher value onto a game's board
+with their own holder is told they won, and anyone can delete a box or a sent
+marker and so keep a notification from going out. What cannot be done from the
+database is to receive someone else's notification (that takes the secret behind
+their holder), to send anything to a player about a game they did not set a
+board in, or to send anywhere but a real push service (that takes the private
+VAPID key, and the box the player's own page sealed). The holder is public, one
+random id per browser per origin, on the boards it raised.
+`tests/daily_champion_test.ts` pins the encryption to RFC 8291's worked example,
+the job against a database and push service in memory (who is told, once, and
+every way a record is refused), the worker and the pages;
+`tests/game_scores_test.ts` runs the holder and the event through the bundle's
+own submit path.
 
 ## A soundtrack off the tone bank
 
@@ -6085,12 +6193,14 @@ level anyone made, spriteX's ~430 sheets — and shmupX never writes them. shmup
 reads and writes its own games in a subtree beside them, `shmupX/`, holding only
 what it ships:
 
-| path                          | what                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| `shmupX/levels/<key>`         | the six games: `2019-PS2`, `95-demo`, `foo`, `gs`, `Ramsie` and `rando`    |
-| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter` naming `2019-PS2`, `squad` `gs`, `95` `95-demo` |
-| `shmupX/characters/<id>`      | the 29 library characters those games name                                 |
-| `shmupX/atlases/<id>`         | each one's art, under the character's own id                               |
+| path                                    | what                                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------------- |
+| `shmupX/levels/<key>`                   | the six games: `2019-PS2`, `95-demo`, `foo`, `gs`, `Ramsie` and `rando`           |
+| `shmupX/levelAliases/<alias>`           | `2019` and `streetfighter` naming `2019-PS2`, `squad` `gs`, `95` `95-demo`        |
+| `shmupX/characters/<id>`                | the 29 library characters those games name                                        |
+| `shmupX/atlases/<id>`                   | each one's art, under the character's own id                                      |
+| `shmupX/champions/subs/<holder>`        | a daily world champion's push subscription, sealed (**The daily world champion**) |
+| `shmupX/champions/sent/<date>/<gameId>` | who was told they won that game's day                                             |
 
 Two of the copies are not verbatim, because a level's `gameId` picks its
 leaderboard (see **WORLD BEST and TODAY'S BEST, per game**). `foo` is pinned to

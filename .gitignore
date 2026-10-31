@@ -108,3 +108,7 @@ backups/*
 # packs tools/sprite-picker-extension/ fresh for every deploy.
 static/extension/shmupx-sprite-picker.zip
 static/extension/meta.json
+
+# daily-champion private keys (scripts/daily-champion-keys.ts --secret-out)
+*champion-keys*.json
+DAILY_CHAMPION_KEYS*

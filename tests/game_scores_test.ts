@@ -836,6 +836,69 @@ Deno.test("each source names its board the way it names the game", () => {
   );
 });
 
+// ---- the daily world champion ---------------------------------------------------
+
+Deno.test("today's board names the browser that raised it, and says so when it is this one", async () => {
+  const gs = board("gs-710c41d3");
+  const me = "A".repeat(43);
+  const them = "B".repeat(43);
+  const fb = fakeFirebase({});
+  const w = world({
+    firebase: fb,
+    global: { __SHMUPX_CHAMPION__: { holder: () => me } },
+  });
+  await w.api.startGameScores({ gameId: "gs-710c41d3", name: "gs" });
+  await settle();
+  await w.api.submitHighScore(114500);
+  await settle();
+  // the holder rides the daily transaction, and only it
+  const daily = fb.data[gs.daily] as Record<string, unknown>;
+  assertEquals(daily.value, 114500);
+  assertEquals(daily.holder, me);
+  assertEquals(
+    (fb.data[gs.allTime] as Record<string, unknown>).holder,
+    undefined,
+  );
+  const best = w.events.filter((e) => e.type === "shmupx:daily-best");
+  assertEquals(best.map((e) => e.detail), [{
+    gameId: "gs-710c41d3",
+    date: today,
+    value: 114500,
+    holder: me,
+    name: "gs",
+  }]);
+
+  // A run that ties a board someone else holds keeps theirs, and is no news.
+  fb.data[gs.daily] = { value: 120000, holder: them };
+  w.events.length = 0;
+  await w.api.submitHighScore(120000);
+  await settle();
+  assertEquals((fb.data[gs.daily] as Record<string, unknown>).holder, them);
+  assertEquals(w.events.filter((e) => e.type === "shmupx:daily-best"), []);
+});
+
+Deno.test("a page without the champion script, or with a bad id, writes no holder", async () => {
+  for (
+    const hook of [undefined, { holder: () => "short" }, {
+      holder: () => {
+        throw new Error("x");
+      },
+    }]
+  ) {
+    const gs = board("gs-710c41d3");
+    const fb = fakeFirebase({});
+    const w = world({ firebase: fb, global: { __SHMUPX_CHAMPION__: hook } });
+    await w.api.startGameScores({ gameId: "gs-710c41d3", name: "gs" });
+    await settle();
+    await w.api.submitHighScore(5000);
+    await settle();
+    const daily = fb.data[gs.daily] as Record<string, unknown>;
+    assertEquals(daily.value, 5000);
+    assertEquals("holder" in daily, false, JSON.stringify(hook));
+    assertEquals(w.events.filter((e) => e.type === "shmupx:daily-best"), []);
+  }
+});
+
 Deno.test("a god run on the hosted page still submits nothing", async () => {
   const fb = fakeFirebase({});
   const w = world({ firebase: fb });

@@ -52,6 +52,8 @@
     "eshop:publish": "deno run -A scripts/publish-eshop-sav.ts",
     "level:normalize": "deno run -A scripts/normalize-cloud-level.ts",
     "level:alias": "deno run -A scripts/level-alias.ts",
+    "champion:run": "deno run --allow-net --allow-env scripts/daily-champion.ts",
+    "champion:keys": "deno run -A scripts/daily-champion-keys.ts",
     "level:reimport": "deno run -A scripts/reimport-cloud-level.ts",
     "rtdb:split": "deno run -A scripts/rtdb-split.ts",
     "deza:manifest": "deno run -A scripts/build-deza-saves-manifest.ts",
