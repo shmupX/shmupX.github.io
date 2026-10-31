@@ -100,6 +100,8 @@ import {
 import {
   ANIMS,
   BULLET_SPEED,
+  BURST,
+  type BurstKind,
   DEVIL_BLAST_SPEED,
   ENEMY_CLASSES,
   type EnemyKind,
@@ -126,6 +128,8 @@ import {
 } from "./flight.ts";
 import {
   atlasFrame,
+  blankArt,
+  burstFrames,
   composite,
   gridFrame,
   loadArt,
@@ -166,6 +170,49 @@ const HIDDEN_SPEED = 40;
 const EXIT_SPEED = 4;
 /** The zako fire gate's reload: two or three pulses (see fireGateFrames). */
 const FIRE_WINDOW = 2;
+/** Peach's bubbles: 60 ms apart is 7 ticks at 120 Hz. */
+export const PLAYER_SHOT_TICKS = Math.round(PLAYER_FIRE_RATE_MS / 1000 * 120);
+
+/**
+ * The Invaders' hit gate, as hp. CoolInvaders.damageEnemy and
+ * RainbowInvaders.damageEnemy land a hit only while the sprite's getHit
+ * animation is not playing — four frames at 12 fps, 333 ms — so under
+ * Peach's stream of a bubble every 60 ms the next hit lands 360 ms after
+ * the last, and the big CoolInvader's 10 hp are 3.6 s of fire. The runtime
+ * has no such gate: every bubble that touches an enemy hits it, 7 ticks
+ * apart. So an Invader's record hp is the table's times the bubbles that
+ * land in one of the source's gates, and it stands under fire for as long
+ * as it does in the source, instead of going down before it is well on the
+ * screen.
+ */
+export function hitGateHits(): number {
+  const anim = ANIMS.coolInvaderGetHit;
+  const animMs = anim.frames.length / anim.fps * 1000;
+  const gateMs = Math.ceil(animMs / PLAYER_FIRE_RATE_MS) * PLAYER_FIRE_RATE_MS;
+  const bubbleMs = PLAYER_SHOT_TICKS * 1000 / 120;
+  return Math.round(gateMs / bubbleMs);
+}
+
+/**
+ * An Invader's death burst (BURST in source.ts) is a zako of its own: the
+ * record's death word spawns it where the Invader died (mode 2, a
+ * successor), and it plays the burst baked as BURST_FRAMES frames,
+ * BURST_ANIM_PERIOD Saturn frames each — the source's half second — then
+ * blank frames while it holds a little longer (BURST_HOLD, enough for the
+ * runtime's animation clock to have shown the last frame) and leaves by the
+ * top at full speed, where the runtime retires a successor at once. It is
+ * drawn at BURST_ZOOM, a zoom off unity, which is what the runtime's
+ * contact passes skip: the burst can neither be hit nor hit anything.
+ */
+export const BURST_FRAMES = 10;
+export const BURST_ANIM_PERIOD = 3;
+export const BURST_BLANKS = 6;
+export const BURST_HOLD = 40;
+export const BURST_ZOOM = 0.9;
+/** The burst frame's size for a sprite this tall on the field: room to fly. */
+export function burstSize(spriteHeight: number): number {
+  return Math.max(80, Math.min(160, Math.round(spriteHeight * 1.6 / 16) * 16));
+}
 /**
  * The source keeps no score. Here an enemy is worth a hundred points an hp,
  * the stock game's rate for its zako (soliderA: 1 hp, 100 points), so the
@@ -202,6 +249,9 @@ const F = {
   poof: (i: number) => `eiPoof${i}`,
   peach: (i: number) => `eiPeach${i}`,
   bubble: (i: number) => `eiBubble${i}`,
+  burst: (kind: BurstKind, scale: number, i: number) =>
+    `eiBurst${kind[0].toUpperCase()}${kind.slice(1)}${pct(scale)}_${i}`,
+  blank: "eiBlank",
   cutin: (i: number) => `cutin${i}.gif`,
 };
 
@@ -413,6 +463,36 @@ export async function buildArt(): Promise<LevelArt> {
     }
   }
 
+  // The Invaders' death bursts, one per size a bursting class is drawn at,
+  // and the blank frame every burst ends on.
+  const sprite = (name: string) => {
+    const f = frames.find((x) => x.name === name);
+    if (!f) throw new Error(`no frame ${name}`);
+    return f.raster;
+  };
+  let burstSeed = 0x1e1;
+  for (const { kind, scale } of spriteVariants()) {
+    const burst = ENEMY_CLASSES[kind].burst;
+    if (!burst) continue;
+    const def = BURST.sheets[burst];
+    const s = await sheet(def.sheet);
+    const height = sprite(F.enemy(kind, scale, 0)).height;
+    const baked = burstFrames(s.raster, s.art, def.frames, BURST, {
+      spriteScale: scale,
+      // the emitter sits at the sprite's anchor: its bottom centre
+      anchorDrop: height * (ENEMY_CLASSES[kind].anchorY - 0.5),
+      frames: BURST_FRAMES,
+      periodMs: BURST_ANIM_PERIOD * 1000 / FPS,
+      size: burstSize(height),
+      zoom: BURST_ZOOM,
+      seed: burstSeed++,
+    });
+    baked.forEach((r, i) =>
+      add(F.burst(burst, scale, i), r, `${s.art.file}#${def.frames.join(",")}`)
+    );
+  }
+  add(F.blank, blankArt(), "blank");
+
   // The RedDevil, DevilFire at both sizes, DevilBlast, the trio and the poof.
   for (const fi of RED_DEVIL_FRAMES) {
     const g = await grid("redDevil", fi);
@@ -517,15 +597,34 @@ export interface CompiledEnemy {
   aimed: boolean;
 }
 
+/** A death burst's record: one per size a stage draws a bursting class at. */
+export interface BurstSlot {
+  letters: string;
+  kind: BurstKind;
+  scale: number;
+}
+
 export interface StageBuild {
   stage: number;
   enemies: CompiledEnemy[];
+  bursts: BurstSlot[];
   enemylist: string[][];
   waveRows: number[];
   /** Wave frame the stage's last row is due: its end. */
   endFrame: number;
   /** Whether a boss follows the last row. */
   boss: boolean;
+}
+
+/** The burst record an enemy dies into, if its class has one. */
+export function burstFor(
+  st: Pick<StageBuild, "bursts">,
+  e: Pick<CompiledEnemy, "kind" | "scale">,
+): BurstSlot | null {
+  const burst = ENEMY_CLASSES[e.kind].burst;
+  if (!burst) return null;
+  return st.bursts.find((b) => b.kind === burst && b.scale === e.scale) ??
+    null;
 }
 
 /** Inside the box the runtime culls enemies outside of (and below the top). */
@@ -742,6 +841,17 @@ export function buildStage(stage: number, half: LevelArt["half"]): StageBuild {
     sourceEnd + shift,
     Math.max(...enemies.map((e) => e.spawnFrame)) + 1,
   );
+  // The death bursts the stage's enemies die into, lettered after them.
+  const bursts: BurstSlot[] = [];
+  for (const e of enemies) {
+    const burst = ENEMY_CLASSES[e.kind].burst;
+    if (!burst || burstFor({ bursts }, e)) continue;
+    bursts.push({
+      letters: enemyLetters(stage, enemies.length + bursts.length),
+      kind: burst,
+      scale: e.scale,
+    });
+  }
 
   // One grid row per spawn frame (two if two enemies share a column), in
   // spawn order, between an empty first row (frame 0, the row the rest are
@@ -769,6 +879,7 @@ export function buildStage(stage: number, half: LevelArt["half"]): StageBuild {
   return {
     stage,
     enemies,
+    bursts,
     enemylist: ordered.map((r) => r.cells),
     waveRows: ordered.map((r) => ROW_BASE + r.frame),
     endFrame,
@@ -835,11 +946,14 @@ export function bulletRecord(kind: EnemyKind, scale: number): Json {
 }
 
 /** The record for one enemy: its art, its stats and its script. */
-export function enemyRecord(e: CompiledEnemy): Json {
+export function enemyRecord(e: CompiledEnemy, burst: BurstSlot | null): Json {
+  const cls = ENEMY_CLASSES[e.kind];
   return {
     name: e.kind,
     texture: enemyFrames(e.kind, e.scale),
-    hp: e.def.health,
+    // The table's hp, times the bubbles one of the source's hit gates lets
+    // through (hitGateHits) for a class that has the gate.
+    hp: e.def.health * (cls.hitGate ? hitGateHits() : 1),
     score: e.def.health * SCORE_PER_HP,
     spgage: 1,
     interval: -1,
@@ -863,9 +977,72 @@ export function enemyRecord(e: CompiledEnemy): Json {
         scale: { enabled: false },
         zoom: { enabled: false },
         direction: { enabled: false },
-        death: { mode: 0, param: 0, silent: false, small: false },
+        // An Invader vanishes into its particle burst, as the source's
+        // does: no blast of the runtime's, and the burst record spawned in
+        // its place (the death word's mode 2, the successor keyed 0x80 as
+        // the engine keys one).
+        death: burst
+          ? { mode: 2, param: 0, key: 0x80, silent: true, small: false }
+          : { mode: 0, param: 0, silent: false, small: false },
       },
+      ...(burst ? { deathChild: `enemy${burst.letters}` } : {}),
       entry: { rows: e.rows },
+    },
+  };
+}
+
+/**
+ * The record of a death burst: the baked frames once at BURST_ANIM_PERIOD,
+ * then blanks; indestructible and, at BURST_ZOOM, out of every contact
+ * pass; held for BURST_HOLD frames where it was spawned, then straight up
+ * at the script's top speed, out of the field in four frames at most.
+ */
+export function burstRecord(kind: BurstKind, scale: number): Json {
+  const frames = Array.from(
+    { length: BURST_FRAMES },
+    (_, i) => F.burst(kind, scale, i),
+  );
+  const flags = ENTRY_ADVANCE | ENTRY_NO_FIRE;
+  const rows: EntryRow[] = [
+    [BURST_HOLD - 1, 0, 0, 0, flags],
+    [ROW_FOREVER, 0x4000, 0, 0x7fff, flags],
+  ];
+  return {
+    name: "burst",
+    texture: [...frames, ...new Array<string>(BURST_BLANKS).fill(F.blank)],
+    hp: "infinity",
+    score: 0,
+    spgage: 0,
+    interval: -1,
+    shadowReverse: false,
+    shadowOffsetY: SHADOW_PARK,
+    dezaemon: {
+      behavior: {
+        animPeriod: BURST_ANIM_PERIOD,
+        ground: false,
+        movePattern: 0,
+        move: { mode: 0, flag: false },
+        fire: {
+          enabled: false,
+          geometry: 0,
+          aimed: false,
+          mode: 0,
+          window: FIRE_WINDOW,
+        },
+        rotation: { enabled: false },
+        scale: { enabled: false },
+        zoom: {
+          enabled: true,
+          from: BURST_ZOOM,
+          to: BURST_ZOOM,
+          step: 0,
+          repeat: 0,
+          trigger: 0,
+        },
+        direction: { enabled: false },
+        death: { mode: 0, param: 0, silent: true, small: false },
+      },
+      entry: { rows },
     },
   };
 }
@@ -961,8 +1138,7 @@ export function redDevilRecord(def: SpawnDef): Json {
 
 export function playerRecord(): Json {
   const bubbles = ANIMS.purpleBubble.frames.map(F.bubble);
-  // 60 ms between bubbles is 7 ticks at 120 Hz.
-  const interval = Math.round(PLAYER_FIRE_RATE_MS / 1000 * 120);
+  const interval = PLAYER_SHOT_TICKS;
   return {
     name: "eiPeach",
     texture: ANIMS.peachBoosters.frames.map(F.peach),
@@ -1045,7 +1221,10 @@ export async function buildLevel(): Promise<Build> {
   const enemyData: Json = {};
   for (const st of stages) {
     for (const e of st.enemies) {
-      enemyData[`enemy${e.letters}`] = enemyRecord(e);
+      enemyData[`enemy${e.letters}`] = enemyRecord(e, burstFor(st, e));
+    }
+    for (const b of st.bursts) {
+      enemyData[`enemy${b.letters}`] = burstRecord(b.kind, b.scale);
     }
   }
   const stageRecords: Json = {};
@@ -1143,9 +1322,17 @@ export function summary(b: Build): Json {
     stages: b.stages.map((s) => ({
       stage: s.stage,
       enemies: s.enemies.map((e) =>
-        `${e.letters} ${e.kind} x${e.scale} hp ${e.def.health} @${
+        `${e.letters} ${e.kind} x${e.scale} hp ${
+          b.record.enemyData[`enemy${e.letters}`].hp
+        } @${
           Math.round(e.spawnFrame / 6) / 10
-        }s rows ${e.rows.length} shots ${e.shots} bounces ${e.bounces}`
+        }s rows ${e.rows.length} shots ${e.shots} bounces ${e.bounces}` +
+        (burstFor(s, e) ? ` bursts into ${burstFor(s, e)!.letters}` : "")
+      ),
+      bursts: s.bursts.map((bu) =>
+        `${bu.letters} ${bu.kind} x${bu.scale}: ${
+          b.record.enemyData[`enemy${bu.letters}`].texture.length
+        } frames`
       ),
       rows: s.enemylist.length,
       scriptRows: s.enemies.reduce((n, e) => n + e.rows.length, 0),

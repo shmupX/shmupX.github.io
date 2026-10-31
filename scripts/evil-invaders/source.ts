@@ -173,6 +173,14 @@ export interface EnemyClass {
   bulletScale: number;
   /** fire(this, player.x, player.y) aims at the player; fire(this) drops straight down. */
   aimed: boolean;
+  /**
+   * The group's damageEnemy lands a hit only while the sprite's getHit
+   * animation is not playing (CoolInvaders, RainbowInvaders); the others
+   * take every bullet.
+   */
+  hitGate: boolean;
+  /** emitDeath's particle burst, where the class has one (BURST). */
+  burst: BurstKind | null;
 }
 
 export const ENEMY_CLASSES: Record<EnemyKind, EnemyClass> = {
@@ -184,6 +192,8 @@ export const ENEMY_CLASSES: Record<EnemyKind, EnemyClass> = {
     bullet: "fireball",
     bulletScale: BULLET_SCALE.fireball,
     aimed: true,
+    hitGate: false,
+    burst: null,
   },
   // FlirtyGirl: GenericEnemy's own anchor (0.5), the table's scale as is,
   // Lips straight down.
@@ -194,6 +204,8 @@ export const ENEMY_CLASSES: Record<EnemyKind, EnemyClass> = {
     bullet: "lips",
     bulletScale: BULLET_SCALE.lips,
     aimed: false,
+    hitGate: false,
+    burst: null,
   },
   coolInvader: {
     key: "coolInvader",
@@ -202,6 +214,8 @@ export const ENEMY_CLASSES: Record<EnemyKind, EnemyClass> = {
     bullet: "invaderBullet",
     bulletScale: BULLET_SCALE.invaderBullet,
     aimed: false,
+    hitGate: true,
+    burst: "coolInvader",
   },
   rainbowInvader: {
     key: "rainbowInvader",
@@ -210,6 +224,8 @@ export const ENEMY_CLASSES: Record<EnemyKind, EnemyClass> = {
     bullet: "rainbowBullet",
     bulletScale: BULLET_SCALE.rainbowBullet,
     aimed: false,
+    hitGate: true,
+    burst: "rainbowInvader",
   },
   // RedDevil: its own class (below), not a GenericEnemy; DevilFire and
   // DevilBlast, both aimed. reset() ignores the table's scale.
@@ -220,8 +236,48 @@ export const ENEMY_CLASSES: Record<EnemyKind, EnemyClass> = {
     bullet: "devilFire",
     bulletScale: 1,
     aimed: true,
+    hitGate: false,
+    burst: null,
   },
 };
+
+// --- CoolInvader.emitDeath, RainbowInvader.emitDeath ------------------------
+
+export type BurstKind = "coolInvader" | "rainbowInvader";
+
+/**
+ * An Invader dies into a particle burst: `game.add.emitter(x, y, 100)` at
+ * the sprite's anchor (its bottom centre), blend ADD, gravity 600,
+ * `setAlpha(1, 0, 500, 'Cubic.easeIn')`, `setAngle(-180, 180, 0, 2400)`
+ * (any heading, 0-2400 px/s; the minParticleSpeed set after it is never
+ * read once angles are set), particles a quarter to the whole of
+ * `scale.x / 3`, `makeParticles` from the class's voxel sheet, and
+ * `start(true, 500, null, 100)`: all hundred at once, half a second each.
+ * The sprite scale here is the drawn one (the table's over 3).
+ */
+export const BURST = {
+  count: 100,
+  lifespanMs: 500,
+  gravity: 600,
+  minSpeed: 0,
+  maxSpeed: 2400,
+  /** Particle scale = sprite scale * these. */
+  minScale: 0.25,
+  maxScale: 1,
+  /** The emitter sits `anchorY` down the sprite: its bottom centre. */
+  sheets: {
+    coolInvader: {
+      sheet: "coolInvaderParticles",
+      frames: [0, 1, 2],
+    },
+    // Phaser.ArrayUtils.numberArray(0, 8) names nine frames of a sheet that
+    // holds eight; the ninth is never drawn.
+    rainbowInvader: {
+      sheet: "rainbowInvaderParticles",
+      frames: [0, 1, 2, 3, 4, 5, 6, 7],
+    },
+  },
+} as const;
 
 // --- RedDevil ----------------------------------------------------------------
 
@@ -291,7 +347,17 @@ export const SHEETS = {
   // 1 px in, three across the 1088 px sheet (the fourth lands off it).
   bowser: { file: "bowser-voxel.png", frameW: 272, frameH: 196, margin: 1 },
   coolInvader: { file: "cool-invader.png", frameW: 431, frameH: 275 },
+  coolInvaderParticles: {
+    file: "cool-invader-voxel-particles.png",
+    frameW: 45,
+    frameH: 52,
+  },
   rainbowInvader: { file: "rainbow-invader.png", frameW: 263, frameH: 174 },
+  rainbowInvaderParticles: {
+    file: "rainbow-invader-particles.png",
+    frameW: 43,
+    frameH: 52,
+  },
   redDevil: { file: "red-devil.png", frameW: 160, frameH: 166 },
   littleDevil: { file: "butt-devils.png", frameW: 43, frameH: 39 },
   devilFire: { file: "devil-fire.png", frameW: 42, frameH: 35 },

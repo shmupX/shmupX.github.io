@@ -6178,18 +6178,47 @@ that is due — out of sixteen baked ones.
   it turns it to fly up. Her boosters loop at the source's 6 fps (the runtime
   plays a ship's frames as an animation) and a bubble leaves every 7 ticks, the
   source's 60 ms.
+- An Invader takes six bubbles for every hit the source lands. CoolInvaders' and
+  RainbowInvaders' damageEnemy land a hit only while the sprite's getHit
+  animation is not playing — four frames at 12 fps, 333 ms, so under Peach's
+  stream of a bubble every 60 ms the next hit lands 360 ms after the last, and
+  the big CoolInvader's 10 hp are 3.6 s of fire — and the runtime has no such
+  gate: every bubble that touches an enemy hits it, 7 ticks apart. So an
+  Invader's record hp is the table's times the bubbles one of those gates lets
+  through (`hitGateHits`, 6: 60, 48, 36 and 24 hp) and it stands under fire for
+  as long as it does in the source, rather than going down before it is well on
+  the screen; its score stays the table's hp. Bowser and the girls take every
+  bullet in the source and here.
+- An Invader dies into the source's particle burst. Its emitDeath explodes a
+  hundred voxel cubes from its sheet (BURST in source.ts: any heading, 0-2400
+  px/s, a quarter to the whole of a third of the sprite's scale, gravity 600,
+  blend ADD, fading on a cubic ease over half a second) from the sprite's bottom
+  centre, and the sprite simply vanishes. A record cannot emit particles, so
+  `burstFrames` (art.ts) runs that emitter with a seeded generator and bakes it
+  as ten frames, and the Invader's death word spawns a successor where it died
+  (mode 2, the engine's keying) that plays them: a zako of its own
+  (`burstRecord`) with the frames once at three Saturn frames each and then
+  blanks, indestructible (`hp: "infinity"`) and drawn at a zoom of 0.9, off
+  unity, which is what the runtime's shot and contact passes skip, so it can
+  neither be hit nor hit anything; its script holds it 40 frames (the runtime's
+  animation clock runs on milliseconds, so the blank tail outlasts the hold) and
+  then sends it straight up at full speed, past the top, where the runtime
+  retires a successor at once. The Invader's own death is silent — no blast of
+  the runtime's, as the source draws none. Checked in headless Chromium: each
+  burst spawned at the kill, played its ten frames, was skipped by every contact
+  pass, and was gone 0.7 s later. Bowser's and the girls' bursts are not ported.
 - An Invader's hit animation, during which the source makes it invulnerable, has
-  no runtime stance; a hit lands as it lands. The screen shake, the vibration,
-  the particle bursts and the shot sound (`weapon.mp3`) have no place in a
-  record.
+  no runtime stance (the gate above stands in for it); the screen shake, the
+  vibration and the shot sound (`weapon.mp3`) have no place in a record.
 - Every zako bullet flies at the runtime's own speed and rules (no zako shot
   within 16 px of a side edge, none at a ship closer than 40 px), as 95-demo's
   do.
 
 `tests/evil_invaders_test.ts` pins the replay (the bounce, the kill, the gun),
 the compiled scripts (within 0.75 px of the replay on every visible frame, one
-gate a shot, nothing showing above the field before its entry), the record and
-the archive.
+gate a shot, nothing showing above the field before its entry), the record, the
+hit gate, the bursts (the baked emitter, the record, its script) and the
+archive.
 
 ## shmupX's corner of the shared database
 

@@ -1,7 +1,7 @@
 {
-  "version": "0f7a85e",
+  "version": "af6fc84",
   "versionSource": "git",
-  "generatedAt": "2026-10-29T16:13:42.941Z",
+  "generatedAt": "2026-10-31T02:37:26.153Z",
   "games": [
     {
       "id": "shmupx",
@@ -73,8 +73,8 @@
       "source": "url",
       "downloadUrl": "/games/evil-invaders-web.zip",
       "entry": "index.html",
-      "size": "0.6 MB",
-      "date": "10.29.26",
+      "size": "0.7 MB",
+      "date": "10.31.26",
       "players": 1
     },
     {
