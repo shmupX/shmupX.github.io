@@ -744,6 +744,27 @@ they are written out in full.
     `95-demo`'s CoolInvader, RainbowInvader and butt-devil trio carry it;
     `tests/95_demo_test.ts` pins the helper and the three clamps. Upstream home
     is `2019-es7/src/phaser/bosses/BossBarlog.js`.
+  - God mode wears the Saturn's TEST PLAY watermark and keeps a best of its
+    own. `?god=1` (the editor's GOD MODE toggle; an exported app's baked
+    `godMode`) is what Dezaemon 2's TEST PLAY panel calls MUTEKI, so the stage
+    shows what that panel's run shows: **TESTING** in the kernel font
+    (`dezaHudLine`, the same glyph sheet as the SCORE and BOMB lines), on
+    SCORE's row at the right edge, in the column BOMB has at the bottom
+    (`DEZA_HUD_TESTING`: Saturn (216, 8), 48 px in from the right as SCORE is
+    from the left) — drawn over the web band too, which has no row of its own
+    for it, and set in the face's TrueType (`dezaCellText`) if the glyph sheet
+    never loaded. A god run reaches no board and never the local best, so it
+    gets **TODAY'S GOD BEST** (`keepGodBest`, see **WORLD BEST and TODAY'S
+    BEST, per game** below): the highest score reached while the flag was on,
+    fed by `updateHUD` every frame, shown on a line of its own under WORLD BEST
+    in the HUD (under the kernel's SCORE line when the band is off), under the
+    sync line on the title, and on the ending's score card — and only while
+    the flag is on. The continue card carries nothing of it: nothing kills the
+    ship under the flag (`playerDamage`, the Goki KO), so a god run never gets
+    there. `tests/god_mode_test.ts` pins the watermark and the lines,
+    `tests/game_scores_test.ts` the score. Upstream homes are
+    `2019-es7/src/firebaseScores.js`, `highScoreUi.js`, `TitleScene.js`,
+    `GameScene.js` and `EndingScene.js`.
 - `lib/rtdb-root.ts` — where shmupX's own games sit in the Realtime Database it
   shares with cmg: `levels`, `levelAliases`, `atlases` and `characters` under
   `shmupX/`, beside cmg's root copies (see **shmupX's corner of the shared
@@ -2994,6 +3015,26 @@ goes to the boards (`runWantsSubmit`, from the continue scene's game over and
 from the ending) when it beats WORLD BEST **or** TODAY'S BEST, or while the
 board is still loading or out of reach; before, TODAY'S BEST moved only with a
 new all-time record.
+
+**TODAY'S GOD BEST is a god run's, and only that.** A run under `?god=1` (the
+editor's GOD MODE, Dezaemon 2's MUTEKI) is not a record (`scoreCountsAsRecord`):
+it reaches neither board and never the local best, so until 2026-10-31 nothing
+it scored was shown anywhere. It has a best of its own, kept apart from all
+three: the highest score reached while the flag was on, this device's and this
+UTC day's, in `afc2019_godHighScore_<gameId>` holding `<UTC day>:<score>` for
+two days — a cookie of any other day reads as 0 and is written over, and a
+page left open past UTC midnight drops to 0 as TODAY'S BEST does
+(`currentGodHighScore`). `keepGodBest` never lowers it and writes only when it
+rises, so the game scene hands it the score every frame (`updateHUD`): a test
+play closed mid-stage has still counted. A game with no id keeps it for the page
+alone, like the local best. An exported app with `godMode` baked keeps the
+local best as before (GOD MODE rides alongside there) and this beside it. The
+title, the HUD and the ending's score card show it as TODAY'S GOD BEST on a
+line of its own, only while the flag is on (the continue card is out of a god
+run's reach: nothing kills the ship); the stage also wears the Saturn's TESTING
+watermark (see the bundle's hand-edit list under **Layout**).
+`tests/game_scores_test.ts` runs it under the fake SDK and cookie jar;
+`tests/god_mode_test.ts` pins the scenes.
 
 **The editor's PLAY.** The recipe carries the open game's `gameId` only while
 the name box still holds the cloud key that id came with (`cloudGameKey`, set by

@@ -160,6 +160,9 @@ const API = [
   "getDisplayedHighScore",
   "getDailyHighScore",
   "getHighScoreSyncText",
+  "keepGodBest",
+  "getGodHighScore",
+  "getGodBestText",
 ] as const;
 
 type Api = Record<typeof API[number], (...args: unknown[]) => unknown>;
@@ -901,4 +904,139 @@ Deno.test("the boot names the game from the loaded level before the title starts
     !bundle.includes('cookieKey = "afc2019_highScore"'),
     "the shared cookie is still the default",
   );
+});
+
+// ---- TODAY'S GOD BEST -------------------------------------------------------------
+//
+// A run under ?god=1 — the editor's GOD MODE, the Saturn TEST PLAY panel's
+// MUTEKI — reaches no board and never the local best, so until now nothing it
+// scored was shown anywhere. It has a best of its own: the highest score
+// reached while the flag was on, this device's and this UTC day's, in a cookie
+// of its own per game.
+
+Deno.test("a god run keeps today's god best on this device, and moves nothing else", async () => {
+  const fb = fakeFirebase({});
+  const w = world({ firebase: fb });
+  await w.api.startGameScores({ gameId: "gs-710c41d3" });
+  await settle();
+  w.state.godFlg = true;
+  // The HUD hands it the score as it climbs.
+  assertEquals(w.api.keepGodBest(120), 120);
+  assertEquals(w.api.keepGodBest(500), 500);
+  // Never lowered.
+  assertEquals(w.api.keepGodBest(300), 500);
+  assertEquals(w.api.getGodHighScore(), 500);
+  assertEquals(w.api.getGodBestText(), "TODAY'S GOD BEST 500");
+  // Its own cookie, dated, and nothing on the boards or in the local best.
+  assertEquals(
+    w.jar.jar.get("afc2019_godHighScore_gs-710c41d3"),
+    `${today}%3A500`,
+  );
+  assertEquals(w.jar.jar.has("afc2019_highScore_gs-710c41d3"), false);
+  assertEquals(fb.writes, []);
+  assertEquals(w.api.getDisplayedHighScore(), 0);
+  assertEquals(w.api.getDailyHighScore(), 0);
+  // The end of the run submits as before: nothing, for a god run.
+  await w.api.submitHighScore(500);
+  await settle();
+  assertEquals(fb.writes, []);
+  assertEquals(w.api.getDisplayedHighScore(), 0);
+});
+
+Deno.test("a mortal run never moves the god best", async () => {
+  const fb = fakeFirebase({});
+  const w = world({ firebase: fb });
+  await w.api.startGameScores({ gameId: "gs-710c41d3" });
+  await settle();
+  assertEquals(w.api.keepGodBest(900), 0);
+  assertEquals(w.api.getGodHighScore(), 0);
+  assertEquals(w.jar.jar.has("afc2019_godHighScore_gs-710c41d3"), false);
+});
+
+Deno.test("the god best is one game's, read back on the next visit, and gone with the UTC day", async () => {
+  const jar = new CookieJar();
+  const clock = { at: Date.UTC(2026, 9, 31, 20, 0, 0) };
+  const day = (at: number) => new Date(at).toISOString().slice(0, 10);
+  const first = world({ firebase: fakeFirebase({}), jar, clock });
+  await first.api.startGameScores({ gameId: "gs-710c41d3" });
+  await settle();
+  first.state.godFlg = true;
+  first.api.keepGodBest(500);
+  assertEquals(
+    jar.jar.get("afc2019_godHighScore_gs-710c41d3"),
+    `${day(clock.at)}%3A500`,
+  );
+  // The same browser, back the same day: the best is read off the cookie
+  // before any run, and shown.
+  const again = world({ firebase: fakeFirebase({}), jar, clock });
+  await again.api.startGameScores({ gameId: "gs-710c41d3" });
+  await settle();
+  again.state.godFlg = true;
+  assertEquals(again.api.getGodHighScore(), 500);
+  assertEquals(again.api.keepGodBest(400), 500);
+  // Another game has a best of its own.
+  const other = world({ firebase: fakeFirebase({}), jar, clock });
+  await other.api.startGameScores({ gameId: "foo-a9f37ed7" });
+  await settle();
+  other.state.godFlg = true;
+  assertEquals(other.api.getGodHighScore(), 0);
+  other.api.keepGodBest(50);
+  assertEquals(
+    jar.jar.get("afc2019_godHighScore_foo-a9f37ed7"),
+    `${day(clock.at)}%3A50`,
+  );
+  assertEquals(
+    jar.jar.get("afc2019_godHighScore_gs-710c41d3"),
+    `${day(clock.at)}%3A500`,
+  );
+  // Past UTC midnight the page left open shows the new day's: nothing yet.
+  clock.at += 5 * 60 * 60 * 1000;
+  assertEquals(again.api.getGodHighScore(), 0);
+  assertEquals(again.api.getGodBestText(), "TODAY'S GOD BEST 0");
+  // And the first god score of the new day writes yesterday's over.
+  assertEquals(again.api.keepGodBest(70), 70);
+  assertEquals(
+    jar.jar.get("afc2019_godHighScore_gs-710c41d3"),
+    `${day(clock.at)}%3A70`,
+  );
+  // A fresh visit the day after reads yesterday's cookie as 0.
+  const tomorrow = world({
+    firebase: fakeFirebase({}),
+    jar,
+    clock: { at: clock.at + 24 * 60 * 60 * 1000 },
+  });
+  await tomorrow.api.startGameScores({ gameId: "foo-a9f37ed7" });
+  await settle();
+  assertEquals(tomorrow.api.getGodHighScore(), 0);
+});
+
+Deno.test("a game with no id keeps its god best for the page alone", async () => {
+  const w = world({ firebase: fakeFirebase({}) });
+  await w.api.startGameScores({ gameId: null, name: null });
+  await settle();
+  w.state.godFlg = true;
+  assertEquals(w.api.keepGodBest(500), 500);
+  assertEquals(w.api.getGodHighScore(), 500);
+  assertEquals(w.jar.cookie, "");
+});
+
+Deno.test("an exported app's god run keeps the god best beside the local best it already kept", async () => {
+  const fb = fakeFirebase({});
+  const w = world({ firebase: fb, exported: true });
+  await w.api.startGameScores({ gameId: "gs-710c41d3" });
+  await settle();
+  w.state.godFlg = true;
+  assertEquals(w.api.keepGodBest(500), 500);
+  await w.api.submitHighScore(500);
+  await settle();
+  // GOD MODE rides alongside in an export (build_level_export_root_test): the
+  // run is this device's best, as before, and still goes to no board.
+  assertEquals(w.jar.jar.get("afc2019_highScore_gs-710c41d3"), "500");
+  assertEquals(
+    w.jar.jar.get("afc2019_godHighScore_gs-710c41d3"),
+    `${today}%3A500`,
+  );
+  assertEquals(fb.writes, []);
+  assertEquals(w.api.getDisplayedHighScore(), 500);
+  assertEquals(w.api.getGodHighScore(), 500);
 });
