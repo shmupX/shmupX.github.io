@@ -27,6 +27,9 @@ static/games/2019-web.zip
 # And EVIL INVADERS '95's: `deno task 95-demo:zip` builds its record from
 # scripts/95-demo/ and packs it with this checkout's game.bundle.js.
 static/games/95-demo-web.zip
+# And Evil Invaders': `deno task evil-invaders:zip` builds its record from
+# scripts/evil-invaders/ and packs it the same way.
+static/games/evil-invaders-web.zip
 # Nothing here for a game's PS2 download page (`deno task ps2:page`): its
 # disc, its USB zip and its play/ build are committed with the page. `deno
 # task build` does not make them, and Deploy serves only what git carries, so
