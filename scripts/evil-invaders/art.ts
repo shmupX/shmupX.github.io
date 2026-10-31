@@ -234,3 +234,151 @@ export function titleBackdropArt(w = 512, h = 480): Raster {
 export function stageBackdropArt(w = 256, h = 256): Raster {
   return starfieldArt(w, h, 24, 0xe72);
 }
+
+// --- the Invaders' death bursts -----------------------------------------------
+
+export interface BurstOptions {
+  /** The dying sprite's drawn scale: the particles are a quarter to the whole of a third of it. */
+  spriteScale: number;
+  /**
+   * How far below the sprite's centre its anchor sits, field px: the
+   * emitter is placed at the anchor, and the burst sprite's centre is the
+   * dying sprite's.
+   */
+  anchorDrop: number;
+  /** Frames to bake, and the time between them. */
+  frames: number;
+  periodMs: number;
+  /** The frame's width and height, field px. */
+  size: number;
+  /**
+   * The runtime draws the burst sprite at this zoom (it is what keeps the
+   * burst from colliding), so the bake is scaled up by its inverse.
+   */
+  zoom: number;
+  /** The emitter's Math.random, so a conversion repeats. */
+  seed: number;
+}
+
+/**
+ * `src` drawn into `dst` at (`x`, `y`) with additive blending, as the
+ * source's emitter draws its particles (blendMode ADD): colour adds up
+ * where particles overlap, and `alpha` scales every pixel first.
+ */
+function blitAdd(
+  dst: Raster,
+  src: Raster,
+  x: number,
+  y: number,
+  alpha: number,
+): void {
+  for (let sy = 0; sy < src.height; sy++) {
+    const dy = y + sy;
+    if (dy < 0 || dy >= dst.height) continue;
+    for (let sx = 0; sx < src.width; sx++) {
+      const dx = x + sx;
+      if (dx < 0 || dx >= dst.width) continue;
+      const s = (sy * src.width + sx) * 4;
+      const a = src.data[s + 3] / 255 * alpha;
+      if (a <= 0) continue;
+      const d = (dy * dst.width + dx) * 4;
+      for (let c = 0; c < 3; c++) {
+        dst.data[d + c] = Math.min(255, dst.data[d + c] + src.data[s + c] * a);
+      }
+      dst.data[d + 3] = Math.min(
+        255,
+        dst.data[d + 3] + src.data[s + 3] * alpha,
+      );
+    }
+  }
+}
+
+/** Phaser.Easing.Cubic.In. */
+export function cubicIn(k: number): number {
+  return k * k * k;
+}
+
+/**
+ * An Invader's death burst as the source's emitter plays it, baked frame
+ * by frame: `count` particles cut from the class's voxel sheet, each at a
+ * random scale, heading and speed, falling under the emitter's gravity and
+ * fading on its cubic ease, drawn additively (BURST in source.ts). The
+ * simulation runs in source pixels; the frames are field pixels, scaled up
+ * by the inverse of the zoom the runtime draws them at.
+ */
+export function burstFrames(
+  sheet: Raster,
+  art: SheetArt,
+  frameIndices: readonly number[],
+  burst: {
+    count: number;
+    lifespanMs: number;
+    gravity: number;
+    minSpeed: number;
+    maxSpeed: number;
+    minScale: number;
+    maxScale: number;
+  },
+  opts: BurstOptions,
+): Raster[] {
+  const rand = seededRandom(opts.seed);
+  // Phaser's rnd.between is whole numbers, inclusive; realInRange is not.
+  const between = (lo: number, hi: number) =>
+    lo + Math.floor(rand() * (hi - lo + 1));
+  const real = (lo: number, hi: number) => lo + rand() * (hi - lo);
+  const cubes = frameIndices.map((fi) => gridFrame(sheet, art, fi));
+  const particles = Array.from({ length: burst.count }, () => {
+    const scale = real(
+      opts.spriteScale * burst.minScale,
+      opts.spriteScale * burst.maxScale,
+    );
+    const cube = cubes[Math.floor(rand() * cubes.length)];
+    const angle = between(-180, 180) * Math.PI / 180;
+    const speed = between(burst.minSpeed, burst.maxSpeed);
+    return {
+      cube,
+      scale,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+    };
+  });
+  // Source px on the frame: the field's scale, over the runtime's zoom.
+  const k = FIELD_SCALE / opts.zoom;
+  const originX = opts.size / 2;
+  const originY = opts.size / 2 + opts.anchorDrop / opts.zoom;
+  const out: Raster[] = [];
+  for (let f = 0; f < opts.frames; f++) {
+    const frame = newRaster(opts.size, opts.size);
+    const t = f * opts.periodMs / 1000;
+    const life = Math.min(1, t / (burst.lifespanMs / 1000));
+    const alpha = 1 - cubicIn(life);
+    if (alpha <= 0) {
+      out.push(frame);
+      continue;
+    }
+    for (const p of particles) {
+      const x = originX + p.vx * t * k;
+      const y = originY + (p.vy * t + burst.gravity * t * t / 2) * k;
+      const w = p.cube.width * p.scale * k;
+      const h = p.cube.height * p.scale * k;
+      // A particle smaller than a pixel is drawn as one, as faint as its share of it.
+      const pw = Math.max(1, Math.round(w)), ph = Math.max(1, Math.round(h));
+      const cover = Math.min(1, w * h / (pw * ph));
+      const dot = resample(p.cube, pw, ph, false);
+      blitAdd(
+        frame,
+        dot,
+        Math.round(x - pw / 2),
+        Math.round(y - ph / 2),
+        alpha * cover,
+      );
+    }
+    out.push(frame);
+  }
+  return out;
+}
+
+/** A frame that draws nothing: the burst sprite's tail, while it leaves. */
+export function blankArt(): Raster {
+  return newRaster(2, 2);
+}
