@@ -869,6 +869,7 @@ deno task testdrive:parity # one level's boss on every target side by side — w
                           # import on the web, every object sampled into panes/<id>.survey.json (README-Parity.md has the Ramsie findings)
                           # and the two surveys set against each other as report-survey.md (exit 1 on its FAIL); -- --survey-report <out-dir>
                           # rebuilds that report from a run on disk, --survey-lead <px> the web's gate lead it takes out first (240)
+deno task testdrive:pad   # (Windows + ViGEmBus) a virtual DualShock 4 drives the launcher's main menu in Chrome, every press asserted to move one row (see Controllers)
 deno task ps2:page        # a game's PS2 download / PLAY page in static/games/<its alias, else level-ps2>/ (gs: /games/squad/): ISO, USB zip, the web build, README, the GIF
 deno task powerups:atlas  # cut dev-fixtures/powerups/*.gif into the runtime's animated pickup atlas
 deno task ships:atlas     # cut dev-fixtures/ship-sheet/ships.png into the editor's NEW GAME character roster
@@ -5429,6 +5430,31 @@ controller is not seen until it is disconnected and reconnected**. That is why
 the packaged Linux and macOS builds bundle CEF rather than using the OS webview
 — one known Chromium everywhere, so pad enumeration is debugged once instead of
 per engine and per distro. See **Why it is packaged this way**.
+
+**"The controller does nothing" — check that Windows has it first.** The first
+report of a PlayStation pad not moving the menu was a pad that had never been
+paired: Windows' "Add a device · Tap to set up your Wireless Controller" toast
+means the pad is still in pairing mode, and `Get-PnpDevice` showed no Sony
+(`VID_054C`) device at all. Once paired, a DS4 reaches Chrome as
+`Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 09cc)` with the
+standard mapping, and the menu follows it. `deno task testdrive:pad` proves that
+end of it with nobody holding a pad: it plugs a virtual DualShock 4 into the
+ViGEm bus (`scripts/lib/vigem.ts`, the bus's IOCTLs called over FFI — no client
+library, and nothing that installs or changes the driver) under Sony's ids, so
+Windows enumerates a USB DS4 and Chrome cannot tell it from the hardware. It
+then drives the launcher in a headless Chrome (`--headed` to watch): one
+stick-right press to unlock the pad for the page, then D-pad and left stick down
+and up, each asserted to move exactly one row. The launcher reads pads once per
+animation frame, and headless Chrome (no GPU) draws the dashboard at only 4-8
+fps here, so a fixed 150 ms tap fell between two frames in about one run in
+three. Each press is therefore held until the page has drawn two frames with it
+down, and the log prints how long the page read each press and the longest
+frame gap (17 ms with `--headed`). Screenshots and `report.json`
+land in `build/testdrive/pad/`, and it exits 1 on any wrong row. It needs
+ViGEmBus installed (DS4Windows brings it). The pad is unplugged when the drive
+ends, and by the bus itself if the process dies first. `--pid 05c4` makes it the
+first-model DS4. `tests/testdrive_pad_test.ts` pins the bus protocol byte for
+byte.
 
 The default mapping, by standard-mapping slot:
 
