@@ -1,0 +1,77 @@
+# The daily world champion. Just after 00:00 UTC, whoever holds each game's
+# TODAY'S BEST for the day that just ended gets a push notification saying so
+# (scripts/daily-champion.ts, lib/daily-champion/job.ts).
+#
+# It runs here rather than in the deployed server so it does not depend on the
+# host: it needs only the open database (read over REST, as preview-verify
+# does) and the DAILY_CHAMPION_KEYS repository secret, the private VAPID and
+# box keys whose public halves static/champion/config.json carries
+# (scripts/daily-champion-keys.ts). Without the secret the run is a warning and
+# a dry run, not a failure, so the schedule stays quiet until it is set.
+#
+# GitHub starts scheduled runs late under load, and can drop them, so 00:07
+# rather than the hour, and 04:07 again: both crown the day that just ended,
+# yesterday's board is final by the first (a run filed just before midnight
+# lands within seconds), and the second finishes whatever the first could not
+# (a push service down, a dropped run). Neither sends anything twice
+# (shmupX/champions/sent/<date>). The run is red only for trouble on our side.
+
+name: daily-champion
+
+on:
+  schedule:
+    - cron: "7 0,4 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "UTC day to crown (YYYY-MM-DD); yesterday when empty"
+        required: false
+      send:
+        description: "Send the notifications (otherwise a dry run)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-champion
+  cancel-in-progress: false
+
+jobs:
+  crown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.8
+      - name: The keys are the ones pages subscribe with
+        shell: bash
+        env:
+          DAILY_CHAMPION_KEYS: ${{ secrets.DAILY_CHAMPION_KEYS }}
+        run: |
+          if [ -z "$DAILY_CHAMPION_KEYS" ]; then
+            echo "::warning title=daily-champion::DAILY_CHAMPION_KEYS is not set, so nobody is told. See README-Technical.md, The daily world champion."
+            exit 0
+          fi
+          deno task champion:keys --check
+      - name: Tell the champions
+        shell: bash
+        env:
+          DAILY_CHAMPION_KEYS: ${{ secrets.DAILY_CHAMPION_KEYS }}
+          DATE: ${{ inputs.date }}
+          SEND: ${{ github.event_name == 'schedule' || inputs.send }}
+        run: |
+          args=()
+          if [ -n "$DATE" ]; then args+=(--date "$DATE"); fi
+          if [ -n "$DAILY_CHAMPION_KEYS" ] && [ "$SEND" = "true" ]; then args+=(--send); fi
+          # in a code block: the summary is Markdown, the report is columns
+          {
+            echo '```text'
+            status=0
+            deno task champion:run "${args[@]}" || status=$?
+            echo '```'
+            exit "$status"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

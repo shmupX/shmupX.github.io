@@ -2631,11 +2631,46 @@
     }
     return normalizeScore(value);
   }
-  function createScorePayload(firebaseNamespace, score) {
-    return {
+  // `holder`, on today's board only, names the browser that raised it, for
+  // the daily world champion (championHolder).
+  function createScorePayload(firebaseNamespace, score, holder) {
+    const payload = {
       value: normalizeScore(score),
       updatedAt: firebaseNamespace.database.ServerValue.TIMESTAMP
     };
+    if (holder) {
+      payload.holder = holder;
+    }
+    return payload;
+  }
+  // The daily world champion: this browser's champion id, when the page
+  // offers one (static/champion/champion.js, on the hosted site, where a push
+  // can reach the player at UTC midnight), else null. It goes onto today's
+  // board with the run that raises it, and the midnight job tells whoever a
+  // board names when its day ends (lib/daily-champion/job.ts). A page
+  // without the script, an exported app or an older bundle writes none.
+  var CHAMPION_HOLDER = /^[A-Za-z0-9_-]{43}$/;
+  function championHolder() {
+    const champion = globalThis.__SHMUPX_CHAMPION__;
+    try {
+      const holder = champion && typeof champion.holder === "function" ? champion.holder() : null;
+      return typeof holder === "string" && CHAMPION_HOLDER.test(holder) ? holder : null;
+    } catch (_e) {
+      return null;
+    }
+  }
+  // Told once the board a run raised is this browser's: champion.js offers
+  // the midnight notification on it.
+  function announceDailyBest(gameId, dailyPath, value, holder) {
+    if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+      return;
+    }
+    try {
+      window.dispatchEvent(new CustomEvent("shmupx:daily-best", {
+        detail: { gameId, date: dailyPath.slice(dailyPath.lastIndexOf("/") + 1), value, holder, name: boardName() }
+      }));
+    } catch (_e) {
+    }
   }
   function ensureDatabase() {
     const firebaseNamespace = getFirebaseNamespace();
@@ -2848,7 +2883,9 @@
     const value = normalizeScore(score);
     return value >= normalizeScore(gameState.highScore) || value > currentDailyHighScore() || gameState.scoreSyncStatus === "loading" || gameState.scoreSyncStatus === "error";
   }
-  function raiseBoard(path, candidate, firebaseNamespace) {
+  // `onHeld` runs when the board the transaction committed is this run's
+  // and names `holder`: an equal score already there keeps its own.
+  function raiseBoard(path, candidate, firebaseNamespace, holder, onHeld) {
     const ref = refFor(path);
     if (!ref) {
       return Promise.resolve(candidate);
@@ -2858,9 +2895,13 @@
       if (candidate <= currentScore) {
         return currentValue;
       }
-      return createScorePayload(firebaseNamespace, candidate);
+      return createScorePayload(firebaseNamespace, candidate, holder);
     }).then((result) => {
-      return extractScore(result && result.snapshot ? result.snapshot.val() : candidate);
+      const board = result && result.snapshot ? result.snapshot.val() : null;
+      if (holder && onHeld && board && board.holder === holder && extractScore(board) === candidate) {
+        onHeld();
+      }
+      return extractScore(result && result.snapshot ? board : candidate);
     });
   }
   // What a board's meta calls its game: the resolved game's name. Before the
@@ -2907,6 +2948,8 @@
     // no board to raise.
     const epoch = scoreEpoch;
     const paths = getBoardPaths();
+    const gameId = resolveGameId();
+    const holder = raiseDaily && paths.daily ? championHolder() : null;
     if (!paths.allTime) {
       setScoreSyncStatus("disabled", "No game id: local scores only.");
       return Promise.resolve(normalizeScore(gameState.highScore));
@@ -2929,7 +2972,11 @@
       }
       return Promise.allSettled([
         raiseBoard(paths.allTime, candidate, firebaseNamespace),
-        raiseDaily ? raiseBoard(paths.daily, candidate, firebaseNamespace) : Promise.resolve(null),
+        raiseDaily ? raiseBoard(paths.daily, candidate, firebaseNamespace, holder, () => {
+          if (epoch === scoreEpoch) {
+            announceDailyBest(gameId, paths.daily, candidate, holder);
+          }
+        }) : Promise.resolve(null),
         stampBoardMeta(paths.meta, firebaseNamespace)
       ]).then((results) => {
         if (epoch !== scoreEpoch) {
