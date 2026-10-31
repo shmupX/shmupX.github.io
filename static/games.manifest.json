@@ -1,7 +1,7 @@
 {
-  "version": "91bc545",
+  "version": "0f7a85e",
   "versionSource": "git",
-  "generatedAt": "2026-10-28T20:26:11.431Z",
+  "generatedAt": "2026-10-29T16:13:42.941Z",
   "games": [
     {
       "id": "shmupx",
@@ -62,6 +62,20 @@
       "size": "0.5 MB",
       "date": "10.28.26",
       "players": 2
+    },
+    {
+      "id": "evil-invaders",
+      "kind": "web",
+      "name": "EVIL INVADERS",
+      "title": "EVIL INVADERS",
+      "sub": "PHASER CE // Peach vs Bowser, the flirty girls and two RedDevils, then the Invaders · the original",
+      "icon": "/icons/evil-invaders-icon.png",
+      "source": "url",
+      "downloadUrl": "/games/evil-invaders-web.zip",
+      "entry": "index.html",
+      "size": "0.6 MB",
+      "date": "10.29.26",
+      "players": 1
     },
     {
       "id": "zunzunkyou-no-yabou",

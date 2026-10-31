@@ -5831,6 +5831,13 @@ every game anyone can get — and it is read from two places by
   its dart or `endsOnClear`, and gives every stage a boss. Its row's box art
   (`static/icons/95-demo-icon.png`) is drawn from the game's own title art and
   sprites; `--icon` redraws it.
+- **Evil Invaders** (`evil-invaders`), the Phaser CE original that '95 grew out
+  of, is the same shape: `deno task evil-invaders:zip`
+  (`scripts/evil-invaders/build-zip.ts`, which `deno task build` runs) packs
+  `buildLevel()`'s record — the one `build-level.ts --apply` writes — into
+  `/games/evil-invaders-web.zip`, and its box art
+  (`static/icons/evil-invaders-icon.png`, `--icon` redraws it) is drawn from the
+  game's own title art and sprites. See **Evil Invaders as a cloud game** below.
 - Each GitHub-tracked build's own **`codemonkey.json`** — the file the cmg
   launcher has always let a game ship at its root — read off the tracked branch
   (`raw.githubusercontent.com/<owner>/<repo>/<branch>/codemonkey.json`) after
@@ -6075,6 +6082,115 @@ a level open.
   rows of the texture rather than nine, and the build refuses a stack taller
   than a phone's 4096 (`TEXTURE_LIMIT`).
 
+## Evil Invaders as a cloud game
+
+
+`evil-invaders` is [Evil
+Invaders](https://github.com/easierbycode/evil-invaders), the Phaser CE 2.8.2
+shooter at
+[easierbycode.com/evil-invaders](https://easierbycode.com/evil-invaders) —
+Peach's ship against Bowser, the flirty girls, two RedDevils and the Invaders,
+the game EVIL INVADERS '95 grew out of — rebuilt as a cloud game by
+`scripts/evil-invaders/build-level.ts`. `?level=evil-invaders` and
+`evil-invaders.codemonkey.games` open it, and the eShop lists it as a web build
+(**The eShop**, above):
+
+```sh
+deno run -A --node-modules-dir=none scripts/evil-invaders/build-level.ts            # dry run: what it would write
+deno run -A --node-modules-dir=none scripts/evil-invaders/build-level.ts --serve    # play it locally, nothing written
+deno run -A --node-modules-dir=none scripts/evil-invaders/build-level.ts --apply    # write shmupX/levels/evil-invaders (--force replaces it)
+deno run -A --node-modules-dir=none scripts/evil-invaders/build-level.ts --revert   # delete it again
+```
+
+The source ships as a webpack bundle (`docs/game.bundle.js`, the file the site
+runs) rather than a src/ tree, so its numbers are ported verbatim from the
+classes in it into `scripts/evil-invaders/source.ts` — the two level tables from
+`assets/maps/`, GenericEnemy's physics, the Phaser.Weapon subclasses' speeds and
+bullet scales, the RedDevil's and LittleDevil's routines, the loader's frame
+sizes and every sprite's animation table — and its art is copied byte for byte
+into `scripts/evil-invaders/art/`, so a conversion needs neither the network nor
+the source checkout, and comes out the same every time. 95-demo's script
+compiler, fire gates and art pipeline are reused
+(`scripts/95-demo/entry-script.ts`, `fireGateFrames`, its `art.ts`): '95 is this
+game's descendant, and its RedDevil, Invaders and DevilFire are this game's.
+
+**The levels are timetables.** The source sends each enemy at a time on its
+level's clock, from 100 px above a 360×640 world, at a straight-line velocity:
+GenericEnemy bounces off the side walls (two pixels inside, velocity flipped)
+and dies once its top is below the world, and its gun fires on construction and
+every two seconds after. `flight.ts` plays each spawn out at Phaser's fixed 60
+Hz exactly so — the arcade step, the bounce, the kill, and the shots, the first
+of which every enemy fires off the world, where Phaser kills the bullet unseen —
+and `compileFlight` turns the flight into the enemy's own appearance script
+(`dezaemon.entry.rows`), fitted row by row against an exact port of
+`stepEntryScript`; in headless Chromium every enemy of both stages followed its
+script within a hundredth of a pixel. A flight is picked up at its first frame
+at or below field y −56 (the runtime culls an enemy above −60): the enemy spawns
+on the grid column nearest that point and pre-rolls onto it at 40 px a frame, so
+it is above the screen within a frame of spawning, and a sprite taller than 32
+px shows its bottom edge at the spawn point for that one frame. The stage's
+`waveRows` (`waveInterval: 2`, one row value per Saturn frame) spawn each enemy
+on the source's clock; the last row is empty and due when the level's timer runs
+out (level 2, 15 s) or when the source sends the boss (level 1, 16 s).
+
+**The guns are gates**, as 95-demo's: a script row opens the enemy's fire for
+`fireGateFrames(stage)` frames around each shot the source fires, one bullet a
+gate, so Bowser's fireballs aim at the player and the girls' lips and the
+Invaders' bullets drop straight down every two seconds. Each gun's bullet is the
+source's at the size that spawn fires it (a weapon scales its bullet by the
+shooter's: fireballs ×10, lips ×½, Invader bullets ×15), and the
+RainbowInvader's picks a tint at random every frame in the source, so its record
+names sixty frames a second — the eight tints in turn over the flicker frame
+that is due — out of sixteen baked ones.
+
+**What differs from the source,** and why:
+
+- A boss ends the first stage. The source's level 1 sends two RedDevils, at 15
+  and 16 s, which park at y 150 and fight until the level's 35 s timer; a cloud
+  stage ends on its boss, so the second devil is the stage's boss, due when the
+  source sends it, and the first stays a zako: its script descends it over two
+  seconds (the source's Sine.easeInOut tween), holds it where the source parks
+  it, and fires DevilFire at the player through a gate every two seconds — the
+  moments the source alternates its DevilFire and its DevilBlast — until the
+  source's timer, when it leaves. The boss flies Fang's routine (`attackPattern:
+  "boss4"`), as 95-demo's RedDevil does: its flap is the idle, its release the
+  charge, its toot the shot, DevilBlast the beam and DevilFire the aimed volley
+  and the ring; its death burst of three 12 hp LittleDevils is its `stage2` on
+  Barlog's routine, below the devils' share of its bar (36 of 86), dropping
+  half-size DevilFire, since a boss cannot spawn enemies when it dies. Level 2
+  has no boss and gets none: `bossAdd` clears a stage with no boss record, so it
+  ends on its 15 s timer with whatever is still flying, as the source's does.
+- The source loops its two levels forever; the cloud game has two stages and
+  ends after the second.
+- The source keeps no score, no lives and no title. An enemy is worth a hundred
+  points an hp (`SCORE_PER_HP`, the stock game's rate for its zako: the big
+  Bowser 2,500, a RedDevil 5,000); nothing in the source hurts Peach — an enemy
+  bullet is killed on contact and shakes the screen — and here she has the stock
+  game's three lives and the SP bomb, worth a LittleDevil, with rando's cut-in
+  carried in the record's own sheet under `ownCutin` (**EVIL INVADERS '95 as a
+  cloud game**, above, says why). The title — logo, tag line, prompt — is set in
+  the repo's 8×8 arcade face over the source's starfield, and the starfield is
+  every stage's backdrop too (`stageBackgrounds`), scrolled down the field as
+  the source's stars fall, in place of the stock corridor.
+- Peach is drawn nose-up, as the source turns her (angle 270), and her bubble is
+  packed as drawn: the source's PurpleBubbles fire at Phaser.Weapon's default
+  angle, pointing right, which is the way the runtime wants a shot drawn before
+  it turns it to fly up. Her boosters loop at the source's 6 fps (the runtime
+  plays a ship's frames as an animation) and a bubble leaves every 7 ticks, the
+  source's 60 ms.
+- An Invader's hit animation, during which the source makes it invulnerable, has
+  no runtime stance; a hit lands as it lands. The screen shake, the vibration,
+  the particle bursts and the shot sound (`weapon.mp3`) have no place in a
+  record.
+- Every zako bullet flies at the runtime's own speed and rules (no zako shot
+  within 16 px of a side edge, none at a ship closer than 40 px), as 95-demo's
+  do.
+
+`tests/evil_invaders_test.ts` pins the replay (the bounce, the kill, the gun),
+the compiled scripts (within 0.75 px of the replay on every visible frame, one
+gate a shot, nothing showing above the field before its entry), the record and
+the archive.
+
 ## shmupX's corner of the shared database
 
 The Realtime Database (`evil-invaders-default-rtdb`) is shared with cmg, the
@@ -6087,7 +6203,7 @@ what it ships:
 
 | path                          | what                                                                       |
 | ----------------------------- | -------------------------------------------------------------------------- |
-| `shmupX/levels/<key>`         | the six games: `2019-PS2`, `95-demo`, `foo`, `gs`, `Ramsie` and `rando`    |
+| `shmupX/levels/<key>`         | the seven games: `2019-PS2`, `95-demo`, `evil-invaders`, `foo`, `gs`, `Ramsie` and `rando` |
 | `shmupX/levelAliases/<alias>` | `2019` and `streetfighter` naming `2019-PS2`, `squad` `gs`, `95` `95-demo` |
 | `shmupX/characters/<id>`      | the 29 library characters those games name                                 |
 | `shmupX/atlases/<id>`         | each one's art, under the character's own id                               |
