@@ -425,6 +425,48 @@ they are written out in full.
     bullets back and takes the frames out. Akuma (purple and red fireballs)
     and Trump (green laser, gold fireball) already fire what their records
     name. `tests/rando_first_boss_arms_test.ts`.
+  - **Master Arena Mod** is the community cart Master Arena (MA Project,
+    Dezaemon 2) as the cloud game `shmupX/levels/Master Arena Mod`: its ten
+    stages, enemies, scenery, bullets, items, tunes, title page and drawn
+    credits exactly as the cart decodes (the harbor's shelf, as
+    `level:reimport` decodes one; `--sav` reads a cart on disk), with two
+    slots replaced. `bossData/boss0` is Mike Tyson — the thirteen 55×122
+    cells of monkey-kombat's `tyson.png` (`scripts/master-arena-mod/art/`),
+    named for the animations monkey-kombat plays them in — pinned to
+    Barlog's routine (`attackPattern: "boss1"`), throwing Barlog's shot from
+    the bare `bulletData` slot that routine fires, on the cart's first
+    boss's own bar, score and gauge. The routine shows a boss's idle set and
+    nothing else, so his idle is the shuffle and the wink in Barlog's own
+    idle rhythm, with the wind-up, punch and uppercut on charge, shoot and
+    attack for the Boss Lab and the cart. His `dezaemon` trailer is the
+    slot's — entrance, death, hp stages, the cart's hp and score — with the
+    four patterns and playlist replaced by movement scripts and fire points
+    that play Barlog's moves on a Saturn (`TYSON_PATTERNS`: script 22's
+    swoop across the upper field and a straight shot, script 31's advance on
+    the ship with an aimed one, script 28's rise, 192 px power dive and
+    return, and 22's mirror 23), encoded and decoded through the engine so
+    the record carries what a reader of the written cart gets back, byte
+    for byte. On the Saturn he throws the cart's own first bullet (its bank
+    fills all three bullet types, so Barlog's art claims none), the
+    routine's random choice is a fixed loop, and his core and Ryuda's (25
+    and 14 CG cells) fit a cart that re-encodes 994 of 1024 full only by
+    leaving the last 9 cells of the eighth stage's scenery unpainted — the
+    web level has every cell. `bossData/boss1` is the
+    Character Library's `ryuda`, placed as `shmupx_place_character` places
+    one — her record on her own Dezaemon trailer, her frames packed under
+    the level's sheet, renamed to the level's spelling (`ryuda_` in front of
+    a name the cart spells for other art, its `dezaBullet2_*`), no stage-end
+    backdrop since every stage has scenery — at the row and column the
+    cart's second boss had; on the Saturn her two parts are the stage's
+    records 37 and 38, as a placed Dezaemon boss's always are. A dry run
+    unless `--apply` (an empty slot only; `--force` replaces it, keeping the
+    board); `--out` writes the record for a play-through on
+    `window.__OFFLINE_LEVEL__`, `--serve` plays it (`?stage=0&bossRush=1`
+    opens on Tyson, `?stage=1&bossRush=1` on Ryuda); `--revert` deletes the
+    level, only if `meta.mod` says it is this one. The eShop lists it as a
+    cart: `deno task eshop:publish "Master Arena Mod" --name "Master Arena
+    Mod"`, no `--author`, so MA Project's drawn staff roll stays.
+    `tests/master_arena_mod_test.ts`.
   - A weapon record's `facing` turns its bullets to their heading: the
     direction the art is drawn flying, in degrees clockwise from right (0 =
     right, 90 = down). `faceBulletHeading` rotates each bullet of such a
