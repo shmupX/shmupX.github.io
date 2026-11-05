@@ -5,11 +5,13 @@
 // blank; when the WebGL context is restored Phaser rebuilds each texture from
 // its source canvas, now empty. The runtime stacks a level's atlas onto
 // game_asset on a canvas, cuts the Dezaemon scenery strips, the SP faces and
-// the kernel's HUD line out of it on more canvases, so a phone playing Master
-// Arena Mod lost the ship, the enemies, their shots and the stage at once and
-// kept only what is drawn from images (the HP / SCORE / COMBO band) or redrawn
-// every frame (the SP lens, the score popups). Reproduced with CDP's
-// Browser.crashGpuProcess: game_asset read 0 opaque pixels afterwards.
+// the kernel's HUD line out of it on more canvases, so a phone playing Ramsie
+// in MOD off the LIBRARY lost the ship, the enemies, their shots and the stage
+// at once and kept only what is drawn from images (the HP / SCORE / COMBO
+// band) or redrawn every frame (the SP lens, the score popups). Reproduced
+// with CDP's Browser.crashGpuProcess on Master Arena Mod (game_asset read 0
+// opaque pixels afterwards) and on Ramsie through the editor's hand-off (its
+// stone scenery and the SP face gone).
 //
 // The fix is a canvas whose first getContext asks for willReadFrequently,
 // which keeps it in CPU memory where a reset cannot reach it, for every canvas
