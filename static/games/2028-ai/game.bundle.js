@@ -2275,11 +2275,24 @@
   globalThis.__CMG_GAME_STATE__ = gameState;
   ensureScoreState(gameState);
   ensureRuntimeState(gameState);
+  // The Guide's Haptics switch, as the launcher (or this page's PAUSE panel)
+  // last left it: true / false, or null when it never has.
+  function readStoredHaptics() {
+    try {
+      var v = localStorage.getItem("cmg-haptics");
+      return v === "1" ? true : v === "0" ? false : null;
+    } catch (e) {
+      return null;
+    }
+  }
   function syncRuntimeFlagsFromLocation(state = gameState) {
     if (!state || typeof state !== "object") {
       return;
     }
-    state.vibrateFlg = readBooleanSearchParam("vibrate", typeof state.vibrateFlg === "boolean" ? state.vibrateFlg : true);
+    // ?vibrate=0|1 wins; else the Guide's Haptics switch (cmg-haptics, shared
+    // with the launcher — same origin); else on.
+    var storedHaptics = readStoredHaptics();
+    state.vibrateFlg = readBooleanSearchParam("vibrate", storedHaptics != null ? storedHaptics : typeof state.vibrateFlg === "boolean" ? state.vibrateFlg : true);
     var canvasPosParam = readSearchParam("canvasPosition");
     if (canvasPosParam === "bottom" || canvasPosParam === "center") {
       state.canvasPosition = canvasPosParam;
@@ -5048,6 +5061,9 @@
     var game = globalThis.__PHASER_4_GAME__ || globalThis.__PHASER_GAME__;
     if (!game) return;
     cmgPaused = p;
+    // A rumble (and the tail of an envelope) would otherwise run on under the
+    // Guide, the world frozen beneath it.
+    if (p) hapticsStop();
     try {
       if (p) game.loop.sleep();
       else game.loop.wake();
@@ -5115,6 +5131,25 @@
     if (cmgTurboInput) cmgTurboInput.checked = cmgTimeScale !== 1;
   }
   cmgSetTurbo(readBooleanSearchParam("turbo", false));
+  // cmg: Haptics — the Guide's switch for every rumble and vibration the
+  // game makes (cmg-haptics-set). gameState.vibrateFlg is the one flag the
+  // haptics module reads; the launcher stores the choice under cmg-haptics
+  // (same origin, so a game booted later reads it too — readStoredHaptics) and
+  // sends it down, so `persist` is for the PAUSE panel's own switch, on a page
+  // with no Guide. Turning it off stops what is playing at once.
+  var cmgHapticsInput = null;
+  function cmgSetHaptics(on, persist) {
+    on = !!on;
+    gameState.vibrateFlg = on;
+    if (!on) hapticsStop();
+    if (cmgHapticsInput) cmgHapticsInput.checked = on;
+    if (persist) {
+      try {
+        localStorage.setItem("cmg-haptics", on ? "1" : "0");
+      } catch (e) {
+      }
+    }
+  }
   function cmgWrapLoop(game) {
     var loop = game && game.loop;
     if (!loop || loop.__cmgTurbo) return;
@@ -5179,7 +5214,7 @@
     row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;cursor:pointer;";
     var lbl = document.createElement("span");
     lbl.textContent = label;
-    lbl.style.cssText = "width:64px;text-align:left;";
+    lbl.style.cssText = "min-width:64px;white-space:nowrap;text-align:left;";
     var val = document.createElement("span");
     val.style.cssText = "width:72px;text-align:right;font-family:inherit;";
     var slot = document.createElement("span");
@@ -5221,6 +5256,14 @@
     }, cmgSetTurbo);
     cmgTurboInput = turbo.querySelector("input");
     card.appendChild(turbo);
+    // ...and its Haptics row, saved (cmg-haptics) so a later visit starts there.
+    var haptics = cmgToggleRow("HAPTICS", isHapticsEnabled(), function (on) {
+      return on ? "ON" : "OFF";
+    }, function (on) {
+      cmgSetHaptics(on, true);
+    });
+    cmgHapticsInput = haptics.querySelector("input");
+    card.appendChild(haptics);
     var btn = document.createElement("button");
     btn.textContent = "RESUME";
     btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:16px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
@@ -5266,6 +5309,7 @@
       if (d.type === "cmg-volume") cmgSetVolumes(d.bgm, d.sfx, false);
       else if (d.type === "cmg-pause") cmgSetPaused(!!d.paused);
       else if (d.type === "cmg-turbo-set") cmgSetTurbo(!!d.value);
+      else if (d.type === "cmg-haptics-set") cmgSetHaptics(!!d.value, false);
       // cmg: the launcher's Split Controller mode (a Legion Go's halves as
       // two pads, static/gamepad-compatibility-plugin.js) — a second player
       // asking to be let in; twoPlayerAllowed reads it.
@@ -5296,6 +5340,12 @@
       // cmg-turbo-set reply lands.
       try {
         window.parent.postMessage({ type: "cmg-turbo", value: cmgTimeScale !== 1 }, "*");
+      } catch (e) {
+      }
+      // ...and its Haptics row. `explicit` says ?vibrate= set the state, which
+      // the launcher then keeps for the session instead of overruling.
+      try {
+        window.parent.postMessage({ type: "cmg-haptics", value: isHapticsEnabled(), explicit: readSearchParam("vibrate") != null }, "*");
       } catch (e) {
       }
       return;
@@ -9866,9 +9916,23 @@
   };
 
   // ../2019-es7/src/haptics.js
+  //
+  // cmg: hand-extended past its 2019-es7 source (a rebuild from there drops
+  // all of this — README-Technical.md, "Haptics"). What the source had is a
+  // table of single blips. This adds, on top of it:
+  //   * `priority` — a lane (one pad, or "all") keeps playing the heavier of
+  //     two effects, so a stage's worth of kill ticks cannot cut a death
+  //     rumble short;
+  //   * `envelope` — [at, duration, weak, strong] steps from the trigger, for
+  //     the moments that deserve a shape (a swell, a decay, a pulse train) the
+  //     way a single constant-magnitude playEffect cannot give them;
+  //   * a `scale` on triggerHaptic, so a bigger kill or a harder hit lands
+  //     heavier than a small one;
+  //   * hapticsStop() and hapticsAmbient() (the low-hull heartbeat).
   var HAPTIC_PRESETS = {
     ui: {
       cooldown: 60,
+      priority: 0,
       duration: 12,
       vibration: 10,
       weakMagnitude: 0.2,
@@ -9878,6 +9942,7 @@
     },
     ready: {
       cooldown: 400,
+      priority: 1,
       duration: 18,
       vibration: 16,
       weakMagnitude: 0.32,
@@ -9886,6 +9951,7 @@
     },
     pickup: {
       cooldown: 120,
+      priority: 1,
       duration: 22,
       vibration: 18,
       weakMagnitude: 0.45,
@@ -9894,57 +9960,95 @@
     },
     damage: {
       cooldown: 180,
+      priority: 2,
       duration: 34,
       vibration: 28,
       weakMagnitude: 0.55,
       strongMagnitude: 0.4,
       tapticImpact: "medium"
     },
+    // Three rising pulses: the boss is one bomb from dead.
     warning: {
       cooldown: 800,
+      priority: 2,
       duration: 30,
       vibration: [14, 28, 14],
       weakMagnitude: 0.6,
       strongMagnitude: 0.35,
+      envelope: [[0, 110, 0.55, 0.3], [220, 110, 0.65, 0.4], [440, 170, 0.8, 0.55]],
       tapticNotification: "warning",
       tapticImpact: "medium"
     },
+    // A swell into the blast, then a long tail out.
     special: {
       cooldown: 500,
+      priority: 3,
       duration: 44,
       vibration: [18, 24, 40],
       weakMagnitude: 0.9,
       strongMagnitude: 0.85,
+      envelope: [
+        [0, 70, 0.35, 0.2],
+        [70, 90, 0.7, 0.6],
+        [160, 140, 1, 0.95],
+        [300, 160, 0.7, 0.7],
+        [460, 200, 0.4, 0.4],
+        [660, 200, 0.2, 0.2]
+      ],
       tapticImpact: "heavy"
     },
+    // The ground starts to shake before the boss is on screen.
     bossEnter: {
       cooldown: 1200,
+      priority: 3,
       duration: 40,
       vibration: 36,
       weakMagnitude: 0.8,
       strongMagnitude: 0.65,
+      envelope: [
+        [0, 100, 0.25, 0.15],
+        [110, 100, 0.4, 0.3],
+        [220, 110, 0.55, 0.5],
+        [340, 130, 0.75, 0.7],
+        [480, 160, 0.9, 0.85],
+        [650, 250, 0.6, 0.55]
+      ],
       tapticImpact: "heavy"
     },
+    // Blast, blast, blast, then it settles.
     bossDefeat: {
       cooldown: 1500,
+      priority: 4,
       duration: 52,
       vibration: [24, 36, 48],
       weakMagnitude: 1,
       strongMagnitude: 1,
+      envelope: [
+        [0, 140, 1, 1],
+        [160, 100, 0.6, 0.6],
+        [280, 140, 1, 1],
+        [440, 100, 0.5, 0.5],
+        [560, 160, 0.9, 0.9],
+        [740, 300, 0.6, 0.7],
+        [1060, 400, 0.3, 0.35]
+      ],
       tapticNotification: "success",
       tapticImpact: "heavy"
     },
     stageClear: {
       cooldown: 1500,
+      priority: 3,
       duration: 36,
       vibration: [18, 28, 24],
       weakMagnitude: 0.72,
       strongMagnitude: 0.45,
+      envelope: [[0, 90, 0.5, 0.25], [120, 90, 0.65, 0.35], [240, 160, 0.8, 0.5], [420, 260, 0.45, 0.3]],
       tapticNotification: "success",
       tapticImpact: "medium"
     },
     kill: {
       cooldown: 80,
+      priority: 0,
       duration: 10,
       vibration: 8,
       weakMagnitude: 0.15,
@@ -9952,23 +10056,56 @@
       tapticKind: "selection",
       tapticImpact: "light"
     },
+    // The ship coming apart: hard, then ebbing out.
     death: {
       cooldown: 2e3,
+      priority: 4,
       duration: 60,
       vibration: [30, 40, 50, 30, 80],
       weakMagnitude: 1,
       strongMagnitude: 1,
+      envelope: [
+        [0, 120, 1, 1],
+        [130, 110, 0.9, 0.9],
+        [250, 140, 0.7, 0.8],
+        [400, 180, 0.45, 0.55],
+        [590, 240, 0.25, 0.3]
+      ],
       tapticNotification: "error",
       tapticImpact: "heavy"
     },
     deflect: {
       cooldown: 100,
+      priority: 0,
       duration: 8,
       vibration: 6,
       weakMagnitude: 0.12,
       strongMagnitude: 0.05,
       tapticKind: "selection",
       tapticImpact: "light"
+    },
+    // Your shots landing on a boss: a felt thud, not a buzz (it rides the hits
+    // of a stream of bullets, so the cooldown is what sets its cadence).
+    bossHit: {
+      cooldown: 130,
+      priority: 0,
+      duration: 16,
+      vibration: 12,
+      weakMagnitude: 0.28,
+      strongMagnitude: 0.16,
+      tapticImpact: "light"
+    },
+    // Lub-dub, deep in the strong motor: hapticsAmbient plays it while a
+    // ship is down to its last hit points.
+    heartbeat: {
+      cooldown: 0,
+      priority: 0,
+      duration: 70,
+      vibration: [40, 80, 28],
+      weakMagnitude: 0.2,
+      strongMagnitude: 0.55,
+      envelope: [[0, 70, 0.2, 0.55], [150, 55, 0.14, 0.4]],
+      tapticImpact: "medium"
     }
   };
   var lastHapticByPreset = /* @__PURE__ */ Object.create(null);
@@ -10011,7 +10148,40 @@
   function isHapticsEnabled() {
     return gameState.vibrateFlg !== false;
   }
-  function shouldTriggerPreset(name, preset) {
+  // One lane per controller, plus "all" for the game-wide events a boss
+  // arriving or a stage clearing belong to. A lane remembers when its current
+  // effect ends and how much it matters; see HAPTIC_PRESETS.
+  var hapticLanes = Object.create(null);
+  function hapticLane(padIndex) {
+    var key = typeof padIndex === "number" ? padIndex : "all";
+    return hapticLanes[key] || (hapticLanes[key] = { until: 0, priority: 0, timers: [] });
+  }
+  function hapticLength(preset) {
+    var end = preset.duration || 0;
+    if (preset.envelope) {
+      for (var i = 0; i < preset.envelope.length; i++) {
+        end = Math.max(end, preset.envelope[i][0] + preset.envelope[i][1]);
+      }
+    }
+    return end;
+  }
+  // Blocked while a heavier effect is still playing on the lane (a game-wide
+  // event checks every lane, a pad's own checks its lane and the game-wide
+  // one), so a stage's worth of kill ticks cannot cut a death rumble short.
+  function hapticBlocked(padIndex, priority, now) {
+    var scoped = typeof padIndex === "number";
+    for (var key in hapticLanes) {
+      if (scoped && key !== "all" && key !== String(padIndex)) continue;
+      var lane = hapticLanes[key];
+      if (now < lane.until && priority < lane.priority) return true;
+    }
+    return false;
+  }
+  function clearHapticTimers(lane) {
+    for (var i = 0; i < lane.timers.length; i++) clearTimeout(lane.timers[i]);
+    lane.timers.length = 0;
+  }
+  function shouldTriggerPreset(name, preset, padIndex) {
     if (!isHapticsEnabled()) {
       return false;
     }
@@ -10022,6 +10192,9 @@
     var cooldown = preset.cooldown || 0;
     var lastPresetAt = lastHapticByPreset[name] || 0;
     if (cooldown > 0 && now - lastPresetAt < cooldown) {
+      return false;
+    }
+    if (hapticBlocked(padIndex, preset.priority || 0, now)) {
       return false;
     }
     lastHapticByPreset[name] = now;
@@ -10207,20 +10380,147 @@
     }
     return triggered;
   }
-  function triggerHaptic(name, padIndex) {
+  // A heavier or lighter version of a preset: `scale` multiplies the motors'
+  // magnitudes, and the length follows more gently (a big hit is mostly
+  // stronger, a little longer).
+  function scaleHaptic(preset, scale) {
+    var s = Math.max(0.25, Math.min(2, scale));
+    var len = Math.max(0.6, Math.min(1.5, s));
+    var out = {};
+    for (var key in preset) out[key] = preset[key];
+    out.weakMagnitude = Math.min(1, preset.weakMagnitude * s);
+    out.strongMagnitude = Math.min(1, preset.strongMagnitude * s);
+    out.duration = Math.round(preset.duration * len);
+    if (typeof preset.vibration === "number") {
+      out.vibration = Math.round(preset.vibration * len);
+    } else if (Array.isArray(preset.vibration)) {
+      out.vibration = preset.vibration.map(function(ms, i) {
+        return i % 2 === 0 ? Math.round(ms * len) : ms;
+      });
+    }
+    if (preset.envelope) {
+      out.envelope = preset.envelope.map(function(st) {
+        return [st[0], st[1], Math.min(1, st[2] * s), Math.min(1, st[3] * s)];
+      });
+    }
+    return out;
+  }
+  function hapticStepper(step, padIndex) {
+    return function() {
+      if (isHapticsEnabled()) tryGamepadHaptics(step, padIndex);
+    };
+  }
+  // The pad half of an envelope: the first step now, the rest on timers. The
+  // motors take one constant magnitude per playEffect (and a new one preempts
+  // the last), so the shape is a chain of them. The browser's vibrate() and the
+  // Cordova engines get the preset's own pattern once, in triggerHaptic.
+  function playHapticEnvelope(preset, padIndex, lane) {
+    var played = false;
+    for (var i = 0; i < preset.envelope.length; i++) {
+      var st = preset.envelope[i];
+      var step = { duration: st[1], weakMagnitude: st[2], strongMagnitude: st[3] };
+      if (st[0] <= 0) {
+        played = tryGamepadHaptics(step, padIndex) || played;
+      } else {
+        lane.timers.push(setTimeout(hapticStepper(step, padIndex), st[0]));
+      }
+    }
+    return played;
+  }
+  function triggerHaptic(name, padIndex, scale) {
     var presetName = name || "ui";
-    var preset = resolvePreset(presetName);
-    if (!shouldTriggerPreset(presetName, preset)) {
+    var base = resolvePreset(presetName);
+    if (!shouldTriggerPreset(presetName, base, padIndex)) {
       return false;
     }
+    var preset = typeof scale === "number" && scale !== 1 ? scaleHaptic(base, scale) : base;
+    var lane = hapticLane(padIndex);
+    lane.until = nowMs() + hapticLength(preset);
+    lane.priority = preset.priority || 0;
+    // The new effect preempts whatever the motors were doing, so the tail of
+    // the last envelope must not play over it.
+    clearHapticTimers(lane);
+    if (lane !== hapticLanes.all && hapticLanes.all) clearHapticTimers(hapticLanes.all);
     var triggered = false;
     var usedCordovaDevice = tryCordovaEngine(preset) || tryCordovaNotificationVibrate(preset);
     triggered = usedCordovaDevice || triggered;
     if (!usedCordovaDevice) {
       triggered = tryNavigatorVibrate(preset) || triggered;
     }
-    triggered = tryGamepadHaptics(preset, padIndex) || triggered;
+    if (preset.envelope) {
+      triggered = playHapticEnvelope(preset, padIndex, lane) || triggered;
+    } else {
+      triggered = tryGamepadHaptics(preset, padIndex) || triggered;
+    }
     return triggered;
+  }
+  // Silence everything now: the pending steps of any envelope, the browser's
+  // vibration, and each pad's motors. The Guide turning haptics off, or
+  // opening over the game, must not leave a rumble running.
+  function hapticsStop() {
+    for (var key in hapticLanes) {
+      clearHapticTimers(hapticLanes[key]);
+      hapticLanes[key].until = 0;
+      hapticLanes[key].priority = 0;
+    }
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function" && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
+        navigator.vibrate(0);
+      }
+    } catch (error) {
+    }
+    try {
+      var pads = typeof navigator !== "undefined" && typeof navigator.getGamepads === "function" ? navigator.getGamepads() : null;
+      for (var i = 0; pads && i < pads.length; i++) {
+        var actuators = getGamepadActuators(pads[i]);
+        for (var j = 0; j < actuators.length; j++) {
+          if (typeof actuators[j].reset === "function") {
+            var result = actuators[j].reset();
+            if (result && typeof result.catch === "function") result.catch(function() {
+            });
+          }
+        }
+      }
+    } catch (error) {
+    }
+  }
+  // How heavy a kill or a hit feels: a 10-point popcorn ship ticks, a
+  // 100-point one is the preset as authored, a 10,000-point one thumps.
+  function hapticKillScale(score) {
+    return Math.min(1.65, Math.max(0.65, 0.35 + Math.log10(Math.max(10, score || 100)) * 0.325));
+  }
+  function hapticDamageScale(amount) {
+    return Math.min(1.6, Math.max(0.8, 0.8 + (amount || 1) * 0.2));
+  }
+  // The pad a player's shot or kill belongs to (undefined → game-wide).
+  function hapticPadOf(scene, owner) {
+    var p = killer(scene, owner);
+    return p ? p.padIndex : void 0;
+  }
+  // Low-hull heartbeat. Once a ship is down to a third of its hit points it
+  // thumps, quicker the lower it goes (1.25 s a beat at the threshold, 0.67 s
+  // on the last sliver). Counted in fixed steps rather than milliseconds, so
+  // it stops with the world (the Guide, a stage clear) and runs at Turbo's
+  // pace with it.
+  var HAPTIC_LOW_HULL = 1 / 3;
+  function hapticsAmbient(scene) {
+    if (!isHapticsEnabled()) return;
+    var ps = scene && scene.players;
+    if (!ps) return;
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i];
+      if (!p || p.dead || !(p.maxHp > 0) || !(p.hp > 0)) continue;
+      var frac = p.hp / p.maxHp;
+      if (frac > HAPTIC_LOW_HULL) {
+        p.hapticBeat = 0;
+        continue;
+      }
+      var period = Math.round(80 + 70 * Math.min(1, frac / HAPTIC_LOW_HULL));
+      if ((p.hapticBeat = (p.hapticBeat || 0) + 1) >= period) {
+        p.hapticBeat = 0;
+        triggerHaptic("heartbeat", p.padIndex);
+      }
+    }
   }
 
   // ../2019-es7/src/phaser/game-objects/Shadow.js
@@ -10829,7 +11129,7 @@
     // scaleX only: the bar's HEIGHT carries which player it belongs to once the
     // HUD has split, and setScale(x, 1) would reset that every hit.
     if (p.hpBar) p.hpBar.scaleX = Math.max(0, p.hp / p.maxHp);
-    triggerHaptic("damage", p.padIndex);
+    triggerHaptic("damage", p.padIndex, hapticDamageScale(amount));
     scene.playSound("se_damage", 0.15);
     scene.playSound("g_damage_voice", 0.5);
     scene.cameras.main.shake(150, 0.01);
@@ -11608,7 +11908,7 @@
     // on the same tick and only then decides how to render the death.
     enemy.setData("dezaChainOwner", p.index);
     var death = runDeathWord(scene, enemy);
-    triggerHaptic("kill", p.padIndex);
+    triggerHaptic("kill", p.padIndex, hapticKillScale(score));
     if (!(death && death.silent)) {
       scene.showExplosion(enemy.x, enemy.y);
       scene.playSound("se_explosion", 0.175);
@@ -18007,6 +18307,7 @@
       }
       if (!this.gameStarted) return;
       if (!anyAlive || this.stageCleared) return;
+      hapticsAmbient(this);
       // Sample every pad ONCE for this rendered frame, then let each player
       // read its own: two readers advancing the edge state would have the
       // second one see every press as already handled.
@@ -18133,7 +18434,11 @@
               if (poolHp !== "infinity") {
                 enemy.setData("hp", poolHp - pbPool);
                 pb.setData("dezaPool", pbPool - poolHp);
-                if (isBoss) { this.bossHp = poolHp - pbPool; this.checkBossDanger(); }
+                if (isBoss) {
+                  this.bossHp = poolHp - pbPool;
+                  triggerHaptic("bossHit", hapticPadOf(this, pb.getData("owner")));
+                  this.checkBossDanger();
+                }
                 if (poolHp - pbPool <= 0) {
                   if (isBoss) this.bossDie(enemy, pb.getData("owner"));
                   else this.enemyDie(enemy, false, pb.getData("owner"));
@@ -18177,6 +18482,7 @@
                 enemy.setData("hp", ehp);
                 if (isBoss) {
                   this.bossHp = ehp;
+                  triggerHaptic("bossHit", hapticPadOf(this, pb.getData("owner")));
                   this.checkBossDanger();
                 }
                 this.showHitImpact(pb.x, pb.y, false);

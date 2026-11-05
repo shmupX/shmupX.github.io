@@ -281,6 +281,14 @@ they are written out in full.
     carries a TURBO switch of its own (`cmgToggleRow`, between the sliders
     and RESUME): an exported app's pause, a direct visit's.
     `tests/turbo_pause_panel_test.ts`.
+  - The haptics module (`triggerHaptic` and its presets, a copy of
+    `2019-es7/src/haptics.js`) is extended by hand, and `cmgSetHaptics` is the
+    Guide's Haptics switch (see **Haptics** below): shaped `envelope` effects, a
+    `priority` per preset and a lane per pad, a `scale` for weight,
+    `hapticsStop()`, the low-hull heartbeat (`hapticsAmbient`, called from
+    `fixedUpdate`) and a boss-hit thud at both damage sites. A rebuild from
+    2019-es7 drops all of it until the same changes land there.
+    `tests/haptics_test.ts`.
   - `cmgBroadcastCheats` posts the Guide's Cheats submenu to the launcher once
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
@@ -2952,6 +2960,82 @@ rate.
 The refresh-rate blend (above) measures the scaled delta too. At 2× it reads
 twice the frame time, so it blends only on a display faster than about 260 Hz.
 At 2× a 240 Hz display already gets a step every frame.
+
+## Haptics
+
+The Guide's **Haptics** row turns every rumble and vibration off and on. It
+shows for a game that has haptics of its own, and wherever the launcher's own
+have something to reach: a touchscreen, or a connected pad that rumbles (looked
+up when the Guide opens). It is not shown over the level editor. The choice is
+the player's, so, unlike Turbo, it **is saved**: `cmg-haptics` in `localStorage`
+(`"0"` off, `"1"` on, unset on), shared by every page on the origin.
+
+The game side follows Turbo's handshake. The 2028-ai runtime posts
+`{ type: "cmg-haptics", value, explicit }` to the launcher when it boots inside
+a frame, and the launcher answers `{ type: "cmg-haptics-set", value }`. It
+answers again every time a game asks, so a frame that reloads (a cheat toggle,
+the editor's PLAY) comes back with the choice. `explicit` says `?vibrate=` set
+the runtime's state; the launcher then keeps that for the session, unsaved,
+rather than overruling it. At boot the runtime reads `?vibrate=0|1`, else
+`cmg-haptics` (`readStoredHaptics`), else on, into `gameState.vibrateFlg` — the
+one flag the haptics module reads. `cmgSetHaptics` flips it; turning it off
+stops what is playing at once (`hapticsStop`: the queued steps, `vibrate(0)`,
+each pad's `reset()`), and so does `cmgSetPaused(true)`, which is what the Guide
+opening over the game sends, so no rumble runs on under it. A page with no Guide
+(an exported app, a direct visit) has HAPTICS ON/OFF on the PAUSE panel, between
+TURBO and RESUME, saved the same way. Any other game can take part by posting
+`cmg-haptics` and listening for `cmg-haptics-set`.
+
+### What the runtime plays
+
+The preset table was one constant blip per event. It now has shape and weight:
+
+- **Envelopes.** `special`, `bossEnter`, `bossDefeat`, `stageClear`, `warning`,
+  `death` and `heartbeat` carry `envelope: [[at, duration, weak, strong], …]`. A
+  `playEffect` holds one magnitude, and a new one preempts the last, so the
+  shape is a chain: the first step now, the rest on timers, all cancelled
+  together. A swell into the special's blast and a long tail out; a boss's
+  arrival that rises for most of a second; a death that ebbs out; three pulses
+  for the boss danger warning. The phone's `vibrate()` and the Cordova engines
+  get the preset's own pattern once, not step by step.
+- **Priority and lanes.** Each preset has a `priority`; each pad has a lane,
+  plus an `all` lane for the game-wide events. A lane remembers when its effect
+  ends and how heavy it was, and drops anything lighter that arrives meanwhile,
+  so a stage's worth of kill ticks cannot cut a death rumble short. A pad's lane
+  does not hear another's: one player dying leaves the other's kills ticking. An
+  equal or heavier effect takes over and cancels the old one's tail.
+- **Weight.** `triggerHaptic(name, padIndex, scale)` scales the motors'
+  magnitudes by `scale` (and the length by less). A kill's scale follows its
+  score (`hapticKillScale`: 100 points is the preset as authored, 10,000
+  thumps), a hit's follows its damage (`hapticDamageScale`).
+- **Boss hits.** Shots landing on a boss thud (`bossHit`, on both damage paths:
+  the Dezaemon pool and the stock hp), at the preset's cooldown cadence rather
+  than once per bullet.
+- **Low hull.** Once a ship is down to a third of its hit points it has a
+  heartbeat in the strong motor (`hapticsAmbient`), every 1.25 s at the
+  threshold and every 0.67 s on the last sliver. It is counted in fixed steps,
+  so it stops with the world and runs at Turbo's pace with it, and it is scoped
+  to that ship's pad. A Dezaemon ship has no hit points and never beats.
+
+### The launcher's own
+
+While the Guide is open, moving through it ticks, a press thumps, and closing it
+settles — through the pad that is driving it, or the phone's motor under a
+finger (`buzz`, off the UI sounds in `sfx`, which sound only inside the Guide:
+the dashboard's menus stay as they were). A keyboard or a mouse has nothing to
+buzz. Moving the pad in the Guide marks the pad as the last input, so a player
+who touched the keyboard earlier still feels it. Turning the row on thumps once,
+so the player feels what they switched on; turning it off is silent.
+
+The touch controller's tap (`static/virtual-pad/virtual-pad.js`) used to buzz
+whatever the player had chosen; it now reads `cmg-haptics` on every tap
+(`hapticsWanted`), including on a controller page on another screen that has no
+Guide. `tests/virtual_pad_test.ts`.
+
+`tests/haptics_test.ts` lifts the module out of the bundle and runs it against a
+fake pad, clock and timers: the envelope's timing, the priority lanes, scaling,
+the heartbeat's pace, what a stop silences, the boot order of `?vibrate=`, the
+stored choice and the default, and that the call sites are where they should be.
 
 ## Two players
 

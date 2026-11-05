@@ -6,6 +6,7 @@ import {
   decodePadState,
   encodePadState,
   gamepadFromState,
+  hapticsWanted,
   padIdFor,
   padStateActive,
 } from "../static/virtual-pad/virtual-pad.js";
@@ -98,4 +99,20 @@ Deno.test("pad-shim adds the controller's pad to getGamepads and drops it when s
   for (const fn of intervals) fn();
   assertEquals(events, ["gamepadconnected", "gamepaddisconnected"]);
   assertEquals(nav.getGamepads().filter(Boolean).length, 0);
+});
+
+Deno.test("hapticsWanted: the Guide's Haptics switch reaches the controller's tap", () => {
+  const store = (v: string | null) => ({ getItem: () => v });
+  assertEquals(hapticsWanted(store("0")), false);
+  assertEquals(hapticsWanted(store("1")), true);
+  assertEquals(hapticsWanted(store(null)), true); // never switched: on
+  assertEquals(
+    hapticsWanted({
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
+    }),
+    true,
+  );
+  assertEquals(hapticsWanted(undefined), true); // no storage at all
 });
