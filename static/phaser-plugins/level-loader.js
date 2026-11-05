@@ -547,9 +547,12 @@ function altFrameName(name) {
 // sheet riding along. Resolves the frame map against the new canvas.
 function cutFrames(image, frames) {
   const keys = Object.keys(frames);
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, ...keys.map((k) => frames[k].frame.w));
-  canvas.height = Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0));
+  // A stableCanvas, like the atlas it is stacked onto: a stable canvas drawn
+  // from one on the GPU goes down with it on a GPU reset.
+  const canvas = stableCanvas(
+    Math.max(1, ...keys.map((k) => frames[k].frame.w)),
+    Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0)),
+  );
   const ctx = canvas.getContext("2d");
   const out = {};
   let y = 0;
@@ -560,6 +563,24 @@ function cutFrames(image, frames) {
     y += f.h;
   }
   return { canvas, frames: out };
+}
+
+// A canvas whose pixels live in CPU memory, for every canvas that becomes a
+// texture's source and is painted once. Chrome puts a plain 2D canvas on the
+// GPU, and a GPU reset — the GPU process restarting, which Android does under
+// memory pressure — loses it: the context comes back blank, and when the WebGL
+// context is restored Phaser rebuilds each texture from that blank canvas. A
+// level played that way loses every frame of its stacked atlas at once: ship,
+// enemies, shots and the scenery cut from it gone, the image-backed HUD still
+// up. willReadFrequently on the FIRST getContext keeps the canvas off the GPU
+// (the attribute is fixed by whichever call comes first), where a reset cannot
+// reach it. Nothing else about the canvas changes, smoothing included.
+function stableCanvas(width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d", { willReadFrequently: true });
+  return canvas;
 }
 
 // Is this page an app built around one game? The export's shell says so
@@ -965,9 +986,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
 
         const localW = localSource.width;
         const localH = localSource.height;
-        const mergedCanvas = document.createElement("canvas");
-        mergedCanvas.width = Math.max(localW, image.width);
-        mergedCanvas.height = localH + image.height;
+        const mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
         const mctx = mergedCanvas.getContext("2d");
         mctx.drawImage(localSource, 0, 0);
         mctx.drawImage(image, 0, localH);
@@ -1021,9 +1040,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const local = atlas.source && atlas.source[0] ? atlas.source[0].image : null;
         if (!art || !local) return false;
 
-        const canvas = document.createElement("canvas");
-        canvas.width = local.width;
-        canvas.height = local.height;
+        const canvas = stableCanvas(local.width, local.height);
         const ctx = canvas.getContext("2d");
         ctx.drawImage(local, 0, 0);
         const stock = {};

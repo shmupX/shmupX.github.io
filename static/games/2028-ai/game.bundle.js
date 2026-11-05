@@ -450,9 +450,12 @@
   }
   function cutFrames(image, frames) {
     const keys = Object.keys(frames);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, ...keys.map((k) => frames[k].frame.w));
-    canvas.height = Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0));
+    // A stableCanvas, like the atlas it is stacked onto: a stable canvas drawn
+    // from one on the GPU goes down with it on a GPU reset.
+    const canvas = stableCanvas(
+      Math.max(1, ...keys.map((k) => frames[k].frame.w)),
+      Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0)),
+    );
     const ctx = canvas.getContext("2d");
     const out = {};
     let y = 0;
@@ -463,6 +466,23 @@
       y += f.h;
     }
     return { canvas, frames: out };
+  }
+  // A canvas whose pixels live in CPU memory, for every canvas that becomes a
+  // texture's source and is painted once. Chrome puts a plain 2D canvas on the
+  // GPU, and a GPU reset — the GPU process restarting, which Android does under
+  // memory pressure — loses it: the context comes back blank, and when the WebGL
+  // context is restored Phaser rebuilds each texture from that blank canvas. A
+  // level played that way loses every frame of its stacked atlas at once: ship,
+  // enemies, shots and the scenery cut from it gone, the image-backed HUD still
+  // up. willReadFrequently on the FIRST getContext keeps the canvas off the GPU
+  // (the attribute is fixed by whichever call comes first), where a reset cannot
+  // reach it. Nothing else about the canvas changes, smoothing included.
+  function stableCanvas(width, height) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d", { willReadFrequently: true });
+    return canvas;
   }
   // Is this page an app built around one game? The export's shell says so
   // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
@@ -799,9 +819,7 @@
           }
           const localW = localSource.width;
           const localH = localSource.height;
-          const mergedCanvas = document.createElement("canvas");
-          mergedCanvas.width = Math.max(localW, image.width);
-          mergedCanvas.height = localH + image.height;
+          const mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
           const mctx = mergedCanvas.getContext("2d");
           mctx.drawImage(localSource, 0, 0);
           mctx.drawImage(image, 0, localH);
@@ -848,9 +866,7 @@
           const art = sheet.source && sheet.source[0] ? sheet.source[0].image : null;
           const local = atlas.source && atlas.source[0] ? atlas.source[0].image : null;
           if (!art || !local) return false;
-          const canvas = document.createElement("canvas");
-          canvas.width = local.width;
-          canvas.height = local.height;
+          const canvas = stableCanvas(local.width, local.height);
           const ctx = canvas.getContext("2d");
           ctx.drawImage(local, 0, 0);
           const stock = {};
@@ -3245,6 +3261,19 @@
       img.src = url;
     });
   }
+  // textures.createCanvas, for a CanvasTexture this runtime paints once and
+  // keeps: on a stableCanvas (see the level loader above), not one of
+  // Phaser's pool. In a pixelArt game the pool claims its canvases' 2D
+  // context with willReadFrequently false — on the GPU — before
+  // CanvasTexture asks for true, so every such texture went blank on a GPU
+  // reset: the Dezaemon scenery strips, the SP faces, the kernel's HUD line.
+  // CanvasTexture's own getContext gets this context back; smoothing is off,
+  // as the pool's pixelArt canvases had it.
+  function stableCanvasTexture(scene, key, width, height) {
+    var canvas = stableCanvas(width, height);
+    canvas.getContext("2d").imageSmoothingEnabled = false;
+    return scene.textures.addCanvas(key, canvas);
+  }
   function mergeAtlasIntoGameAsset(scene, image, frames) {
     var localAtlas = scene.textures.get("game_asset");
     var localSource = localAtlas && localAtlas.source && localAtlas.source[0] ? localAtlas.source[0].image : null;
@@ -3254,9 +3283,7 @@
     }
     var localW = localSource.width;
     var localH = localSource.height;
-    var mergedCanvas = document.createElement("canvas");
-    mergedCanvas.width = Math.max(localW, image.width);
-    mergedCanvas.height = localH + image.height;
+    var mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
     var mctx = mergedCanvas.getContext("2d");
     mctx.drawImage(localSource, 0, 0);
     mctx.drawImage(image, 0, localH);
@@ -4286,9 +4313,7 @@
   }
   function nameLogoTexture(scene, name) {
     if (typeof document === "undefined") return null;
-    var canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 88;
+    var canvas = stableCanvas(256, 88);
     drawNameLogo(canvas, name);
     if (scene.textures.exists(NAME_LOGO_KEY)) scene.textures.remove(NAME_LOGO_KEY);
     var tex = scene.textures.addCanvas(NAME_LOGO_KEY, canvas);
@@ -4316,9 +4341,7 @@
     var frame = scene.textures.getFrame("game_asset", frames[0]);
     var src = frame && frame.source && frame.source.image;
     if (!src || !frame.cutWidth || !frame.cutHeight) return null;
-    var canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 364;
+    var canvas = stableCanvas(256, 364);
     var scale = Math.max(1, Math.min(4, Math.floor(160 / frame.cutWidth), Math.floor(160 / frame.cutHeight)));
     var w = frame.cutWidth * scale;
     var h = frame.cutHeight * scale;
@@ -5568,7 +5591,7 @@
       var rowCount = Math.min(STRIP_ROWS, bg.rows - firstRow);
       var key = "dezaBg_" + scene.stageKey + "_" + s;
       if (scene.textures.exists(key)) scene.textures.remove(key);
-      var tex = scene.textures.createCanvas(key, bg.cols * TILE, rowCount * TILE);
+      var tex = stableCanvasTexture(scene, key, bg.cols * TILE, rowCount * TILE);
       var ctx = tex.getContext();
       for (var r = 0; r < rowCount; r++) {
         var row = firstRow + r;
@@ -6567,7 +6590,7 @@
   var ZAKO_BULLET_SPEED = 1.35;
   function ensureZakoBulletTexture(scene) {
     if (scene.textures.exists(ZAKO_BULLET_KEY)) return;
-    var tex = scene.textures.createCanvas(ZAKO_BULLET_KEY, 12, 12);
+    var tex = stableCanvasTexture(scene, ZAKO_BULLET_KEY, 12, 12);
     var ctx = tex.getContext();
     ctx.strokeStyle = "#8ff6ff";
     ctx.lineWidth = 2;
@@ -11622,10 +11645,12 @@
     // The icon lands on its own scratch canvas first: the spent face
     // flattens it to dark greyscale, and filtering it in place would take
     // the rim and the ground down with it.
-    var scratch = document.createElement("canvas");
-    scratch.width = w;
-    scratch.height = h;
-    var sctx = scratch.getContext("2d", { willReadFrequently: !lit });
+    // Off the GPU even for the lit face, which reads nothing back: a face
+    // drawn from a GPU-backed scratch was lost with it on a GPU reset, though
+    // its own canvas is a stableCanvas (the spent face, whose scratch was
+    // already willReadFrequently, came through).
+    var scratch = stableCanvas(w, h);
+    var sctx = scratch.getContext("2d");
     sctx.imageSmoothingEnabled = false;
     sctx.drawImage(img, f.cutX, f.cutY, f.width, f.height, 0, 0, w, h);
     if (!lit) {
@@ -11636,7 +11661,7 @@
       }
       sctx.putImageData(px, 0, 0);
     }
-    var tex = scene.textures.createCanvas(key, size, size);
+    var tex = stableCanvasTexture(scene, key, size, size);
     var ctx = tex.getContext();
     var disc = function (radius) {
       ctx.beginPath();
@@ -11849,15 +11874,16 @@
       fieldOx: NaN, fieldOy: NaN, row: null
     };
     try {
-      var canvas = function (w, h, opts) {
-        var el = document.createElement("canvas");
-        el.width = w;
-        el.height = h;
-        var ctx = el.getContext("2d", opts);
+      // All of them off the GPU (stableCanvas): the field, rim, trail, flare
+      // and scan are baked once, and a GPU reset would have left the disc
+      // without its grid, rim and sweep.
+      var canvas = function (w, h) {
+        var el = stableCanvas(w, h);
+        var ctx = el.getContext("2d");
         if (!ctx) throw new Error("no 2d context");
         return { el: el, ctx: ctx };
       };
-      lens.subjects = canvas(L, L, { willReadFrequently: true });
+      lens.subjects = canvas(L, L);
       lens.holo = canvas(L, L);
       lens.holoR = canvas(L, L);
       lens.holoB = canvas(L, L);
@@ -11875,7 +11901,7 @@
       // One texture for the game's life: a restarted scene draws into it again.
       lens.tex = scene.textures.exists(SP_LENS_TEXTURE)
         ? scene.textures.get(SP_LENS_TEXTURE)
-        : scene.textures.createCanvas(SP_LENS_TEXTURE, L, L);
+        : stableCanvasTexture(scene, SP_LENS_TEXTURE, L, L);
       lens.tex.getContext().clearRect(0, 0, L, L);
       lens.tex.refresh();
       // The pixels of the sheet nearly everything behind the disc is cut
@@ -16249,10 +16275,8 @@
     if (!scene.textures.exists("athenaFont")) return null;
     var src = scene.textures.get("athenaFont").getSourceImage();
     var w = src.width, h = Math.min(src.height, DEZA_CELL);
-    var scratch = document.createElement("canvas");
-    scratch.width = w;
-    scratch.height = h;
-    var sctx = scratch.getContext("2d", { willReadFrequently: true });
+    var scratch = stableCanvas(w, h);
+    var sctx = scratch.getContext("2d");
     sctx.drawImage(src, 0, 0);
     var alpha = sctx.getImageData(0, 0, w, h).data;
     // Body pixel (x, y) of the cell that starts at column `cell`; anything
@@ -16260,7 +16284,7 @@
     var body = function(cell, x, y) {
       return x >= 0 && y >= 0 && alpha[(y * w + cell + x) * 4 + 3] > 127;
     };
-    var tex = scene.textures.createCanvas(key, w, h);
+    var tex = stableCanvasTexture(scene, key, w, h);
     var ctx = tex.getContext();
     for (var cell = 0; cell + DEZA_CELL <= w; cell += DEZA_CELL) {
       for (var y = 0; y < h; y++) {
@@ -16284,7 +16308,7 @@
     if (!sheet) return null;
     var tex = scene.textures.exists(key)
       ? scene.textures.get(key)
-      : scene.textures.createCanvas(key, cells * DEZA_CELL, DEZA_CELL);
+      : stableCanvasTexture(scene, key, cells * DEZA_CELL, DEZA_CELL);
     var ctx = tex.getContext();
     var line = scene.add.image(x, y, key);
     line.setOrigin(0, 0);
@@ -20643,12 +20667,52 @@
     globalThis.__PHASER_4_GAME__ = game;
     globalThis.__PHASER_GAME__ = game;
     cmgWrapLoop(game);
+    retypeTextsAfterGpuReset(game);
     console.log("[2028.Ai] Phaser game started");
     if (typeof window !== "undefined") {
       if (typeof window.__fitCanvas === "function") window.__fitCanvas();
       if (typeof window.__fixPhaserTransform === "function") window.__fixPhaserTransform();
     }
     return game;
+  }
+  // The canvases this runtime paints are stableCanvas, but Phaser's own Text
+  // objects draw on canvases from its pool, which a pixelArt game claims on
+  // the GPU (stableCanvasTexture says why). A GPU reset blanks them, Phaser
+  // rebuilds each Text's texture from its blank canvas when the WebGL context
+  // is restored, and a line that never changes again (WORLD BEST, a menu
+  // label) stays invisible. So once the context is back, every Text on a
+  // running scene is typed again: now if its canvas is back already, else on
+  // the canvas's own contextrestored.
+  function retypeTextsAfterGpuReset(game) {
+    var hook = function() {
+      var renderer = game.renderer;
+      if (!renderer || typeof renderer.on !== "function") return;
+      renderer.on("restorewebgl", function() {
+        var Text = Phaser.GameObjects && Phaser.GameObjects.Text;
+        if (!Text || !game.scene) return;
+        var retype = function(t) {
+          if (t.active && t.scene && t.canvas) t.updateText();
+        };
+        var walk = function(list) {
+          for (var i = 0; i < list.length; i++) {
+            var o = list[i];
+            if (o instanceof Text) {
+              var ctx = o.context;
+              if (ctx && typeof ctx.isContextLost === "function" && ctx.isContextLost()) {
+                o.canvas.addEventListener("contextrestored", retype.bind(null, o), { once: true });
+              } else {
+                retype(o);
+              }
+            }
+            if (o.list) walk(o.list);
+          }
+        };
+        var scenes = game.scene.getScenes(true);
+        for (var s = 0; s < scenes.length; s++) walk(scenes[s].children.list);
+      });
+    };
+    if (game.renderer) hook();
+    else game.events.once("ready", hook);
   }
   function whenPhaserReady(cb) {
     if (globalThis.Phaser) {

@@ -195,6 +195,29 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
+  - **Canvases that survive a GPU reset.** Chrome puts a plain 2D canvas on the
+    GPU, and when the GPU process restarts — Android does it under memory
+    pressure — every such canvas comes back blank, and Phaser rebuilds each
+    texture from its now-empty canvas when the WebGL context is restored. A
+    phone playing Master Arena Mod lost the ship, the enemies, their shots and
+    the stage in one go (all cut from the stacked `game_asset` canvas) and kept
+    only what is drawn from images (the HP / SCORE / COMBO band) or redrawn
+    every frame (the SP lens, score popups). `stableCanvas(w, h)` — in the
+    loader, so in both copies — is a canvas whose first `getContext` asks for
+    `willReadFrequently`, which keeps it in CPU memory where a reset cannot
+    reach it. Every canvas that becomes a texture's source is one:
+    `_stackAtlas`, `applyCustomCutin` and `cutFrames` in the loader;
+    `mergeAtlasIntoGameAsset`, the title plates, and, through
+    `stableCanvasTexture` (which replaces `textures.createCanvas`, whose pool
+    claims a pixelArt game's canvases on the GPU first), the Dezaemon scenery
+    strips, the zako bullet, the SP faces, the lens and the kernel's HUD line. A
+    stable canvas drawn from a GPU one goes down with it, so the scratches those
+    are drawn from are stable too. Phaser's own `Text` canvases still come from
+    the pool, so `retypeTextsAfterGpuReset` types every `Text` again on
+    `restorewebgl`. Reproduced and checked with CDP's `Browser.crashGpuProcess`
+    against the running game (`game_asset` read 0 opaque pixels afterwards
+    before the fix, all of them after); `tests/gpu_reset_canvas_test.ts` pins
+    both copies and every builder.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
