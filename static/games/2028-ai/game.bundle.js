@@ -2174,6 +2174,7 @@
     state.remoteHighScore = normalizeScore(state.remoteHighScore);
     state.highScore = Math.max(state.highScore, state.localHighScore, state.remoteHighScore);
     state.dailyHighScore = normalizeScore(state.dailyHighScore);
+    state.godHighScore = normalizeScore(state.godHighScore);
     if (typeof state.scoreSyncStatus !== "string" || !state.scoreSyncStatus) {
       state.scoreSyncStatus = "idle";
     }
@@ -2726,6 +2727,69 @@
     }
     return normalizeScore(gameState.dailyHighScore);
   }
+  // TODAY'S GOD BEST. A run under ?god=1 — the editor's GOD MODE, what the
+  // Saturn's TEST PLAY panel calls MUTEKI — reaches no board and never the
+  // local best (submitHighScore, scoreCountsAsRecord), so a score made with
+  // the flag on was shown nowhere. It keeps a best of its own, for this
+  // device and this UTC day: the highest score reached while the flag was
+  // on, read off the score as it climbs (GameScene.updateHUD), since a test
+  // play is as likely to be closed mid-stage as played out. One cookie per
+  // game, afc2019_godHighScore_<gameId>, holding "<UTC day>:<score>" for two
+  // days; any other day's reads as 0 and is written over. A game with no id
+  // keeps it for the page alone, as the local best does. Never folded into
+  // the boards or the local best, and never the other way: a god run is not
+  // a record, and a mortal run is not a god run.
+  var GOD_SCORE_COOKIE = "afc2019_godHighScore";
+  // The UTC day gameState.godHighScore is for, or null before it is read.
+  var godScoreDay = null;
+  function godScoreCookieKey(gameId = resolveGameId()) {
+    return gameId ? GOD_SCORE_COOKIE + "_" + gameId : null;
+  }
+  function setGodHighScore(value) {
+    gameState.godHighScore = normalizeScore(value);
+    return gameState.godHighScore;
+  }
+  // Today's god best off the cookie: a cookie of any other day is 0.
+  function loadGodHighScore(cookieKey = godScoreCookieKey()) {
+    const today = dailyBoardKey();
+    godScoreDay = today;
+    const raw = cookieKey ? readCookie(cookieKey) : null;
+    const at = raw === null ? -1 : raw.indexOf(":");
+    if (at < 0 || raw.slice(0, at) !== today) {
+      return setGodHighScore(0);
+    }
+    return setGodHighScore(raw.slice(at + 1));
+  }
+  function saveGodHighScore(cookieKey = godScoreCookieKey()) {
+    const best = normalizeScore(gameState.godHighScore);
+    if (typeof document === "undefined" || !cookieKey) {
+      return best;
+    }
+    const twoDaysSeconds = 60 * 60 * 24 * 2;
+    document.cookie = encodeURIComponent(cookieKey) + "=" + encodeURIComponent(dailyBoardKey() + ":" + String(best)) + ";path=/;max-age=" + String(twoDaysSeconds);
+    return best;
+  }
+  // TODAY'S GOD BEST as of now: past UTC midnight yesterday's is dropped and
+  // the new day's read, as TODAY'S BEST is (currentDailyHighScore).
+  function currentGodHighScore() {
+    if (godScoreDay !== dailyBoardKey()) {
+      loadGodHighScore();
+    }
+    return normalizeScore(gameState.godHighScore);
+  }
+  // A score reached with god mode on. Never lowered, and written through
+  // only when it rises, so the HUD can hand it the score every frame.
+  function keepGodBest(score) {
+    if (!gameState.godFlg) {
+      return currentGodHighScore();
+    }
+    const candidate = normalizeScore(score);
+    if (candidate <= currentGodHighScore()) {
+      return normalizeScore(gameState.godHighScore);
+    }
+    setGodHighScore(candidate);
+    return saveGodHighScore();
+  }
   function readRemoteHighScore() {
     const epoch = scoreEpoch;
     const paths = getBoardPaths();
@@ -2782,6 +2846,7 @@
       const epoch = scoreEpoch;
       const hasBoard = !!getBoardPaths(gameId).allTime;
       loadHighScore();
+      loadGodHighScore();
       if (hasBoard && getFirebaseConfig() && !getFirebaseNamespace()) {
         setScoreSyncStatus("loading");
       }
@@ -2806,6 +2871,8 @@
     gameState.remoteHighScore = 0;
     gameState.dailyHighScore = 0;
     dailyScoreDay = null;
+    gameState.godHighScore = 0;
+    godScoreDay = null;
     setScoreSyncStatus("idle");
   }
   // The boot names the game once its level resolves (PluginBootScene, with
@@ -3985,6 +4052,17 @@
   }
   function getDailyBestLabel() {
     return "TODAY'S BEST";
+  }
+  // The best of today's god-mode runs (currentGodHighScore). The scenes show
+  // it on a line of its own, and only while the flag is on.
+  function getGodHighScore() {
+    return currentGodHighScore();
+  }
+  function getGodBestLabel() {
+    return "TODAY'S GOD BEST";
+  }
+  function getGodBestText() {
+    return getGodBestLabel() + " " + String(getGodHighScore());
   }
   function getHighScoreSyncText() {
     const status = typeof gameState.scoreSyncStatus === "string" ? gameState.scoreSyncStatus : "idle";
@@ -8701,6 +8779,25 @@
           strokeThickness: 2
         }
       );
+      // A god-mode visit (?god=1: the editor's GOD MODE, the Saturn's MUTEKI)
+      // shows the best of today's god runs on a line of its own, under the
+      // sync line. Those runs reach neither board, so the two above never
+      // move for them (keepGodBest).
+      this.godBestText = gameState.godFlg
+        ? this.add.text(
+          32,
+          this.scoreTitleImg.y + 22 + 11,
+          getGodBestText(),
+          {
+            fontFamily: "Arial",
+            fontSize: "9px",
+            fontStyle: "bold",
+            color: "#ffd24a",
+            stroke: "#000000",
+            strokeThickness: 2
+          }
+        )
+        : null;
       var self = this;
       this.startText.on("pointerup", function() {
         self.titleStart();
@@ -9195,6 +9292,9 @@
         this.scoreSyncLabel.setText(getHighScoreSyncText());
         var syncTint = getHighScoreSyncTint();
         this.scoreSyncLabel.setColor("#" + syncTint.toString(16).padStart(6, "0"));
+      }
+      if (this.godBestText) {
+        this.godBestText.setText(getGodBestText());
       }
       var gp = pollGamepads();
       if (!this.transitioning) {
@@ -16239,6 +16339,12 @@
   // not traced, so every cart is drawn in this one.
   var DEZA_HUD_SCORE = { x: 48, y: 8, digits: 8 };
   var DEZA_HUD_BOMB = { x: 216, y: DEZA_SCREEN_H - 216, digits: 2 };
+  // TEST PLAY's watermark: the Saturn marks the editor's own run of a stage
+  // (組立 → TEST, MUTEKI on) with TESTING in this font, top right — SCORE's
+  // row, in the column BOMB has at the bottom, 48 px in from the right edge
+  // as SCORE is from the left. Drawn whenever god mode is on
+  // (gameState.godFlg), which is what that panel's MUTEKI is.
+  var DEZA_HUD_TESTING = { x: 216, y: 8, text: "TESTING" };
   var DEZA_HUD_INK = ["#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#e7ffff", "#d6ffff", "#d6ffff"];
   var DEZA_HUD_SHADOW = "#484848";
   // The glyph sheet in the HUD's colours: built from the white sheet the
@@ -16763,6 +16869,35 @@
           this.dezaBombLine.setDepth(101);
           this.dezaBombLine.setText(dezaHudBombText(this.players[0].dezaBombStock));
         }
+      }
+      // God mode is the Saturn's TEST PLAY with MUTEKI on, and the stage wears
+      // its watermark: TESTING in the kernel font, off the same glyph sheet as
+      // SCORE and BOMB (dezaHudLine), where the Saturn puts it
+      // (DEZA_HUD_TESTING) — over the web band too, which has no row of its
+      // own for it. Under it, the one number a god run can move: the best of
+      // today's god runs (keepGodBest), on the band's WORLD BEST row where
+      // there is a band, else on the row under the kernel's SCORE line.
+      this.dezaTestingLine = null;
+      this.godBestText = null;
+      if (gameState.godFlg) {
+        this.dezaTestingLine = dezaHudLine(
+          this,
+          "dezaHudTesting",
+          dezaSatX(DEZA_HUD_TESTING.x),
+          DEZA_HUD_TESTING.y,
+          DEZA_HUD_TESTING.text.length
+        );
+        if (!this.dezaTestingLine) {
+          // No glyph sheet (athenaFont.png never loaded): the same face as
+          // TrueType, cell by cell, as the title's Dezaemon prompt is set.
+          this.dezaTestingLine = dezaCellText(this, dezaSatX(DEZA_HUD_TESTING.x), DEZA_HUD_TESTING.y, "");
+        }
+        this.dezaTestingLine.setDepth(102);
+        this.dezaTestingLine.setText(DEZA_HUD_TESTING.text);
+        this.godBestText = componentOn("hud")
+          ? this.add.text(30, 50, getGodBestText(), { fontFamily: "Arial", fontSize: "9px", fontStyle: "bold", color: "#ffd24a", stroke: "#000000", strokeThickness: 2 })
+          : this.add.text(dezaSatX(DEZA_HUD_SCORE.x), DEZA_HUD_SCORE.y + DEZA_CELL + 2, getGodBestText(), { fontFamily: "Arial", fontSize: "9px", fontStyle: "bold", color: "#ffd24a", stroke: "#000000", strokeThickness: 2 });
+        this.godBestText.setDepth(102);
       }
     }
     // The band across the top — the HP and COMBO troughs, the score and the
@@ -18265,6 +18400,12 @@
         var best = Math.max(getDisplayedHighScore(), this.scoreCount);
         this.worldBestText.setText(getWorldBestLabel() + " " + String(best));
       }
+      // The god best rides the score as it climbs, so a test play closed
+      // mid-stage has still counted.
+      if (this.godBestText) {
+        keepGodBest(this.scoreCount);
+        this.godBestText.setText(getGodBestText());
+      }
     }
     _setComboNum(num, owner) {
       if (!this.comboNumContainer || !this._comboNumSprites) return;
@@ -19023,6 +19164,7 @@
         submitHighScore(Number(gameState.score || 0)).catch(function() {
         });
       }
+      keepGodBest(Number(gameState.score || 0));
       if (!this.anims.exists("congra_bg_anim")) {
         this.anims.create({
           key: "congra_bg_anim",
@@ -19123,6 +19265,24 @@
           strokeThickness: 2
         }
       );
+      // A god run's one number (keepGodBest), under the two it never moves.
+      // The ending is the one card a god run reaches: nothing kills the ship
+      // (playerDamage), so the continue scene never sees the flag.
+      this.godBestText = gameState.godFlg
+        ? this.add.text(
+          32,
+          GCY5 - 23 + 28 + 16 + 11,
+          getGodBestText(),
+          {
+            fontFamily: "Arial",
+            fontSize: "9px",
+            fontStyle: "bold",
+            color: "#ffd24a",
+            stroke: "#000000",
+            strokeThickness: 2
+          }
+        )
+        : null;
       this.tweetBtn = this.createFrameButton(GCX8, GCY5 + 28, "twitterBtn");
       this.tweetBtn.setOrigin(0.5);
       this.tweetBtn.setScale(0);
@@ -19170,7 +19330,7 @@
       // card follows, as the hardware's ranking screen does.
       this.dezaRoll = null;
       if (isImportedLevel() && dezaHasStaffEntries(gameState._phaserRecipe)) {
-        var hidden = [this.gotoTitleBtn, this.worldBestText, this.scoreSyncText, this.congraTxt, this.tweetBtn, this.continueNewrecord, this.scoreContainer];
+        var hidden = [this.gotoTitleBtn, this.worldBestText, this.scoreSyncText, this.godBestText, this.congraTxt, this.tweetBtn, this.continueNewrecord, this.scoreContainer];
         hidden.forEach(function(o) {
           if (o) o.setVisible(false);
         });
