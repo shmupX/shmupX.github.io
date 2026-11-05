@@ -8402,10 +8402,10 @@
       // The running game has haptics (see hapticsAvail). Benign — worst case a
       // toggle appears whose cmg-haptics-set the game ignores — so accept it
       // from our own frame at any origin, like cmg-turbo. A game booted with
-      // an explicit ?vibrate=0 stays off for the session; otherwise reply with
-      // the stored choice.
+      // an explicit ?vibrate=0|1 keeps that state for the session (unsaved);
+      // otherwise reply with the stored choice.
       hapticsAvail = true;
-      if (d.explicit === true && d.value === false) hapticsOn = false;
+      if (d.explicit === true) hapticsOn = !!d.value;
       applyHaptics();
       return;
     }
