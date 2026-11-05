@@ -2294,6 +2294,8 @@
       state.secondLoop = false;
     }
     state.godFlg = readBooleanSearchParam("god", typeof state.godFlg === "boolean" ? state.godFlg : false);
+    // ?bfg=1: max weapon power (bfgArm), read once like ?god=1.
+    state.bfgFlg = readBooleanSearchParam("bfg", typeof state.bfgFlg === "boolean" ? state.bfgFlg : false);
     state.playerCount = readPlayerCountParam(state.playerCount === 2 ? 2 : 1);
     state.twoPlayerForced = state.playerCount === 2;
     // Online 2P is opt-in: a title screen should not open a socket to a cloud
@@ -2430,7 +2432,8 @@
     return isImportedLevel() ? false : !!(recipe && recipe.noStory);
   }
   function scoreCountsAsRecord(state = gameState) {
-    return !state.godFlg || isExportedLevelApp();
+    // ?bfg=1 (max weapons, bfgArm) is a cheat the way ?god=1 is.
+    return !(state.godFlg || state.bfgFlg) || isExportedLevelApp();
   }
   // The best the page shows as WORLD BEST (gameState.highScore) is the higher
   // of two that stay apart: localHighScore, the best run played on this
@@ -10490,6 +10493,7 @@
     p.dezaShotLocked = false;
     p.dezaLoadoutIndex = void 0;
     dezaSeedPower(scene, p);
+    bfgArm(scene, p);
     p.bossContactAt = 0;
     // A ship starts LOCAL. Anything networked re-attaches through
     // cmgNetSeatGuest; leaving a previous guest's buttons on a fresh ship would
@@ -10532,6 +10536,7 @@
     p.dezaBombInvuln = false;
     p.dezaBombStock = 3;
     dezaSeedPower(scene, p);
+    bfgArm(scene, p);
     p.bossContactAt = 0;
     p.remote = null;
     if (p.hpBar) {
@@ -10931,6 +10936,9 @@
         p.shootMode = "normal";
         break;
     }
+    // ?bfg=1: no drop takes a maxed ship back down (a 3-way pickup would
+    // trade BIG for the spread and drop the rapid cadence).
+    bfgArm(scene, p);
   }
 
   // ../2019-es7/src/phaser/game-objects/Enemy.js
@@ -11543,6 +11551,29 @@
     p.dezaPodSub = void 0;
     p.dezaPodN = void 0;
     p.dezaPodTrail = null;
+  }
+  // ?bfg=1 — max weapon power from the first shot. The web shot goes to its
+  // strongest, BIG (2 damage, piercing) at the R drop's rapid cadence, and
+  // wherever the Dezaemon weapons run (a cart, or a web game in MOD) the shot
+  // level goes to the ship's own cap: the OPTION count every MAIN, SUB and
+  // CHARGE table is indexed by (dezaShotLevel), the stat a cart's POWER-UP
+  // item raises (collectItem). The power level is the ship's SPEED, not a
+  // weapon, and is left alone. Armed wherever a ship is seeded (a new ship, a
+  // revived one, the next ship from the stock) and again after every pickup,
+  // so a 3-way or F drop never takes it back down. The Guide's Cheats list it
+  // (cmgBroadcastCheats), the editor's PLAY passes it on (debugPlayParams),
+  // and like ?god=1 it keeps the run off WORLD BEST (scoreCountsAsRecord).
+  function bfgOn() {
+    return gameState.bfgFlg === true;
+  }
+  function bfgArm(scene, p) {
+    if (!bfgOn()) return;
+    var pd = playerRecord(scene, p.index) || {};
+    if (pd.shootBig) p.shootMode = PLAYER_STATES.SHOOT_NAME_BIG;
+    else if (pd.shoot3way) p.shootMode = PLAYER_STATES.SHOOT_NAME_3WAY;
+    p.shootSpeed = PLAYER_STATES.SHOOT_SPEED_HIGH;
+    var sh = dezaShip(scene, p.index);
+    if (sh) p.dezaOptions = Math.max(0, Math.min(4, sh.maxOptions == null ? 4 : sh.maxOptions));
   }
   function dezaLoadout(scene, p) {
     var m = dezaKit(scene);
@@ -18286,7 +18317,9 @@
       // multiplies nothing.
       this._setComboNum(lead.comboCount, lead.index);
       if (this.worldBestText) {
-        var best = Math.max(getDisplayedHighScore(), this.scoreCount);
+        // A run that cannot be a record (?god=1, ?bfg=1) leaves the best as it
+        // found it rather than climbing with a score that will not be kept.
+        var best = scoreCountsAsRecord() ? Math.max(getDisplayedHighScore(), this.scoreCount) : getDisplayedHighScore();
         this.worldBestText.setText(getWorldBestLabel() + " " + String(best));
       }
     }
@@ -20299,7 +20332,9 @@
     // the web runtime's parts and the Dezaemon ones cross over (CROSSOVER).
     var cheats = [
       { param: "version", kind: "toggle", label: "Mod Mode", on: "mod" },
-      { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" }
+      { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" },
+      // Max weapon power for every ship (bfgArm), on any game.
+      { param: "bfg", kind: "toggle", label: "BFG (Max Weapons)", on: "1" }
     ];
     if (isImportedLevel()) {
       cheats.push({ param: "stage", kind: "slider", label: "Start Stage", min: 0, max: lastStageId(recipe) });
