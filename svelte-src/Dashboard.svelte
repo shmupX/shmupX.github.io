@@ -3628,6 +3628,85 @@
     try { iframe?.contentWindow?.postMessage({ type: 'cmg-turbo-set', value: turboOn }, '*'); } catch (_) { /* ignore */ }
   }
 
+  // ── Haptics: rumble and vibration, on or off ──────────────────────────────
+  // One switch for all of it. The choice is the player's, so unlike Turbo it
+  // is kept: under cmg-haptics in localStorage, which a game on this origin
+  // reads when it boots (the 2028-ai runtime does), and which the touch
+  // controller (static/virtual-pad) checks before each tap. A game that has
+  // haptics of its own says so with a boot-time postMessage
+  // { type: 'cmg-haptics', value, explicit } (the 2028-ai runtime does,
+  // embedded) and is answered with { type: 'cmg-haptics-set', value }, again
+  // every time it asks, so a frame that reloads (a cheat toggle, the editor's
+  // PLAY) comes back with the choice. `explicit` means a ?vibrate= in the
+  // game's URL set its state: that stands for the session, unsaved, instead
+  // of being overruled by the stored choice. Turning it off makes the game
+  // silence the motors at once. closeGame drops hapticsAvail with the rest of
+  // the game's advertised capabilities.
+  //
+  // The launcher's own part is the Guide: while it is open, moving through it
+  // ticks, a press thumps, and closing it settles — through the pad that is
+  // driving it, or the phone's motor under a finger. The game is held paused
+  // behind the Guide and has stopped its motors, so the two never overlap.
+  const HAPTICS_KEY = 'cmg-haptics';
+  function loadHaptics() {
+    try { return localStorage.getItem(HAPTICS_KEY) !== '0'; } catch (_) { return true; }
+  }
+  let hapticsOn = $state(loadHaptics());
+  let hapticsAvail = $state(false);
+  // Whether a connected pad can rumble, looked up when the Guide opens (pads
+  // come and go; this is not polled).
+  let osdPadRumble = $state(false);
+  function setHaptics(v) {
+    hapticsOn = !!v;
+    try { localStorage.setItem(HAPTICS_KEY, hapticsOn ? '1' : '0'); } catch (_) { /* ignore */ }
+    applyHaptics();
+    // Let the player feel what they just turned on.
+    if (hapticsOn) buzz('enter');
+  }
+  function applyHaptics() {
+    const iframe = document.getElementById('gameframe');
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-haptics-set', value: hapticsOn }, '*'); } catch (_) { /* ignore */ }
+  }
+  function padsThatRumble() {
+    try {
+      return Array.from(navigator.getGamepads?.() || []).filter(
+        (g) => g && g.connected && (g.vibrationActuator || (g.hapticActuators && g.hapticActuators.length))
+      );
+    } catch (_) { return []; }
+  }
+  // ms is for a phone's motor; weak/strong (0..1) for a pad's two.
+  const BUZZ = {
+    nav:   { ms: 8,  weak: 0.12, strong: 0.04 },
+    enter: { ms: 16, weak: 0.32, strong: 0.14 },
+    back:  { ms: 12, weak: 0.2,  strong: 0.08 },
+  };
+  let buzzAt = 0;
+  function buzz(kind) {
+    if (!hapticsOn) return;
+    const b = BUZZ[kind];
+    if (!b) return;
+    const now = performance.now();
+    if (now - buzzAt < 40) return; // a held D-pad repeats; do not smear it
+    buzzAt = now;
+    if (lastInput === 'pad') {
+      for (const g of padsThatRumble()) {
+        const act = g.vibrationActuator;
+        try {
+          const r = act?.playEffect?.(act.type || 'dual-rumble', {
+            startDelay: 0, duration: b.ms, weakMagnitude: b.weak, strongMagnitude: b.strong,
+          });
+          r?.catch?.(() => {});
+        } catch (_) { /* ignore */ }
+      }
+    } else if (lastInput === 'touch') {
+      // Chrome refuses (and logs an intervention) before the first tap.
+      try { if (navigator.userActivation?.hasBeenActive !== false) navigator.vibrate?.(b.ms); } catch (_) { /* ignore */ }
+    }
+  }
+  // The launcher's UI sounds double as its feel, but only inside the Guide:
+  // the dashboard's own menus stay as they were.
+  function guideBuzz(kind) { if (osdOpen) buzz(kind); }
+
   // Cheats are boot-time URL params on the running game's iframe. A game
   // advertises which ones it supports by postMessage'ing
   // { type: 'cmg-cheats', cheats: [...] } on boot (handled in onWindowMessage);
@@ -3848,6 +3927,7 @@
     // linger in the OSD while the editor is the active frame.
     osdLevelEditor = null;
     turboAvail = false; turboOn = false;
+    hapticsAvail = false;
     twinStickAvail = false; twinStickOn = false;
     resetSplitPads();
     touchCtlAvail = false; touchCtlOn = false;
@@ -5103,6 +5183,12 @@
     if (turboAvail) {
       game.push({ key: 'turbo', kind: 'toggle', label: 'Turbo · 2×', value: turboOn });
     }
+    // Haptics: for a game that has some of its own (cmg-haptics), and wherever
+    // the Guide's and the touch controller's have something to reach — a
+    // touchscreen, or a pad that rumbles. Not over the level editor.
+    if (gameOn && !editorFrameActive && (hapticsAvail || isTouch || osdPadRumble)) {
+      game.push({ key: 'haptics', kind: 'toggle', label: 'Haptics', value: hapticsOn });
+    }
     // Twin-Stick mode appears only for games that opt in (built-in list,
     // catalog `twinStick` flag, or a cmg-twinstick broadcast).
     // Split Controller (Lenovo Legion Go): each half of one pad as its own
@@ -5204,6 +5290,7 @@
     sfx.nav();
   }
   function openOsd() {
+    osdPadRumble = padsThatRumble().length > 0;
     osdView = 'main'; osdSel = firstSelectable(osdItems); osdNav.vDir = 0; osdNav.hDir = 0; osdOpen = true; sfx.enter();
     // Pull keyboard focus out of the game frame so the launcher's own onKey
     // handler drives OSD navigation. A focus-stealing game — especially a
@@ -5223,6 +5310,8 @@
     closeOsd();
   }
   function closeOsd() {
+    // sfx.back() would find the Guide already shut, so settle it by hand.
+    buzz('back');
     osdOpen = false; osdView = 'main'; sfx.back();
     // Hand focus back so the game resumes receiving input.
     if (gameOn) { try { document.getElementById('gameframe')?.focus(); } catch (_) { /* ignore */ } }
@@ -5241,6 +5330,7 @@
     else if (it.key === 'scanlines') setTweak('scanlines', !!v);
     else if (it.key === 'disco') setTweak('discoMode', !!v);
     else if (it.key === 'turbo') setTurbo(!!v);
+    else if (it.key === 'haptics') setHaptics(!!v);
     else if (it.key === 'splitpads') setSplitPads(!!v);
     else if (it.key === 'twinstick') setTwinStick(!!v);
     else if (it.key === 'twinstick-touch') setTwinTouch(!!v);
@@ -5881,9 +5971,9 @@
     } catch (e) { /* ignore */ }
   }
   const sfx = {
-    nav:   () => blip(540, 0.05, 'square', 0.05),
-    enter: () => { blip(660, 0.07, 'square', 0.06); setTimeout(() => blip(990, 0.10, 'square', 0.05), 60); },
-    back:  () => { blip(440, 0.06, 'square', 0.05); setTimeout(() => blip(330, 0.08, 'square', 0.05), 50); },
+    nav:   () => { blip(540, 0.05, 'square', 0.05); guideBuzz('nav'); },
+    enter: () => { blip(660, 0.07, 'square', 0.06); setTimeout(() => blip(990, 0.10, 'square', 0.05), 60); guideBuzz('enter'); },
+    back:  () => { blip(440, 0.06, 'square', 0.05); setTimeout(() => blip(330, 0.08, 'square', 0.05), 50); guideBuzz('back'); },
     boot:  () => { blip(220, 0.12, 'sawtooth', 0.04); setTimeout(() => blip(440, 0.15, 'sawtooth', 0.04), 120); setTimeout(() => blip(880, 0.25, 'sawtooth', 0.04), 280); },
   };
 
@@ -7048,6 +7138,7 @@
     osdLevelEditor = null;
     turboAvail = false;
     turboOn = false;
+    hapticsAvail = false;
     twinStickAvail = false;
     twinStickOn = false;
     twinGameId = null;
@@ -7576,7 +7667,7 @@
         // pressed.
         const vReal = v;
         if (v === 0 && osdNav.vDir !== 0 && nowOsd - (osdNav.vSeenAt || 0) < 80) v = osdNav.vDir;
-        if (vReal !== 0) osdNav.vSeenAt = nowOsd;
+        if (vReal !== 0) { osdNav.vSeenAt = nowOsd; lastInput = 'pad'; } // the Guide's haptics follow the hand that is on it
         if (v !== 0 && v !== osdNav.vDir) {
           osdSel = Math.max(0, Math.min(osdItems.length - 1, osdSel + v));
           sfx.nav();
@@ -7602,7 +7693,7 @@
         else { const ax = pad.axes[0] ?? 0; if (ax < -PAD_DEADZONE) h = -1; else if (ax > PAD_DEADZONE) h = 1; }
         const hReal = h;
         if (h === 0 && osdNav.hDir !== 0 && nowOsd - (osdNav.hSeenAt || 0) < 80) h = osdNav.hDir;
-        if (hReal !== 0) osdNav.hSeenAt = nowOsd;
+        if (hReal !== 0) { osdNav.hSeenAt = nowOsd; lastInput = 'pad'; }
         if (h !== 0 && h !== osdNav.hDir) adjustOsd(osdSel, h);
         osdNav.hDir = h;
         if (justPressed(0)) { lastInput = 'pad'; activateOsd(osdSel); }  // FBTN_BOTTOM
@@ -8305,6 +8396,17 @@
       turboAvail = true;
       if (d.value === true) turboOn = true;
       applyTurbo();
+      return;
+    }
+    if (d.type === 'cmg-haptics') {
+      // The running game has haptics (see hapticsAvail). Benign — worst case a
+      // toggle appears whose cmg-haptics-set the game ignores — so accept it
+      // from our own frame at any origin, like cmg-turbo. A game booted with
+      // an explicit ?vibrate=0|1 keeps that state for the session (unsaved);
+      // otherwise reply with the stored choice.
+      hapticsAvail = true;
+      if (d.explicit === true) hapticsOn = !!d.value;
+      applyHaptics();
       return;
     }
     if (d.type === 'cmg-splitpads-ack') {
