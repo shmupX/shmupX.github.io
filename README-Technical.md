@@ -195,6 +195,29 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
+  - **Canvases that survive a GPU reset.** Chrome puts a plain 2D canvas on the
+    GPU, and when the GPU process restarts — Android does it under memory
+    pressure — every such canvas comes back blank, and Phaser rebuilds each
+    texture from its now-empty canvas when the WebGL context is restored. A
+    phone playing Ramsie in MOD off the LIBRARY lost the ship, the enemies,
+    their shots and the stage in one go (all cut from the stacked `game_asset`
+    canvas) and kept only what is drawn from images (the HP / SCORE / COMBO
+    band) or redrawn every frame (the SP lens, score popups).
+    `stableCanvas(w, h)` — in the loader, so in both copies — is a canvas whose
+    first `getContext` asks for `willReadFrequently`, which keeps it in CPU
+    memory where a reset cannot reach it. Every canvas that becomes a texture's
+    source is one: `_stackAtlas`, `applyCustomCutin` and `cutFrames` in the
+    loader; `mergeAtlasIntoGameAsset`, the title plates, and, through
+    `stableCanvasTexture` (which replaces `textures.createCanvas`, whose pool
+    claims a pixelArt game's canvases on the GPU first), the Dezaemon scenery
+    strips, the zako bullet, the SP faces, the lens and the kernel's HUD line. A
+    stable canvas drawn from a GPU one goes down with it, so the scratches those
+    are drawn from are stable too. Phaser's own `Text` canvases still come from
+    the pool, so `retypeTextsAfterGpuReset` types every `Text` again on
+    `restorewebgl`. Reproduced and checked with CDP's `Browser.crashGpuProcess`
+    against the running game (`game_asset` read 0 opaque pixels afterwards
+    before the fix, all of them after); `tests/gpu_reset_canvas_test.ts` pins
+    both copies and every builder.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
@@ -524,6 +547,20 @@ they are written out in full.
     localStorage alone (`editorStageKey`, which `readEditorPlayRequest` already
     reads), and PLAY GAME opens the saved game at its title
     (`tests/editor_play_urls_test.ts`).
+  - **`?bfg=1` — max weapon power**, on any game: the web shot at its strongest
+    (BIG, 2 damage and piercing, at the R drop's rapid cadence) and, wherever
+    the Dezaemon weapons run (a cart, or a web game in MOD), the shot level at
+    the ship's own cap — the OPTION count every MAIN / SUB / CHARGE table is
+    indexed by, which a cart's POWER-UP item raises. Speed is the power level,
+    not a weapon, and is left alone. Read once into `gameState.bfgFlg` like
+    `?god=1`; `bfgArm` applies it wherever a ship is seeded (a new ship, a
+    revived one, the next from the stock) and after every pickup, so a 3-way
+    drop never takes it back down. The Guide's Cheats list it as **BFG (Max
+    Weapons)**, the editor's PLAY passes it on from its own URL
+    (`debugPlayParams`, beside `?turbo=1`), so a LIBRARY or coverflow game
+    opened as `/editor/?…&bfg=1` keeps it, and like `?god=1` a BFG run is no
+    record: `scoreCountsAsRecord` says so, and the HUD's WORLD BEST no longer
+    climbs with a score that will not be kept, for either. `tests/bfg_test.ts`.
   - A boss dies as the boss whatever finished it. `updateDezaColumns` (the
     Dezaemon sub-weapon 5 / charge 2 columns) used to bill the boss sprite and
     hand the kill to `enemyDie`, which destroyed the sprite without telling the
