@@ -467,22 +467,192 @@
     }
     return { canvas, frames: out };
   }
-  // A canvas whose pixels live in CPU memory, for every canvas that becomes a
-  // texture's source and is painted once. Chrome puts a plain 2D canvas on the
-  // GPU, and a GPU reset — the GPU process restarting, which Android does under
-  // memory pressure — loses it: the context comes back blank, and when the WebGL
-  // context is restored Phaser rebuilds each texture from that blank canvas. A
-  // level played that way loses every frame of its stacked atlas at once: ship,
-  // enemies, shots and the scenery cut from it gone, the image-backed HUD still
-  // up. willReadFrequently on the FIRST getContext keeps the canvas off the GPU
-  // (the attribute is fixed by whichever call comes first), where a reset cannot
-  // reach it. Nothing else about the canvas changes, smoothing included.
+  // A canvas that is painted once and must still be there after a GPU reset.
+  //
+  // A GPU reset — the GPU process restarting, which Android does under memory
+  // pressure and when a game is backgrounded — clears EVERY 2D canvas: Chromium
+  // fires `contextlost` on each, then `contextrestored` with an empty bitmap, and
+  // willReadFrequently (a canvas kept in CPU memory) does not exempt it. Phaser
+  // rebuilds each texture from the canvas it was cut from once its WebGL context
+  // is back, so a level's stacked atlas, scenery, SP faces and HUD line came back
+  // as nothing: no ship, no enemies, no shots, no stage, the image-backed HUD
+  // band still up and the score still climbing. Measured on a bare page with
+  // CDP's Browser.crashGpuProcess: plain and willReadFrequently canvases alike
+  // read 0 opaque pixels afterwards.
+  //
+  // So the canvas keeps its recipe. Every call and property set on its 2D
+  // context is logged (the images, gradients and ImageData it used are held by
+  // reference), and when the canvas is restored the log is played back onto it,
+  // oldest canvas first, because a later one draws from an earlier one. Then the
+  // canvas-backed textures are uploaded again (armCanvasRepaint). A canvas is
+  // built in the task that makes it (up to CANVAS_LOG_LIMIT calls); after that
+  // it may log only CANVAS_LATER_LIMIT more, and past that it is one the game
+  // repaints itself every frame (the SP lens): it stops logging and is left to.
+  //
+  // willReadFrequently is kept, as the first getContext the canvas gets: it is
+  // harmless, and where a browser does keep such a canvas in CPU memory the
+  // replay never has to run.
+  const CANVAS_LOG_LIMIT = 30000;
+  const CANVAS_LATER_LIMIT = 2000;
+  const CANVAS_CALLS = new Set([
+    "arc", "arcTo", "beginPath", "bezierCurveTo", "clearRect", "clip", "closePath",
+    "drawImage", "ellipse", "fill", "fillRect", "fillText", "lineTo", "moveTo",
+    "putImageData", "quadraticCurveTo", "rect", "reset", "resetTransform",
+    "restore", "rotate", "roundRect", "save", "scale", "setLineDash",
+    "setTransform", "stroke", "strokeRect", "strokeText", "transform", "translate",
+  ]);
+  const paintedCanvases = [];
+  const canvasRepaintHooks = new Set();
+  const armedGames = new WeakSet();
+  let canvasRepaintTimer = 0;
+
   function stableCanvas(width, height) {
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    canvas.getContext("2d", { willReadFrequently: true });
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (ctx) rememberCanvas(canvas, ctx);
     return canvas;
+  }
+
+  // Log what is drawn on `canvas` and arrange for it to be drawn again. The
+  // context handed out from now on (this canvas's getContext, which Phaser's
+  // CanvasTexture calls too) is a pass-through that notes each call first.
+  function rememberCanvas(canvas, ctx) {
+    if (
+      typeof Proxy !== "function" || typeof canvas.addEventListener !== "function"
+    ) return;
+    const entry = {
+      ref: typeof WeakRef === "function" ? new WeakRef(canvas) : { deref: () => canvas },
+      getContext: canvas.getContext,
+      width: canvas.width,
+      height: canvas.height,
+      ops: [],
+      building: true,
+      later: 0,
+      lost: false,
+      live: false,
+    };
+    setTimeout(() => {
+      entry.building = false;
+    }, 0);
+    const note = (op) => {
+      if (entry.building ? entry.ops.length >= CANVAS_LOG_LIMIT : ++entry.later > CANVAS_LATER_LIMIT) {
+        entry.live = true;
+        entry.ops = [];
+      } else entry.ops.push(op);
+    };
+    const logged = new Proxy(ctx, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== "function") return value;
+        if (!entry.live && CANVAS_CALLS.has(prop)) {
+          return (...args) => {
+            note({ call: prop, args });
+            return value.apply(target, args);
+          };
+        }
+        return value.bind(target);
+      },
+      set(target, prop, value) {
+        if (!entry.live) note({ set: prop, value });
+        return Reflect.set(target, prop, value, target);
+      },
+    });
+    canvas.getContext = (type, options) =>
+      type === "2d" ? logged : entry.getContext.call(canvas, type, options);
+    canvas.addEventListener("contextlost", () => {
+      entry.lost = true;
+    });
+    canvas.addEventListener("contextrestored", () => scheduleCanvasRepaint());
+    paintedCanvases.push(entry);
+  }
+
+  function canvasContextLost(ctx) {
+    return typeof ctx.isContextLost === "function" && ctx.isContextLost();
+  }
+
+  function scheduleCanvasRepaint(attempt = 0) {
+    if (canvasRepaintTimer) return;
+    canvasRepaintTimer = setTimeout(() => repaintLostCanvases(attempt), attempt ? 100 : 0);
+  }
+
+  // Play the log back onto every canvas that was lost, oldest first. A canvas
+  // that draws from an older one must not be painted before that one is back, so
+  // while any lost canvas is still waiting for its own `contextrestored` this
+  // tries again shortly (and gives up waiting after ~3 s).
+  function repaintLostCanvases(attempt) {
+    canvasRepaintTimer = 0;
+    const lost = [];
+    for (let i = paintedCanvases.length - 1; i >= 0; i--) {
+      const entry = paintedCanvases[i];
+      const canvas = entry.ref.deref();
+      if (!canvas) paintedCanvases.splice(i, 1);
+      else if (entry.lost) lost.unshift([entry, canvas]);
+    }
+    if (!lost.length) return;
+    const contexts = lost.map(([entry, canvas]) => entry.getContext.call(canvas, "2d"));
+    if (attempt < 30 && contexts.some((ctx) => !ctx || canvasContextLost(ctx))) {
+      scheduleCanvasRepaint(attempt + 1);
+      return;
+    }
+    let repainted = 0;
+    lost.forEach(([entry, canvas], i) => {
+      const ctx = contexts[i];
+      if (!ctx || canvasContextLost(ctx)) return;
+      entry.lost = false;
+      if (entry.live || canvas.width !== entry.width || canvas.height !== entry.height) return;
+      if (typeof ctx.reset === "function") ctx.reset();
+      else {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      for (const op of entry.ops) {
+        try {
+          if (op.call) ctx[op.call](...op.args);
+          else ctx[op.set] = op.value;
+        } catch (_e) { /* a source that is gone: the rest of the recipe still paints */ }
+      }
+      repainted++;
+    });
+    if (!repainted) return;
+    for (const hook of canvasRepaintHooks) {
+      try {
+        hook(repainted);
+      } catch (_e) { /* one hook must not stop the others */ }
+    }
+  }
+
+  // Make `game` take its canvas-backed textures back after a GPU reset: when the
+  // WebGL context is restored, repaint whatever canvas was lost (scheduled, since
+  // the 2D canvases come back on their own events), and once canvases have been
+  // repainted upload every canvas texture again if the context is live — the
+  // textures Phaser rebuilt at restore were cut from blank canvases when the 2D
+  // context came back later than WebGL's. When it came back earlier, Phaser's
+  // own rebuild already read the repainted canvases. Safe to call twice.
+  function armCanvasRepaint(game) {
+    if (!game || armedGames.has(game)) return;
+    armedGames.add(game);
+    const arm = () => {
+      const renderer = game.renderer;
+      if (!renderer || typeof renderer.on !== "function") return;
+      canvasRepaintHooks.add(() => {
+        const gl = renderer.gl;
+        if (!gl || renderer.contextLost || (typeof gl.isContextLost === "function" && gl.isContextLost())) return;
+        const textures = game.textures;
+        if (!textures) return;
+        for (const key of textures.getTextureKeys()) {
+          for (const source of textures.get(key).source) {
+            if (source.isCanvas && source.glTexture) source.update();
+          }
+        }
+      });
+      renderer.on("restorewebgl", () => scheduleCanvasRepaint());
+    };
+    if (game.renderer) arm();
+    else if (game.events && typeof game.events.once === "function") game.events.once("ready", arm);
   }
   // Is this page an app built around one game? The export's shell says so
   // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
@@ -625,6 +795,9 @@
     return class LevelLoaderPlugin extends Phaser2.Plugins.ScenePlugin {
       constructor(scene, pluginManager, pluginKey) {
         super(scene, pluginManager, pluginKey);
+        // The game this plugin runs in takes its canvas textures back after a
+        // GPU reset (see rememberCanvas).
+        armCanvasRepaint(pluginManager && pluginManager.game);
       }
       // ---- URL parameter readers --------------------------------------------
       readLevelParam() {
@@ -21221,6 +21394,7 @@
     globalThis.__PHASER_GAME__ = game;
     cmgWrapLoop(game);
     retypeTextsAfterGpuReset(game);
+    armCanvasRepaint(game);
     console.log("[2028.Ai] Phaser game started");
     if (typeof window !== "undefined") {
       if (typeof window.__fitCanvas === "function") window.__fitCanvas();
