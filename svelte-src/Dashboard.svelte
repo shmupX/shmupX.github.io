@@ -4678,6 +4678,20 @@
     return out;
   }
 
+  // gamepad-support.js reads the pad as well, for the games whose fire buttons
+  // only exist as the keys it sends: arcade boards (see processTouchPad there).
+  function touchPadForKeys() {
+    if (!touchPadLive()) return null;
+    return gamepadFromState(secondScreenOpen ? touchPadRemote : touchPadLocal, { layout: touchPadLayout });
+  }
+  $effect(() => {
+    // Read first: at mount the manager's module has not run yet, and an effect
+    // that skipped this read would have nothing to re-run it when a game starts.
+    const wanted = touchPadWanted;
+    const gm = typeof window !== 'undefined' ? window.gamepadManager : null;
+    if (gm) gm.touchPadSource = wanted ? touchPadForKeys : null;
+  });
+
   // Tell the frame a pad arrived (or left) the way a real one's first press
   // would: some engines only start polling on gamepadconnected.
   function announceTouchPad(type) {

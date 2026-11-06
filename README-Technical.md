@@ -5612,7 +5612,11 @@ reads goes into the game frame as one more standard Gamepad, through the same
 `getGamepads` patch Twin-Stick and Split Controller use (`touchPadGamepads` in
 `svelte-src/Dashboard.svelte`), so a game needs no change. Its id is `CMG Touch
 Twin-Stick` or `CMG Touch Pad`. Sh'M↑ Party's `/touch twin-?stick/` test reads
-the first one as touch input. The pad shows only for same-origin frames. A
+the first one as touch input. An arcade board is the one exception: its player
+mirrors only Start and the D-pad out of that list, so
+`static/gamepad-support.js` also reads the pad (`processTouchPad`) and sends the
+same P1 panel keys a real pad gets. Zunzunkyou's Shot is on A and Bomb on B, and
+a tap of SELECT drops a coin. The pad shows only for same-origin frames. A
 cross-origin twin-stick game is told to run its own touch analogs instead
 (`cmg-twinstick-touch-set`). A pad connecting takes the overlay away and
 disconnecting brings it back. The Legion's FPS mode never shows it, and only

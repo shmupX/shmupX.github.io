@@ -9,6 +9,7 @@
 // has to pick the Stadia over it.
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import { gamepadFromState } from "../static/virtual-pad/virtual-pad.js";
 
 // The plugin is an IIFE that installs itself on globalThis; Deno has a
 // `navigator` without getGamepads, so it exposes its API and patches nothing.
@@ -1043,6 +1044,114 @@ Deno.test("a Select chord pays no coin", async () => {
   // board came up — is not a coin either.
   assertEquals(tapSelect({ arcade: true, armedAt: 0 }), []);
   await new Promise((r) => setTimeout(r, 200));
+});
+
+// ── The launcher's Touch Controller on a board ──────────────────────────────
+// The pad goes into the game frame's getGamepads, never this window's, and the
+// board's player mirrors only Start and the D-pad out of that list. So the rest
+// of the panel has to come from here, or the stick steers and nothing fires.
+
+// A touch pad state as Dashboard.svelte hands it over, one poll per call.
+function touchPadPoller(opts: { arcade: boolean }) {
+  const { self, sent } = fakeManager();
+  const proto = GamepadManager.prototype;
+  self.arcadeFrame = opts.arcade;
+  self.initialButtonState = proto.initialButtonState;
+  self.ensureButtonState = proto.ensureButtonState;
+  self.processButtonGroup = proto.processButtonGroup;
+  let live: { axes: number[]; bits: number } | null = null;
+  self.touchPadSource = () =>
+    live && gamepadFromState(live, { layout: "classic" });
+  return {
+    self,
+    sent,
+    poll(state: { axes?: number[]; bits?: number } | null) {
+      live = state && {
+        axes: state.axes ?? [0, 0, 0, 0],
+        bits: state.bits ?? 0,
+      };
+      proto.processTouchPad.call(self);
+    },
+  };
+}
+
+Deno.test("the touch pad's face buttons are a board's fire buttons", () => {
+  const { poll, sent } = touchPadPoller({ arcade: true });
+  poll({ bits: 1 << 0 }); // A, the bottom button: button 1, zunkyou's Shot
+  poll({ bits: 0 });
+  poll({ bits: 1 << 1 }); // B, the right button: button 2, zunkyou's Bomb
+  poll({ bits: 0 });
+  assertEquals(sent, [
+    "keydown:Control",
+    "keyup:Control",
+    "keydown:Alt",
+    "keyup:Alt",
+  ]);
+});
+
+Deno.test("the touch pad's other buttons reach a board too", async () => {
+  const { poll, sent } = touchPadPoller({ arcade: true });
+  poll({ bits: (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) }); // X Y L1 R1
+  assertEquals(sent, [
+    "keydown: ",
+    "keydown:Shift",
+    "keydown:z",
+    "keydown:x",
+  ]);
+  sent.length = 0;
+  poll({ bits: 0 });
+  sent.length = 0;
+  // SELECT is the coin, on the release of a tap.
+  poll({ bits: 1 << 8 });
+  assertEquals(sent, []);
+  poll({ bits: 0 });
+  assertEquals(sent, ["keydown:5"]);
+  await new Promise((r) => setTimeout(r, 200));
+  assertEquals(sent, ["keydown:5", "keyup:5"]);
+});
+
+Deno.test("the touch pad's stick steers a board with the arrows, never WASD", () => {
+  const { poll, sent } = touchPadPoller({ arcade: true });
+  poll({ axes: [-1, 0, 0, 0] });
+  poll({ axes: [0, 0, 0, 0] });
+  assertEquals(sent, ["keydown:ArrowLeft", "keyup:ArrowLeft"]);
+});
+
+Deno.test("the touch pad sends no keys off a board: those games read it as a pad", () => {
+  const { poll, sent, self } = touchPadPoller({ arcade: false });
+  poll({ bits: (1 << 0) | (1 << 1) | (1 << 9) });
+  poll({ bits: 0 });
+  assertEquals(sent, []);
+  assertEquals("touch" in self.buttonState, false);
+});
+
+Deno.test("a touch pad that leaves mid-press lets go of what it held", () => {
+  const { poll, sent, self } = touchPadPoller({ arcade: true });
+  poll({ bits: 1 << 0 });
+  assertEquals(sent, ["keydown:Control"]);
+  // A real pad connected: the launcher stops offering the touch pad.
+  poll(null);
+  assertEquals(sent, ["keydown:Control", "keyup:Control"]);
+  assertEquals("touch" in self.buttonState, false);
+  poll(null);
+  assertEquals(sent, ["keydown:Control", "keyup:Control"]);
+});
+
+Deno.test("the launcher hands the touch pad to the key layer", async () => {
+  const src = await Deno.readTextFile(
+    new URL("../svelte-src/Dashboard.svelte", import.meta.url),
+  );
+  assert(src.includes("gm.touchPadSource = wanted ? touchPadForKeys"));
+  // The manager's module runs after the dashboard's, so the effect's first run
+  // finds no manager: the rune has to be read before that check, or the effect
+  // subscribes to nothing and the pad is never handed over.
+  const wanted = src.indexOf("const wanted = touchPadWanted;");
+  assert(wanted > 0);
+  assert(wanted < src.indexOf("gm.touchPadSource = wanted"));
+  assert(
+    src.indexOf("window.gamepadManager", wanted) <
+      src.indexOf("gm.touchPadSource = wanted"),
+  );
 });
 
 // ── Stadia and Switch Pro on a board (zunkyou) ──────────────────────────────

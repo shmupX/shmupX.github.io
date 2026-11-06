@@ -112,6 +112,15 @@ const ARCADE_COIN_TAP_MS = 600;
 // MAME samples input at the emulated frame rate, so the key has to be held
 // across a few frames to be seen at all.
 const ARCADE_COIN_HOLD_MS = 100;
+// The launcher's Touch Controller over a board (see processTouchPad). It is no
+// pad of this window's, so its press state lives under a key no pad's index can
+// land on, and this is what it reads as on the pass after it has gone.
+const TOUCH_PAD_SLOT = 'touch';
+const TOUCH_PAD_LET_GO = {
+  mapping: 'standard',
+  axes: [0, 0, 0, 0],
+  buttons: Array.from({ length: 17 }, () => ({ pressed: false })),
+};
 
 const DEFAULT_MAPPING = {
   dpad: {
@@ -191,6 +200,11 @@ class GamepadManager {
     // (_splitTargets: a Set of pad indices, or null for every pad).
     this.splitPadsActive = false;
     this._splitTargets = null;
+
+    // The launcher's Touch Controller: a function returning its Gamepad-shaped
+    // state, or null when it is not in play. Set by Dashboard.svelte, read by
+    // processTouchPad.
+    this.touchPadSource = null;
 
     this.init();
   }
@@ -442,6 +456,27 @@ class GamepadManager {
       // Process analog sticks
       this.processAnalogSticks(controller, controllerIndex, mapping);
     }
+    this.processTouchPad();
+  }
+
+  // The launcher's Touch Controller over an arcade board. Dashboard.svelte puts
+  // that pad in the game frame's getGamepads, not in this window's, so the loop
+  // above never reads it. Most games need nothing more: they read the frame's
+  // pads themselves, and keys on top would press every button twice. A board is
+  // the exception. Its player mirrors only Start and the D-pad out of that list,
+  // and on any pad fire, bomb and the coin exist only as the keys this layer
+  // sends, so the touch pad steered and started the game and could do nothing
+  // else. Over a board it takes the road a real pad takes.
+  processTouchPad() {
+    const pad = this.touchPadSource && this.isArcadeFrame() ? this.touchPadSource() : null;
+    if (!pad && !(TOUCH_PAD_SLOT in this.buttonState)) return;
+    const prevButtonState = { ...this.ensureButtonState(TOUCH_PAD_SLOT) };
+    for (const groupName of ['dpad', 'face', 'shoulder', 'special']) {
+      this.processButtonGroup(groupName, pad || TOUCH_PAD_LET_GO, TOUCH_PAD_SLOT, prevButtonState, DEFAULT_MAPPING, false);
+    }
+    // A real pad connecting takes the touch pad away mid-press: that one pass
+    // above let go of what it held, or the board would keep firing.
+    if (!pad) delete this.buttonState[TOUCH_PAD_SLOT];
   }
 
   processButtonGroup(groupName, controller, controllerIndex, prevButtonState, mapping, useWASD) {
