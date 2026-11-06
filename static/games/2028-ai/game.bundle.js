@@ -2275,6 +2275,11 @@
   globalThis.__CMG_GAME_STATE__ = gameState;
   ensureScoreState(gameState);
   ensureRuntimeState(gameState);
+  // This runtime has haptics of its own, and the launcher's generic ones
+  // (static/frame-haptics.js, which rumbles for a game's sounds) must leave it
+  // alone: they would double. Set at load, ahead of the frame's load event the
+  // launcher installs them on.
+  globalThis.__CMG_NATIVE_HAPTICS__ = true;
   // The Guide's Haptics switch, as the launcher (or this page's PAUSE panel)
   // last left it: true / false, or null when it never has.
   function readStoredHaptics() {

@@ -8,6 +8,10 @@
   // lives in static/steam-nudge.js because tests/steam_nudge_test.ts is the
   // only place it can be exercised without a real AppImage runtime.
   import { steamNudge } from '../static/steam-nudge.js';
+  // Haptics for a same-origin game that has none of its own: it rumbles with the
+  // game's sounds. Installed into the frame when it loads (injectFrameHaptics),
+  // governed by the Guide's Haptics row like the 2028-ai runtime's own.
+  import { installFrameHaptics } from '../static/frame-haptics.js';
   import {
     GAME_FAVS_KEY, favRowId, isGameFav, launchTarget, readGameFavs,
     shelfPlayUrl, toggleGameFav,
@@ -3643,6 +3647,13 @@
   // silence the motors at once. closeGame drops hapticsAvail with the rest of
   // the game's advertised capabilities.
   //
+  // A game with no haptics of its own — an eShop build the runtime did not
+  // write, an arcade board, an emulator — gets them from the launcher: on a
+  // same-origin frame's load, injectFrameHaptics puts static/frame-haptics.js
+  // into it, which rumbles with the game's sounds and which this same switch
+  // governs (setEnabled, below), the game's own vibrate and rumble calls
+  // included. The Guide's row is shown for such a game, as for a native one.
+  //
   // The launcher's own part is the Guide: while it is open, moving through it
   // ticks, a press thumps, and closing it settles — through the pad that is
   // driving it, or the phone's motor under a finger. The game is held paused
@@ -3653,6 +3664,9 @@
   }
   let hapticsOn = $state(loadHaptics());
   let hapticsAvail = $state(false);
+  // The generic haptics in the running frame (static/frame-haptics.js), or null
+  // for a game with its own, a cross-origin frame, or the editor.
+  let frameHaptics = null;
   // Whether a connected pad can rumble, looked up when the Guide opens (pads
   // come and go; this is not polled).
   let osdPadRumble = $state(false);
@@ -3666,6 +3680,30 @@
   function applyHaptics() {
     const iframe = document.getElementById('gameframe');
     try { iframe?.contentWindow?.postMessage({ type: 'cmg-haptics-set', value: hapticsOn }, '*'); } catch (_) { /* ignore */ }
+    try { frameHaptics?.setEnabled(hapticsOn); } catch (_) { /* the frame is gone */ }
+  }
+  // A game frame has loaded: give a same-origin game with no haptics of its own
+  // the generic ones. A native game (the 2028-ai runtime and the eShop builds
+  // of it) is recognised by the module and left alone — it has told the Guide
+  // itself (cmg-haptics) — and so is the level editor, which has no game to
+  // feel. A frame that reloads is a new window, so the last one is let go.
+  function injectFrameHaptics(e) {
+    frameHaptics = null;
+    const iframe = e?.currentTarget || document.getElementById('gameframe');
+    if (!iframe || editorFrameActive || !frameIsSameOrigin(iframe)) return;
+    try {
+      frameHaptics = installFrameHaptics(iframe.contentWindow, { enabled: hapticsOn, paused: osdOpen });
+      if (frameHaptics) hapticsAvail = true;
+    } catch (_) { frameHaptics = null; /* cross-origin after all, or gone mid-load */ }
+  }
+  // The Guide held open over the game: nothing may run under it.
+  $effect(() => {
+    const open = osdOpen;
+    untrack(() => { try { frameHaptics?.setPaused(open); } catch (_) { /* the frame is gone */ } });
+  });
+  function dropFrameHaptics() {
+    try { frameHaptics?.dispose(); } catch (_) { /* the frame is gone */ }
+    frameHaptics = null;
   }
   function padsThatRumble() {
     try {
@@ -3928,6 +3966,7 @@
     osdLevelEditor = null;
     turboAvail = false; turboOn = false;
     hapticsAvail = false;
+    dropFrameHaptics();
     twinStickAvail = false; twinStickOn = false;
     resetSplitPads();
     touchCtlAvail = false; touchCtlOn = false;
@@ -7139,6 +7178,7 @@
     turboAvail = false;
     turboOn = false;
     hapticsAvail = false;
+    dropFrameHaptics();
     twinStickAvail = false;
     twinStickOn = false;
     twinGameId = null;
@@ -9707,7 +9747,7 @@
       src={gameSrc}
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
-      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); injectArcadeFill(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
+      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); injectArcadeFill(e); injectFrameHaptics(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
     ></iframe>
   </div>
 {/if}
