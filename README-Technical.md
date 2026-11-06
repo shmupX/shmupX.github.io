@@ -288,7 +288,9 @@ they are written out in full.
     `hapticsStop()`, the low-hull heartbeat (`hapticsAmbient`, called from
     `fixedUpdate`) and a boss-hit thud at both damage sites. A rebuild from
     2019-es7 drops all of it until the same changes land there.
-    `tests/haptics_test.ts`.
+    `window.__CMG_NATIVE_HAPTICS__ = true`, set at load, tells the launcher's
+    generic haptics (`static/frame-haptics.js`, below) to leave this runtime
+    alone. `tests/haptics_test.ts`, `tests/frame_haptics_test.ts`.
   - `cmgBroadcastCheats` posts the Guide's Cheats submenu to the launcher once
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
@@ -2964,9 +2966,11 @@ At 2× a 240 Hz display already gets a step every frame.
 ## Haptics
 
 The Guide's **Haptics** row turns every rumble and vibration off and on. It
-shows for a game that has haptics of its own, and wherever the launcher's own
-have something to reach: a touchscreen, or a connected pad that rumbles (looked
-up when the Guide opens). It is not shown over the level editor. The choice is
+shows for a game that has haptics of its own, for any other game the launcher
+frames from its own origin (see **Games with none of their own**), and wherever
+the launcher's own have something to reach: a touchscreen, or a connected pad
+that rumbles (looked up when the Guide opens). It is not shown over the level
+editor. The choice is
 the player's, so, unlike Turbo, it **is saved**: `cmg-haptics` in `localStorage`
 (`"0"` off, `"1"` on, unset on), shared by every page on the origin.
 
@@ -3016,6 +3020,116 @@ The preset table was one constant blip per event. It now has shape and weight:
   threshold and every 0.67 s on the last sliver. It is counted in fixed steps,
   so it stops with the world and runs at Turbo's pace with it, and it is scoped
   to that ship's pad. A Dezaemon ship has no hit points and never beats.
+
+### Games with none of their own
+
+The 2028-ai runtime rumbles for its events. Nothing else the launcher frames has
+events to hang a rumble on or source to add one to — Sh'M↑ Party, which comes in
+from its own zip, an arcade board, an emulator's cartridge — but every game has
+sound, so the launcher puts the feeling there. `static/frame-haptics.js` listens
+to a game's Web Audio and rumbles the pad (or the phone's motor) with it: harder
+for a louder sound, deeper for a bassier one, longer for a longer one.
+`installFrameHaptics` is called by `injectFrameHaptics` in `Dashboard.svelte` on
+every game frame's `load`, beside the injectors that patch `getGamepads` for
+Twin-Stick Mode, and is let go when the game closes or the frame reloads. Nothing
+in a game changes, and the Guide's row is shown for it.
+
+What it does on a frame, by what the game says it has:
+
+| the frame | the launcher |
+| --- | --- |
+| `window.__CMG_NATIVE_HAPTICS__`: the 2028-ai runtime, and the 2019, 95-demo and Evil Invaders eShop builds of it | nothing. It answers the Guide itself, above |
+| `gameState.vibrateFlg` and no flag: those builds as installed before the flag | **gate only**. Its own `vibrate` and rumble calls obey the switch; nothing is added |
+| neither | **listens**, and gates |
+| cross-origin, or the level editor | nothing: the launcher cannot reach into it |
+
+**The switch reaches a game's own calls.** `Navigator.prototype.vibrate` and
+`GamepadHapticActuator.prototype.playEffect` / `pulse` are wrapped in the frame:
+with Haptics off, or the Guide open, they reach no motor and answer as a motor
+would (`false`, a resolved `"complete"`). Turning it off, or opening the Guide,
+resets the pads and calls `vibrate(0)`. `dispose` puts the page's own functions
+back.
+
+**Samples** — a sound loaded once and played when something happens (Phaser's,
+Howler's, Tone's: an `AudioBufferSourceNode` that is started and ends) — are
+events of the game's own, so each is profiled once (`profileBuffer`: RMS over its
+first 1.5 s, the share of that which is bass under 300 Hz, its length) and
+pulsed as it starts, with nothing to detect and no delay (`pulseFor`). The weight
+is the RMS leaning to the bassy and held down for anything under a third of a
+second, so a shot's blip is a click and an explosion is a thump: the 2028-ai
+runtime's quiet shot (0.29 s, RMS 0.05) earns nothing, its kills (0.94 s, RMS
+0.15) and big explosions (0.87 s, RMS 0.24) earn about 200 and 300 ms. The strong motor
+follows the bass, the weak one the rest. A sound `start()`ed ahead of the clock
+is felt when it is heard, a context that is not running (paused, muted by the
+browser) is not heard at all, and a looping sample or one over four seconds is
+music and is skipped: a rumble that followed the soundtrack would never stop.
+`AudioBufferSourceNode.prototype` is shared by every context in the frame, so a
+sound played after install is reached even on a context the game made at boot.
+
+**Streams** are where nothing says when a thing happened: sound made as it plays,
+with the music in it. An emulator's OpenAL plays six milliseconds of buffer a
+hundred and fifty times a second, so a buffer under 50 ms is a piece of a stream,
+not a sound; a `ScriptProcessorNode`, an `AudioWorkletNode` and a media element's
+source are streams too. Each is also connected, once, to a tap of this module's
+own — a low-pass and a plain analyser per context, connected to no speaker, so
+the game's graph is never rerouted. Every 16 ms the tap's **spectral flux** is
+read (`spectralFlux`: how much each bin rose since the last read, so a steady
+sound has none however loud it is and a new one has plenty) and handed to
+`createOnsetDetector`. A hit is the smoothed flux standing 2.4 times clear of
+the 95th percentile of the last three seconds of itself — how busy the music gets
+— and above a floor, which makes it relative to the game's own mix and is why a
+quiet game's explosion and a loud game's are both hits. A percentile, not a
+maximum, so one explosion among a hundred and eighty ticks does not raise what the
+next is measured against (a hit is kept out of the bed altogether); one sound is
+one pulse, its decaying tail never a second, a swell past the first allowed after
+320 ms. The first read after a start or a resume is not compared with anything and
+is discarded.
+
+**One effect at a time.** A pad plays one effect and a new one preempts it, so
+both paths go through a limiter: while a pulse is playing only one a quarter
+heavier takes over.
+
+Measured, in headless Chromium, on the two engines the repo ships:
+
+- The vendored EmulatorJS snes9x player (`/games/super-mario-sp/`), whose music
+  is loud (RMS about 0.12, and jumpy): with nothing happening the soundtrack
+  alone gives 0.2 to 0.4 pulses a second. Decaying-noise bursts played into it
+  as streamed 6 ms chunks, the way it plays everything, at 0.06, 0.1, 0.15 and
+  0.25 RMS were all felt (36 of 36 over two 36-second runs); 0.03 RMS in 5 of 10.
+  Played as one sample they follow the sample rule instead (0.15 RMS and up).
+- The 2028-ai runtime in god mode, with its own rumble off (`?vibrate=0`) and
+  its two native markers cleared so every pulse is the module's: a stage with a
+  ×94 combo and four kills a second gives about two pulses a second, for its
+  kills and explosions and not for its shots.
+
+What it cannot do, and has not been shown to:
+
+- **A frame it cannot reach.** Only same-origin frames: eShop web builds
+  (`/eshop/<id>/`), the arcade and console players the service worker mirrors,
+  `/games/…`. A cross-origin frame can still opt in with `cmg-haptics`.
+- **Sound that is not Web Audio.** A page that plays only `<audio>` elements is
+  not heard (a media element routed through `createMediaElementSource` is).
+- **Sound before the frame's `load`.** A context's graph built earlier is not
+  tapped; its samples are reached through `start()` as above, but a stream it
+  was already feeding is not.
+- **What is audible.** It follows what the game plays, not what comes out of the
+  speakers: a game with its own sound turned down still rumbles, and the Guide's
+  Haptics row is the switch for that.
+- **A real motor.** The pad and the phone are faked in the tests and in the
+  headless runs; how it feels on a DualSense, a Switch Pro or a phone has not
+  been judged by hand. `HAPTIC_DEFAULTS`, `createOnsetDetector`'s defaults and
+  `pulseFor`'s are the numbers to turn.
+- **Other cores.** The streams were tuned against the one emulator vendored here
+  and a synthetic stream. The mirrored arcade player (`/arcade/play.html`) and the
+  console players come from the mirror origin and were not available to measure.
+
+`tests/frame_haptics_test.ts` runs the module against a fake window — a pad that
+logs every effect, a phone's motor, timers moved by hand, just enough Web Audio:
+the detector, the sample profile, spectral flux, what is and is not a hit, the
+limiter, scheduling, the switch and the Guide's pause, the wrappers and their
+removal, the stream tap's priming, and how `Dashboard.svelte` and the committed
+`static/dashboard.bundle.js` wire it. Changing the module means
+`deno task dashboard:build`.
 
 ### The launcher's own
 
