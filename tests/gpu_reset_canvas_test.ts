@@ -52,39 +52,348 @@ function methodSource(js: string, name: string): string {
   throw new Error(`unbalanced method ${name}`);
 }
 
-Deno.test("stableCanvas asks for willReadFrequently on the canvas's first getContext, in both copies", async () => {
-  for (const path of [LOADER, BUNDLE]) {
-    const src = functionSource(await read(path), "stableCanvas");
-    const calls: unknown[][] = [];
-    const made: Record<string, unknown>[] = [];
+/** The canvas-recipe block as source: from its first constant to the end of `armCanvasRepaint`. */
+function recorderSource(js: string): string {
+  const start = js.indexOf("const CANVAS_LOG_LIMIT");
+  assert(start >= 0, "no canvas log in this copy");
+  const arm = functionSource(js, "armCanvasRepaint");
+  return js.slice(start, js.indexOf(arm, start) + arm.length);
+}
+
+// A canvas, a 2D context and timers, just enough for the recipe to run on.
+// `clear()` is what the browser does to a lost canvas: the bitmap is gone, so
+// whatever was painted is no longer there.
+class FakeCtx {
+  painted: string[] = [];
+  lost = false;
+  #fill = "";
+  constructor(readonly id: string, readonly sequence: string[]) {}
+  get fillStyle() {
+    return this.#fill;
+  }
+  set fillStyle(v: string) {
+    this.#fill = v;
+    this.painted.push(`fillStyle=${v}`);
+  }
+  fillRect(...a: number[]) {
+    this.painted.push(`fillRect(${a})`);
+  }
+  drawImage(src: { name: string }, ...a: number[]) {
+    this.painted.push(`drawImage(${src.name},${a})`);
+  }
+  reset() {
+    this.sequence.push(`${this.id}:reset`);
+    this.painted.push("reset");
+  }
+  isContextLost() {
+    return this.lost;
+  }
+  clear() {
+    this.painted.length = 0;
+  }
+}
+
+class FakeCanvas {
+  width = 0;
+  height = 0;
+  ctx: FakeCtx;
+  asked: unknown[][] = [];
+  handlers: Record<string, (() => void)[]> = {};
+  constructor(id: string, sequence: string[]) {
+    this.ctx = new FakeCtx(id, sequence);
+  }
+  getContext(...args: unknown[]) {
+    this.asked.push(args);
+    return args[0] === "2d" ? this.ctx : null;
+  }
+  addEventListener(name: string, fn: () => void) {
+    (this.handlers[name] ??= []).push(fn);
+  }
+  fire(name: string) {
+    for (const fn of this.handlers[name] ?? []) fn();
+  }
+}
+
+function rig(path: string) {
+  return read(path).then((js) => {
+    const sequence: string[] = [];
+    const made: FakeCanvas[] = [];
+    const timers: (() => void)[] = [];
     const document = {
       createElement(tag: string) {
         assertEquals(tag, "canvas");
-        const el: Record<string, unknown> = {
-          width: 0,
-          height: 0,
-          getContext: (...args: unknown[]) => {
-            calls.push(args);
-            return {};
-          },
-        };
-        made.push(el);
-        return el;
+        const canvas = new FakeCanvas(
+          String.fromCharCode(65 + made.length),
+          sequence,
+        );
+        made.push(canvas);
+        return canvas;
       },
     };
-    const stableCanvas = new Function(
+    const setTimeout = (fn: () => void) => {
+      timers.push(fn);
+      return timers.length;
+    };
+    const api = new Function(
       "document",
-      `${src}; return stableCanvas;`,
-    )(
-      document,
-    ) as (w: number, h: number) => Record<string, unknown>;
-    const canvas = stableCanvas(224, 2048);
-    assertEquals(made.length, 1, `${path}: one canvas per call`);
+      "setTimeout",
+      `${recorderSource(js)}; return { stableCanvas, armCanvasRepaint };`,
+    )(document, setTimeout) as {
+      stableCanvas: (w: number, h: number) => FakeCanvas;
+      armCanvasRepaint: (game: unknown) => void;
+    };
+    return {
+      ...api,
+      made,
+      sequence,
+      /** Run the next queued timer; false when none is waiting. */
+      step: () => {
+        const fn = timers.shift();
+        fn?.();
+        return !!fn;
+      },
+      /** Run timers until none is left. */
+      settle: () => {
+        for (let i = 0; i < 200 && timers.shift()?.() !== undefined; i++);
+        for (let i = 0; i < 200 && timers.length; i++) timers.shift()!();
+      },
+    };
+  });
+}
+
+/** What the browser does when the GPU restarts: every 2D canvas is lost, then restored empty. */
+function gpuReset(canvases: FakeCanvas[]) {
+  for (const c of canvases) {
+    c.fire("contextlost");
+    c.ctx.clear();
+  }
+  for (const c of canvases) c.fire("contextrestored");
+}
+
+Deno.test("stableCanvas asks for willReadFrequently first and hands out a context that logs, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    const canvas = r.stableCanvas(224, 2048);
+    assertEquals(r.made.length, 1, `${path}: one canvas per call`);
     assertEquals([canvas.width, canvas.height], [224, 2048], path);
     assertEquals(
-      calls,
+      canvas.asked,
       [["2d", { willReadFrequently: true }]],
       `${path}: the first getContext decides where the canvas lives`,
+    );
+    const ctx = canvas.getContext("2d") as unknown as FakeCtx;
+    assert(
+      ctx !== canvas.ctx,
+      `${path}: the context handed out must be the logging one`,
+    );
+    ctx.fillStyle = "red";
+    ctx.fillRect(0, 0, 4, 4);
+    assertEquals(
+      canvas.ctx.painted,
+      ["fillStyle=red", "fillRect(0,0,4,4)"],
+      `${path}: a call must still reach the real context`,
+    );
+    assertEquals(
+      canvas.getContext("webgl"),
+      null,
+      `${path}: only 2d is wrapped`,
+    );
+  }
+});
+
+Deno.test("a canvas the GPU reset cleared is painted again from its log, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    const canvas = r.stableCanvas(64, 64);
+    const ctx = canvas.getContext("2d") as unknown as FakeCtx;
+    ctx.fillStyle = "red";
+    ctx.fillRect(0, 0, 4, 4);
+    ctx.drawImage({ name: "atlas" }, 0, 8);
+    r.settle();
+    gpuReset([canvas]);
+    assertEquals(canvas.ctx.painted, [], `${path}: the reset cleared it`);
+    r.settle();
+    assertEquals(
+      canvas.ctx.painted,
+      ["reset", "fillStyle=red", "fillRect(0,0,4,4)", "drawImage(atlas,0,8)"],
+      `${path}: the recipe is played back onto a cleared, default-state canvas`,
+    );
+  }
+});
+
+Deno.test("canvases are repainted oldest first, and not until every lost one is back, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    const a = r.stableCanvas(8, 8);
+    const b = r.stableCanvas(8, 8); // drawn from a, so it must be painted after it
+    (a.getContext("2d") as unknown as FakeCtx).fillRect(0, 0, 1, 1);
+    (b.getContext("2d") as unknown as FakeCtx).drawImage({ name: "A" }, 0, 0);
+    r.settle();
+    for (const c of [a, b]) {
+      c.fire("contextlost");
+      c.ctx.clear();
+    }
+    a.ctx.lost = true; // a is still waiting for its own contextrestored
+    b.fire("contextrestored");
+    for (let i = 0; i < 5; i++) r.step();
+    assertEquals(
+      r.sequence,
+      [],
+      `${path}: b must not be painted while a is still lost`,
+    );
+    a.ctx.lost = false;
+    a.fire("contextrestored");
+    r.settle();
+    assertEquals(
+      r.sequence,
+      ["A:reset", "B:reset"],
+      `${path}: oldest canvas first`,
+    );
+    assertEquals(b.ctx.painted, ["reset", "drawImage(A,0,0)"], path);
+  }
+});
+
+Deno.test("a canvas the reset never touched is left alone, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    const canvas = r.stableCanvas(8, 8);
+    (canvas.getContext("2d") as unknown as FakeCtx).fillRect(0, 0, 1, 1);
+    r.settle();
+    canvas.fire("contextrestored"); // e.g. only the WebGL context was lost
+    r.settle();
+    assertEquals(
+      canvas.ctx.painted,
+      ["fillRect(0,0,1,1)"],
+      `${path}: no replay onto live pixels`,
+    );
+  }
+});
+
+Deno.test("a canvas repainted every frame stops logging, but a big one-off build keeps its log, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    const built = r.stableCanvas(8, 8);
+    const hot = r.stableCanvas(8, 8);
+    const bctx = built.getContext("2d") as unknown as FakeCtx;
+    for (let i = 0; i < 5000; i++) bctx.fillRect(i, 0, 1, 1); // a scenery strip: tile by tile
+    r.settle(); // the turn that built them is over
+    const hctx = hot.getContext("2d") as unknown as FakeCtx;
+    for (let i = 0; i < 2500; i++) hctx.fillRect(0, 0, 8, 8); // the SP lens, frame after frame
+    assertEquals(
+      hot.ctx.painted.length,
+      2500,
+      `${path}: drawing still reaches the canvas`,
+    );
+    gpuReset([built, hot]);
+    r.settle();
+    assertEquals(
+      built.ctx.painted.length,
+      1 + 5000,
+      `${path}: the strip is painted again whole`,
+    );
+    assertEquals(
+      hot.ctx.painted,
+      [],
+      `${path}: the game repaints its own per-frame canvas`,
+    );
+  }
+});
+
+Deno.test("canvas textures are uploaded again once canvases are repainted and WebGL is live, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    const updates: string[] = [];
+    const handlers: Record<string, () => void> = {};
+    const renderer = {
+      gl: { isContextLost: () => false },
+      contextLost: false,
+      on: (name: string, fn: () => void) => (handlers[name] = fn),
+    };
+    const game = {
+      renderer,
+      textures: {
+        getTextureKeys: () => ["atlas", "image", "strip"],
+        get: (key: string) => ({
+          source: [{
+            isCanvas: key !== "image",
+            glTexture: {},
+            update: () => updates.push(key),
+          }],
+        }),
+      },
+      events: {
+        once: () => assert(false, "a booted game has a renderer already"),
+      },
+    };
+    r.armCanvasRepaint(game);
+    r.armCanvasRepaint(game); // safe to call twice
+    const canvas = r.stableCanvas(8, 8);
+    (canvas.getContext("2d") as unknown as FakeCtx).fillRect(0, 0, 1, 1);
+    r.settle();
+
+    gpuReset([canvas]);
+    r.settle();
+    assertEquals(
+      updates,
+      ["atlas", "strip"],
+      `${path}: every canvas texture, once, and no image`,
+    );
+
+    updates.length = 0;
+    renderer.contextLost = true; // WebGL is not back yet: Phaser's own restore will read the repainted canvases
+    gpuReset([canvas]);
+    r.settle();
+    assertEquals(updates, [], `${path}: nothing to upload to`);
+
+    renderer.contextLost = false;
+    canvas.fire("contextlost");
+    canvas.ctx.clear();
+    handlers["restorewebgl"](); // WebGL came back before the 2D canvas did
+    canvas.fire("contextrestored");
+    r.settle();
+    assertEquals(
+      updates,
+      ["atlas", "strip"],
+      `${path}: restorewebgl then canvas restored`,
+    );
+  }
+});
+
+Deno.test("a game that has not booted yet is armed when it is ready, in both copies", async () => {
+  for (const path of [LOADER, BUNDLE]) {
+    const r = await rig(path);
+    let ready: (() => void) | null = null;
+    const game: Record<string, unknown> = {
+      renderer: undefined,
+      events: { once: (_name: string, fn: () => void) => (ready = fn) },
+    };
+    r.armCanvasRepaint(game);
+    assert(ready, `${path}: waits for the game's ready event`);
+    const handlers: Record<string, () => void> = {};
+    game.renderer = {
+      on: (name: string, fn: () => void) => (handlers[name] = fn),
+    };
+    (ready as unknown as () => void)();
+    assert(
+      handlers["restorewebgl"],
+      `${path}: listens for the WebGL restore once booted`,
+    );
+  }
+});
+
+Deno.test("the game and the loader plugin both arm the repaint", async () => {
+  const bundle = await read(BUNDLE);
+  assert(
+    functionSource(bundle, "create2028Game").includes(
+      "armCanvasRepaint(game);",
+    ),
+    "the game never arms the repaint",
+  );
+  for (const path of [LOADER, BUNDLE]) {
+    const js = await read(path);
+    assert(
+      js.includes("armCanvasRepaint(pluginManager && pluginManager.game);"),
+      `${path}: the plugin does not arm the game it runs in`,
     );
   }
 });

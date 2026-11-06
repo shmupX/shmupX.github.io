@@ -195,29 +195,56 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
-  - **Canvases that survive a GPU reset.** Chrome puts a plain 2D canvas on the
-    GPU, and when the GPU process restarts — Android does it under memory
-    pressure — every such canvas comes back blank, and Phaser rebuilds each
-    texture from its now-empty canvas when the WebGL context is restored. A
-    phone playing Ramsie in MOD off the LIBRARY lost the ship, the enemies,
-    their shots and the stage in one go (all cut from the stacked `game_asset`
-    canvas) and kept only what is drawn from images (the HP / SCORE / COMBO
-    band) or redrawn every frame (the SP lens, score popups).
-    `stableCanvas(w, h)` — in the loader, so in both copies — is a canvas whose
-    first `getContext` asks for `willReadFrequently`, which keeps it in CPU
-    memory where a reset cannot reach it. Every canvas that becomes a texture's
-    source is one: `_stackAtlas`, `applyCustomCutin` and `cutFrames` in the
+  - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
+    process restarting, which Android does under memory pressure — clears
+    _every_ 2D canvas: Chromium fires `contextlost` on each, then
+    `contextrestored` with an empty bitmap, and `willReadFrequently` (a canvas
+    kept in CPU memory) does not exempt one. Measured with CDP's
+    `Browser.crashGpuProcess` on a bare page: plain and `willReadFrequently`
+    canvases alike read 0 opaque pixels afterwards. Phaser rebuilds each
+    texture from the canvas it was cut from when the WebGL context is
+    restored, so a phone playing a level lost the ship, the enemies, their
+    shots and the stage in one go (all cut from the stacked `game_asset`
+    canvas, with the scenery strips, SP faces and HUD line) and kept only what
+    is drawn from images or redrawn every frame — a black playfield under a
+    live HP / SCORE / COMBO band, kills still scoring. (An earlier fix kept
+    these canvases off the GPU with `willReadFrequently`, on the theory that a
+    reset cannot reach them; it can, which is why the black screen stayed.)
+    `stableCanvas(w, h)` — in the loader, so in both copies — still asks for
+    `willReadFrequently` on its first `getContext`, and now keeps the canvas's
+    _recipe_: its `getContext("2d")` (which Phaser's `CanvasTexture` calls
+    too) is a pass-through that logs every call and property set, holding the
+    images, gradients and `ImageData` used by reference. When a canvas is
+    restored the log is played back onto it (`rememberCanvas`,
+    `repaintLostCanvases`), oldest canvas first because a later one draws from
+    an earlier one, and not until every lost canvas is back. Only a canvas
+    that was lost is replayed, so a bare WebGL context loss paints nothing
+    twice. A canvas is built in the task that makes it (up to
+    `CANVAS_LOG_LIMIT` calls: a scenery strip is one `drawImage` per tile) and
+    may log only `CANVAS_LATER_LIMIT` more afterwards; past that it is one the
+    game repaints every frame (the SP lens) and stops logging, so a per-frame
+    canvas costs a couple of thousand entries and no more. `armCanvasRepaint`
+    — called for the game in `create2028Game` and from the plugin's
+    constructor — repaints on `restorewebgl` too, and once canvases are back
+    uploads every canvas-sourced texture again if WebGL is live (Phaser's own
+    restore read them blank when the 2D context came back later than
+    WebGL's). Every canvas that becomes a texture's source goes through
+    `stableCanvas`: `_stackAtlas`, `applyCustomCutin` and `cutFrames` in the
     loader; `mergeAtlasIntoGameAsset`, the title plates, and, through
     `stableCanvasTexture` (which replaces `textures.createCanvas`, whose pool
-    claims a pixelArt game's canvases on the GPU first), the Dezaemon scenery
-    strips, the zako bullet, the SP faces, the lens and the kernel's HUD line. A
-    stable canvas drawn from a GPU one goes down with it, so the scratches those
-    are drawn from are stable too. Phaser's own `Text` canvases still come from
-    the pool, so `retypeTextsAfterGpuReset` types every `Text` again on
-    `restorewebgl`. Reproduced and checked with CDP's `Browser.crashGpuProcess`
-    against the running game (`game_asset` read 0 opaque pixels afterwards
-    before the fix, all of them after); `tests/gpu_reset_canvas_test.ts` pins
-    both copies and every builder.
+    would hand back a canvas that is not logged), the Dezaemon scenery strips,
+    the zako bullet, the SP faces, the lens and the kernel's HUD line.
+    Phaser's own `Text` canvases still come from the pool, so
+    `retypeTextsAfterGpuReset` types every `Text` again on `restorewebgl`.
+    Checked with `Browser.crashGpuProcess` against the running game: before,
+    `game_asset` and `game_ui` read 0 opaque pixels and the playfield was
+    empty; after, every canvas reads the pixels it had before (Master Arena
+    Mod with its scenery strips, 2028.Ai's own `foo.json`, a cloud web game in
+    MOD, on the title screen and mid-stage, and across two crashes).
+    Chromium stops restoring WebGL after repeated GPU crashes in quick
+    succession, which no canvas can fix.
+    `tests/gpu_reset_canvas_test.ts` runs both copies of the recipe against a
+    fake canvas and pins every builder.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
