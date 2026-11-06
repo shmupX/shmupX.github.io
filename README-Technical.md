@@ -195,6 +195,56 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
+  - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
+    process restarting, which Android does under memory pressure — clears
+    _every_ 2D canvas: Chromium fires `contextlost` on each, then
+    `contextrestored` with an empty bitmap, and `willReadFrequently` (a canvas
+    kept in CPU memory) does not exempt one. Measured with CDP's
+    `Browser.crashGpuProcess` on a bare page: plain and `willReadFrequently`
+    canvases alike read 0 opaque pixels afterwards. Phaser rebuilds each
+    texture from the canvas it was cut from when the WebGL context is
+    restored, so a phone playing a level lost the ship, the enemies, their
+    shots and the stage in one go (all cut from the stacked `game_asset`
+    canvas, with the scenery strips, SP faces and HUD line) and kept only what
+    is drawn from images or redrawn every frame — a black playfield under a
+    live HP / SCORE / COMBO band, kills still scoring. (An earlier fix kept
+    these canvases off the GPU with `willReadFrequently`, on the theory that a
+    reset cannot reach them; it can, which is why the black screen stayed.)
+    `stableCanvas(w, h)` — in the loader, so in both copies — still asks for
+    `willReadFrequently` on its first `getContext`, and now keeps the canvas's
+    _recipe_: its `getContext("2d")` (which Phaser's `CanvasTexture` calls
+    too) is a pass-through that logs every call and property set, holding the
+    images, gradients and `ImageData` used by reference. When a canvas is
+    restored the log is played back onto it (`rememberCanvas`,
+    `repaintLostCanvases`), oldest canvas first because a later one draws from
+    an earlier one, and not until every lost canvas is back. Only a canvas
+    that was lost is replayed, so a bare WebGL context loss paints nothing
+    twice. A canvas is built in the task that makes it (up to
+    `CANVAS_LOG_LIMIT` calls: a scenery strip is one `drawImage` per tile) and
+    may log only `CANVAS_LATER_LIMIT` more afterwards; past that it is one the
+    game repaints every frame (the SP lens) and stops logging, so a per-frame
+    canvas costs a couple of thousand entries and no more. `armCanvasRepaint`
+    — called for the game in `create2028Game` and from the plugin's
+    constructor — repaints on `restorewebgl` too, and once canvases are back
+    uploads every canvas-sourced texture again if WebGL is live (Phaser's own
+    restore read them blank when the 2D context came back later than
+    WebGL's). Every canvas that becomes a texture's source goes through
+    `stableCanvas`: `_stackAtlas`, `applyCustomCutin` and `cutFrames` in the
+    loader; `mergeAtlasIntoGameAsset`, the title plates, and, through
+    `stableCanvasTexture` (which replaces `textures.createCanvas`, whose pool
+    would hand back a canvas that is not logged), the Dezaemon scenery strips,
+    the zako bullet, the SP faces, the lens and the kernel's HUD line.
+    Phaser's own `Text` canvases still come from the pool, so
+    `retypeTextsAfterGpuReset` types every `Text` again on `restorewebgl`.
+    Checked with `Browser.crashGpuProcess` against the running game: before,
+    `game_asset` and `game_ui` read 0 opaque pixels and the playfield was
+    empty; after, every canvas reads the pixels it had before (Master Arena
+    Mod with its scenery strips, 2028.Ai's own `foo.json`, a cloud web game in
+    MOD, on the title screen and mid-stage, and across two crashes).
+    Chromium stops restoring WebGL after repeated GPU crashes in quick
+    succession, which no canvas can fix.
+    `tests/gpu_reset_canvas_test.ts` runs both copies of the recipe against a
+    fake canvas and pins every builder.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
@@ -258,6 +308,16 @@ they are written out in full.
     carries a TURBO switch of its own (`cmgToggleRow`, between the sliders
     and RESUME): an exported app's pause, a direct visit's.
     `tests/turbo_pause_panel_test.ts`.
+  - The haptics module (`triggerHaptic` and its presets, a copy of
+    `2019-es7/src/haptics.js`) is extended by hand, and `cmgSetHaptics` is the
+    Guide's Haptics switch (see **Haptics** below): shaped `envelope` effects, a
+    `priority` per preset and a lane per pad, a `scale` for weight,
+    `hapticsStop()`, the low-hull heartbeat (`hapticsAmbient`, called from
+    `fixedUpdate`) and a boss-hit thud at both damage sites. A rebuild from
+    2019-es7 drops all of it until the same changes land there.
+    `window.__CMG_NATIVE_HAPTICS__ = true`, set at load, tells the launcher's
+    generic haptics (`static/frame-haptics.js`, below) to leave this runtime
+    alone. `tests/haptics_test.ts`, `tests/frame_haptics_test.ts`.
   - `cmgBroadcastCheats` posts the Guide's Cheats submenu to the launcher once
     the level has resolved, because the set depends on which level is running —
     see **A Dezaemon save is not 2028.Ai** below. `routes/games/2028-ai.tsx`
@@ -425,6 +485,48 @@ they are written out in full.
     bullets back and takes the frames out. Akuma (purple and red fireballs)
     and Trump (green laser, gold fireball) already fire what their records
     name. `tests/rando_first_boss_arms_test.ts`.
+  - **Master Arena Mod** is the community cart Master Arena (MA Project,
+    Dezaemon 2) as the cloud game `shmupX/levels/Master Arena Mod`: its ten
+    stages, enemies, scenery, bullets, items, tunes, title page and drawn
+    credits exactly as the cart decodes (the harbor's shelf, as
+    `level:reimport` decodes one; `--sav` reads a cart on disk), with two
+    slots replaced. `bossData/boss0` is Mike Tyson — the thirteen 55×122
+    cells of monkey-kombat's `tyson.png` (`scripts/master-arena-mod/art/`),
+    named for the animations monkey-kombat plays them in — pinned to
+    Barlog's routine (`attackPattern: "boss1"`), throwing Barlog's shot from
+    the bare `bulletData` slot that routine fires, on the cart's first
+    boss's own bar, score and gauge. The routine shows a boss's idle set and
+    nothing else, so his idle is the shuffle and the wink in Barlog's own
+    idle rhythm, with the wind-up, punch and uppercut on charge, shoot and
+    attack for the Boss Lab and the cart. His `dezaemon` trailer is the
+    slot's — entrance, death, hp stages, the cart's hp and score — with the
+    four patterns and playlist replaced by movement scripts and fire points
+    that play Barlog's moves on a Saturn (`TYSON_PATTERNS`: script 22's
+    swoop across the upper field and a straight shot, script 31's advance on
+    the ship with an aimed one, script 28's rise, 192 px power dive and
+    return, and 22's mirror 23), encoded and decoded through the engine so
+    the record carries what a reader of the written cart gets back, byte
+    for byte. On the Saturn he throws the cart's own first bullet (its bank
+    fills all three bullet types, so Barlog's art claims none), the
+    routine's random choice is a fixed loop, and his core and Ryuda's (25
+    and 14 CG cells) fit a cart that re-encodes 994 of 1024 full only by
+    leaving the last 9 cells of the eighth stage's scenery unpainted — the
+    web level has every cell. `bossData/boss1` is the
+    Character Library's `ryuda`, placed as `shmupx_place_character` places
+    one — her record on her own Dezaemon trailer, her frames packed under
+    the level's sheet, renamed to the level's spelling (`ryuda_` in front of
+    a name the cart spells for other art, its `dezaBullet2_*`), no stage-end
+    backdrop since every stage has scenery — at the row and column the
+    cart's second boss had; on the Saturn her two parts are the stage's
+    records 37 and 38, as a placed Dezaemon boss's always are. A dry run
+    unless `--apply` (an empty slot only; `--force` replaces it, keeping the
+    board); `--out` writes the record for a play-through on
+    `window.__OFFLINE_LEVEL__`, `--serve` plays it (`?stage=0&bossRush=1`
+    opens on Tyson, `?stage=1&bossRush=1` on Ryuda); `--revert` deletes the
+    level, only if `meta.mod` says it is this one. The eShop lists it as a
+    cart: `deno task eshop:publish "Master Arena Mod" --name "Master Arena
+    Mod"`, no `--author`, so MA Project's drawn staff roll stays.
+    `tests/master_arena_mod_test.ts`.
   - A weapon record's `facing` turns its bullets to their heading: the
     direction the art is drawn flying, in degrees clockwise from right (0 =
     right, 90 = down). `faceBulletHeading` rotates each bullet of such a
@@ -482,6 +584,20 @@ they are written out in full.
     localStorage alone (`editorStageKey`, which `readEditorPlayRequest` already
     reads), and PLAY GAME opens the saved game at its title
     (`tests/editor_play_urls_test.ts`).
+  - **`?bfg=1` — max weapon power**, on any game: the web shot at its strongest
+    (BIG, 2 damage and piercing, at the R drop's rapid cadence) and, wherever
+    the Dezaemon weapons run (a cart, or a web game in MOD), the shot level at
+    the ship's own cap — the OPTION count every MAIN / SUB / CHARGE table is
+    indexed by, which a cart's POWER-UP item raises. Speed is the power level,
+    not a weapon, and is left alone. Read once into `gameState.bfgFlg` like
+    `?god=1`; `bfgArm` applies it wherever a ship is seeded (a new ship, a
+    revived one, the next from the stock) and after every pickup, so a 3-way
+    drop never takes it back down. The Guide's Cheats list it as **BFG (Max
+    Weapons)**, the editor's PLAY passes it on from its own URL
+    (`debugPlayParams`, beside `?turbo=1`), so a LIBRARY or coverflow game
+    opened as `/editor/?…&bfg=1` keeps it, and like `?god=1` a BFG run is no
+    record: `scoreCountsAsRecord` says so, and the HUD's WORLD BEST no longer
+    climbs with a score that will not be kept, for either. `tests/bfg_test.ts`.
   - A boss dies as the boss whatever finished it. `updateDezaColumns` (the
     Dezaemon sub-weapon 5 / charge 2 columns) used to bill the boss sprite and
     hand the kill to `enemyDie`, which destroyed the sprite without telling the
@@ -733,6 +849,14 @@ they are written out in full.
     raiders are still dropping through (see **EVIL INVADERS '95 as a cloud
     game** below). `tests/95_demo_test.ts` pins both copies, the wave block and
     the helper. Upstream home is `2019-es7/src/phaser/GameScene.js`.
+  - Today's board names the browser that raised it. `submitHighScore` asks the
+    page for a champion id (`championHolder`, `__SHMUPX_CHAMPION__.holder()`,
+    offered by `static/champion/champion.js`), writes it as `holder` on the
+    daily board in the same transaction as the value, and fires
+    `shmupx:daily-best` on `window` when the committed board is this browser's.
+    Without the hook nothing changes. See **The daily world champion** below;
+    `tests/game_scores_test.ts` runs it through the submit path. Upstream home
+    is `2019-es7/src/firebaseScores.js`.
   - A boss can keep its whole body on the screen through Barlog's slides.
     `bossPatternBarlog` clamps where it slides a boss — its reposition, its dash
     to the ship, the dash before its dive — to 30 px from each wall, whatever
@@ -744,6 +868,27 @@ they are written out in full.
     `95-demo`'s CoolInvader, RainbowInvader and butt-devil trio carry it;
     `tests/95_demo_test.ts` pins the helper and the three clamps. Upstream home
     is `2019-es7/src/phaser/bosses/BossBarlog.js`.
+  - God mode wears the Saturn's TEST PLAY watermark and keeps a best of its
+    own. `?god=1` (the editor's GOD MODE toggle; an exported app's baked
+    `godMode`) is what Dezaemon 2's TEST PLAY panel calls MUTEKI, so the stage
+    shows what that panel's run shows: **TESTING** in the kernel font
+    (`dezaHudLine`, the same glyph sheet as the SCORE and BOMB lines), on
+    SCORE's row at the right edge, in the column BOMB has at the bottom
+    (`DEZA_HUD_TESTING`: Saturn (216, 8), 48 px in from the right as SCORE is
+    from the left) — drawn over the web band too, which has no row of its own
+    for it, and set in the face's TrueType (`dezaCellText`) if the glyph sheet
+    never loaded. A god run reaches no board and never the local best, so it
+    gets **TODAY'S GOD BEST** (`keepGodBest`, see **WORLD BEST and TODAY'S
+    BEST, per game** below): the highest score reached while the flag was on,
+    fed by `updateHUD` every frame, shown on a line of its own under WORLD BEST
+    in the HUD (under the kernel's SCORE line when the band is off), under the
+    sync line on the title, and on the ending's score card — and only while
+    the flag is on. The continue card carries nothing of it: nothing kills the
+    ship under the flag (`playerDamage`, the Goki KO), so a god run never gets
+    there. `tests/god_mode_test.ts` pins the watermark and the lines,
+    `tests/game_scores_test.ts` the score. Upstream homes are
+    `2019-es7/src/firebaseScores.js`, `highScoreUi.js`, `TitleScene.js`,
+    `GameScene.js` and `EndingScene.js`.
 - `lib/rtdb-root.ts` — where shmupX's own games sit in the Realtime Database it
   shares with cmg: `levels`, `levelAliases`, `atlases` and `characters` under
   `shmupX/`, beside cmg's root copies (see **shmupX's corner of the shared
@@ -2845,6 +2990,194 @@ The refresh-rate blend (above) measures the scaled delta too. At 2× it reads
 twice the frame time, so it blends only on a display faster than about 260 Hz.
 At 2× a 240 Hz display already gets a step every frame.
 
+## Haptics
+
+The Guide's **Haptics** row turns every rumble and vibration off and on. It
+shows for a game that has haptics of its own, for any other game the launcher
+frames from its own origin (see **Games with none of their own**), and wherever
+the launcher's own have something to reach: a touchscreen, or a connected pad
+that rumbles (looked up when the Guide opens). It is not shown over the level
+editor. The choice is
+the player's, so, unlike Turbo, it **is saved**: `cmg-haptics` in `localStorage`
+(`"0"` off, `"1"` on, unset on), shared by every page on the origin.
+
+The game side follows Turbo's handshake. The 2028-ai runtime posts
+`{ type: "cmg-haptics", value, explicit }` to the launcher when it boots inside
+a frame, and the launcher answers `{ type: "cmg-haptics-set", value }`. It
+answers again every time a game asks, so a frame that reloads (a cheat toggle,
+the editor's PLAY) comes back with the choice. `explicit` says `?vibrate=` set
+the runtime's state; the launcher then keeps that for the session, unsaved,
+rather than overruling it. At boot the runtime reads `?vibrate=0|1`, else
+`cmg-haptics` (`readStoredHaptics`), else on, into `gameState.vibrateFlg` — the
+one flag the haptics module reads. `cmgSetHaptics` flips it; turning it off
+stops what is playing at once (`hapticsStop`: the queued steps, `vibrate(0)`,
+each pad's `reset()`), and so does `cmgSetPaused(true)`, which is what the Guide
+opening over the game sends, so no rumble runs on under it. A page with no Guide
+(an exported app, a direct visit) has HAPTICS ON/OFF on the PAUSE panel, between
+TURBO and RESUME, saved the same way. Any other game can take part by posting
+`cmg-haptics` and listening for `cmg-haptics-set`.
+
+### What the runtime plays
+
+The preset table was one constant blip per event. It now has shape and weight:
+
+- **Envelopes.** `special`, `bossEnter`, `bossDefeat`, `stageClear`, `warning`,
+  `death` and `heartbeat` carry `envelope: [[at, duration, weak, strong], …]`. A
+  `playEffect` holds one magnitude, and a new one preempts the last, so the
+  shape is a chain: the first step now, the rest on timers, all cancelled
+  together. A swell into the special's blast and a long tail out; a boss's
+  arrival that rises for most of a second; a death that ebbs out; three pulses
+  for the boss danger warning. The phone's `vibrate()` and the Cordova engines
+  get the preset's own pattern once, not step by step.
+- **Priority and lanes.** Each preset has a `priority`; each pad has a lane,
+  plus an `all` lane for the game-wide events. A lane remembers when its effect
+  ends and how heavy it was, and drops anything lighter that arrives meanwhile,
+  so a stage's worth of kill ticks cannot cut a death rumble short. A pad's lane
+  does not hear another's: one player dying leaves the other's kills ticking. An
+  equal or heavier effect takes over and cancels the old one's tail.
+- **Weight.** `triggerHaptic(name, padIndex, scale)` scales the motors'
+  magnitudes by `scale` (and the length by less). A kill's scale follows its
+  score (`hapticKillScale`: 100 points is the preset as authored, 10,000
+  thumps), a hit's follows its damage (`hapticDamageScale`).
+- **Boss hits.** Shots landing on a boss thud (`bossHit`, on both damage paths:
+  the Dezaemon pool and the stock hp), at the preset's cooldown cadence rather
+  than once per bullet.
+- **Low hull.** Once a ship is down to a third of its hit points it has a
+  heartbeat in the strong motor (`hapticsAmbient`), every 1.25 s at the
+  threshold and every 0.67 s on the last sliver. It is counted in fixed steps,
+  so it stops with the world and runs at Turbo's pace with it, and it is scoped
+  to that ship's pad. A Dezaemon ship has no hit points and never beats.
+
+### Games with none of their own
+
+The 2028-ai runtime rumbles for its events. Nothing else the launcher frames has
+events to hang a rumble on or source to add one to — Sh'M↑ Party, which comes in
+from its own zip, an arcade board, an emulator's cartridge — but every game has
+sound, so the launcher puts the feeling there. `static/frame-haptics.js` listens
+to a game's Web Audio and rumbles the pad (or the phone's motor) with it: harder
+for a louder sound, deeper for a bassier one, longer for a longer one.
+`installFrameHaptics` is called by `injectFrameHaptics` in `Dashboard.svelte` on
+every game frame's `load`, beside the injectors that patch `getGamepads` for
+Twin-Stick Mode, and is let go when the game closes or the frame reloads. Nothing
+in a game changes, and the Guide's row is shown for it.
+
+What it does on a frame, by what the game says it has:
+
+| the frame | the launcher |
+| --- | --- |
+| `window.__CMG_NATIVE_HAPTICS__`: the 2028-ai runtime, and the 2019, 95-demo and Evil Invaders eShop builds of it | nothing. It answers the Guide itself, above |
+| `gameState.vibrateFlg` and no flag: those builds as installed before the flag | **gate only**. Its own `vibrate` and rumble calls obey the switch; nothing is added |
+| neither | **listens**, and gates |
+| cross-origin, or the level editor | nothing: the launcher cannot reach into it |
+
+**The switch reaches a game's own calls.** `Navigator.prototype.vibrate` and
+`GamepadHapticActuator.prototype.playEffect` / `pulse` are wrapped in the frame:
+with Haptics off, or the Guide open, they reach no motor and answer as a motor
+would (`false`, a resolved `"complete"`). Turning it off, or opening the Guide,
+resets the pads and calls `vibrate(0)`. `dispose` puts the page's own functions
+back.
+
+**Samples** — a sound loaded once and played when something happens (Phaser's,
+Howler's, Tone's: an `AudioBufferSourceNode` that is started and ends) — are
+events of the game's own, so each is profiled once (`profileBuffer`: RMS over its
+first 1.5 s, the share of that which is bass under 300 Hz, its length) and
+pulsed as it starts, with nothing to detect and no delay (`pulseFor`). The weight
+is the RMS leaning to the bassy and held down for anything under a third of a
+second, so a shot's blip is a click and an explosion is a thump: the 2028-ai
+runtime's quiet shot (0.29 s, RMS 0.05) earns nothing, its kills (0.94 s, RMS
+0.15) and big explosions (0.87 s, RMS 0.24) earn about 200 and 300 ms. The strong motor
+follows the bass, the weak one the rest. A sound `start()`ed ahead of the clock
+is felt when it is heard, a context that is not running (paused, muted by the
+browser) is not heard at all, and a looping sample or one over four seconds is
+music and is skipped: a rumble that followed the soundtrack would never stop.
+`AudioBufferSourceNode.prototype` is shared by every context in the frame, so a
+sound played after install is reached even on a context the game made at boot.
+
+**Streams** are where nothing says when a thing happened: sound made as it plays,
+with the music in it. An emulator's OpenAL plays six milliseconds of buffer a
+hundred and fifty times a second, so a buffer under 50 ms is a piece of a stream,
+not a sound; a `ScriptProcessorNode`, an `AudioWorkletNode` and a media element's
+source are streams too. Each is also connected, once, to a tap of this module's
+own — a low-pass and a plain analyser per context, connected to no speaker, so
+the game's graph is never rerouted. Every 16 ms the tap's **spectral flux** is
+read (`spectralFlux`: how much each bin rose since the last read, so a steady
+sound has none however loud it is and a new one has plenty) and handed to
+`createOnsetDetector`. A hit is the smoothed flux standing 2.4 times clear of
+the 95th percentile of the last three seconds of itself — how busy the music gets
+— and above a floor, which makes it relative to the game's own mix and is why a
+quiet game's explosion and a loud game's are both hits. A percentile, not a
+maximum, so one explosion among a hundred and eighty ticks does not raise what the
+next is measured against (a hit is kept out of the bed altogether); one sound is
+one pulse, its decaying tail never a second, a swell past the first allowed after
+320 ms. The first read after a start or a resume is not compared with anything and
+is discarded.
+
+**One effect at a time.** A pad plays one effect and a new one preempts it, so
+both paths go through a limiter: while a pulse is playing only one a quarter
+heavier takes over.
+
+Measured, in headless Chromium, on the two engines the repo ships:
+
+- The vendored EmulatorJS snes9x player (`/games/super-mario-sp/`), whose music
+  is loud (RMS about 0.12, and jumpy): with nothing happening the soundtrack
+  alone gives 0.2 to 0.4 pulses a second. Decaying-noise bursts played into it
+  as streamed 6 ms chunks, the way it plays everything, at 0.06, 0.1, 0.15 and
+  0.25 RMS were all felt (36 of 36 over two 36-second runs); 0.03 RMS in 5 of 10.
+  Played as one sample they follow the sample rule instead (0.15 RMS and up).
+- The 2028-ai runtime in god mode, with its own rumble off (`?vibrate=0`) and
+  its two native markers cleared so every pulse is the module's: a stage with a
+  ×94 combo and four kills a second gives about two pulses a second, for its
+  kills and explosions and not for its shots.
+
+What it cannot do, and has not been shown to:
+
+- **A frame it cannot reach.** Only same-origin frames: eShop web builds
+  (`/eshop/<id>/`), the arcade and console players the service worker mirrors,
+  `/games/…`. A cross-origin frame can still opt in with `cmg-haptics`.
+- **Sound that is not Web Audio.** A page that plays only `<audio>` elements is
+  not heard (a media element routed through `createMediaElementSource` is).
+- **Sound before the frame's `load`.** A context's graph built earlier is not
+  tapped; its samples are reached through `start()` as above, but a stream it
+  was already feeding is not.
+- **What is audible.** It follows what the game plays, not what comes out of the
+  speakers: a game with its own sound turned down still rumbles, and the Guide's
+  Haptics row is the switch for that.
+- **A real motor.** The pad and the phone are faked in the tests and in the
+  headless runs; how it feels on a DualSense, a Switch Pro or a phone has not
+  been judged by hand. `HAPTIC_DEFAULTS`, `createOnsetDetector`'s defaults and
+  `pulseFor`'s are the numbers to turn.
+- **Other cores.** The streams were tuned against the one emulator vendored here
+  and a synthetic stream. The mirrored arcade player (`/arcade/play.html`) and the
+  console players come from the mirror origin and were not available to measure.
+
+`tests/frame_haptics_test.ts` runs the module against a fake window — a pad that
+logs every effect, a phone's motor, timers moved by hand, just enough Web Audio:
+the detector, the sample profile, spectral flux, what is and is not a hit, the
+limiter, scheduling, the switch and the Guide's pause, the wrappers and their
+removal, the stream tap's priming, and how `Dashboard.svelte` and the committed
+`static/dashboard.bundle.js` wire it. Changing the module means
+`deno task dashboard:build`.
+
+### The launcher's own
+
+While the Guide is open, moving through it ticks, a press thumps, and closing it
+settles — through the pad that is driving it, or the phone's motor under a
+finger (`buzz`, off the UI sounds in `sfx`, which sound only inside the Guide:
+the dashboard's menus stay as they were). A keyboard or a mouse has nothing to
+buzz. Moving the pad in the Guide marks the pad as the last input, so a player
+who touched the keyboard earlier still feels it. Turning the row on thumps once,
+so the player feels what they switched on; turning it off is silent.
+
+The touch controller's tap (`static/virtual-pad/virtual-pad.js`) used to buzz
+whatever the player had chosen; it now reads `cmg-haptics` on every tap
+(`hapticsWanted`), including on a controller page on another screen that has no
+Guide. `tests/virtual_pad_test.ts`.
+
+`tests/haptics_test.ts` lifts the module out of the bundle and runs it against a
+fake pad, clock and timers: the envelope's timing, the priority lanes, scaling,
+the heartbeat's pace, what a stop silences, the boot order of `?vibrate=`, the
+stored choice and the default, and that the call sites are where they should be.
+
 ## Two players
 
 Local 2P is join-in: a second pad pressing any face or shoulder button — or `O`
@@ -2996,6 +3329,26 @@ from the ending) when it beats WORLD BEST **or** TODAY'S BEST, or while the
 board is still loading or out of reach; before, TODAY'S BEST moved only with a
 new all-time record.
 
+**TODAY'S GOD BEST is a god run's, and only that.** A run under `?god=1` (the
+editor's GOD MODE, Dezaemon 2's MUTEKI) is not a record (`scoreCountsAsRecord`):
+it reaches neither board and never the local best, so until 2026-10-31 nothing
+it scored was shown anywhere. It has a best of its own, kept apart from all
+three: the highest score reached while the flag was on, this device's and this
+UTC day's, in `afc2019_godHighScore_<gameId>` holding `<UTC day>:<score>` for
+two days — a cookie of any other day reads as 0 and is written over, and a
+page left open past UTC midnight drops to 0 as TODAY'S BEST does
+(`currentGodHighScore`). `keepGodBest` never lowers it and writes only when it
+rises, so the game scene hands it the score every frame (`updateHUD`): a test
+play closed mid-stage has still counted. A game with no id keeps it for the page
+alone, like the local best. An exported app with `godMode` baked keeps the
+local best as before (GOD MODE rides alongside there) and this beside it. The
+title, the HUD and the ending's score card show it as TODAY'S GOD BEST on a
+line of its own, only while the flag is on (the continue card is out of a god
+run's reach: nothing kills the ship); the stage also wears the Saturn's TESTING
+watermark (see the bundle's hand-edit list under **Layout**).
+`tests/game_scores_test.ts` runs it under the fake SDK and cookie jar;
+`tests/god_mode_test.ts` pins the scenes.
+
 **The editor's PLAY.** The recipe carries the open game's `gameId` only while
 the name box still holds the cloud key that id came with (`cloudGameKey`, set by
 a cloud LOAD, a SAVE and `?fromPlay=1`, and cleared by a folder import), and
@@ -3014,6 +3367,106 @@ the packaged desktop app still read the shared cookie and push it up. The
 contaminated boards above are left as they are; cleaning them is a manual write,
 and it holds only once those bundles are gone. `tests/game_scores_test.ts` runs
 the bundle's own score code under a fake SDK and a cookie jar.
+
+## The daily world champion
+
+Whoever holds a game's TODAY'S BEST when the UTC day ends gets a push
+notification saying so: _🏆 You're the daily world champion! Your 114,500 in
+SQUAD was the world's best score on Oct 30 (UTC)._ Tapping it opens the game.
+
+**A board names the browser that raised it.** The boards are open to anyone and
+carried only `{value, updatedAt}`, so nothing said who set one. Now a page that
+can be told it won offers a champion id: `static/champion/champion.js` keeps a
+random secret in `localStorage` (`shmupx-champion-v1`, per origin, so each
+`<name>.codemonkey.games` is its own) and hands the bundle the secret's SHA-256
+as `__SHMUPX_CHAMPION__.holder()`. `submitHighScore` puts that `holder` on
+today's board in the same transaction as the value (`createScorePayload`,
+`championHolder`), never on the all-time one, and fires `shmupx:daily-best`
+(`{gameId, date, value, holder, name}`) on `window` when the board the
+transaction committed is this browser's: an equal score already there keeps its
+own holder, as it keeps its place. A page without the script, an exported app,
+an older bundle and a god run write no holder, and nobody is told about their
+records.
+
+**Opting in is one tap, and only where a push can arrive.** On that event (for
+today's board; one that only landed after midnight is past its job) a player who
+has not said yes on this page is offered NOTIFY ME, or NOT NOW, which holds for
+the rest of that UTC day. The offer goes in the top page when the game is in
+this origin's iframe, above the launcher's touch pad, and keeps its taps, clicks
+and keys from the game. Yes asks for notification permission from the tap,
+registers `static/champion/sw.js` at scope `/champion/` — a path no page lives
+under, so it never sits in front of a request, and the root scope stays
+`/emu-sw.js`'s — subscribes with the VAPID key in `static/champion/config.json`,
+and writes the subscription, together with the secret and the games this browser
+raised a board in (name and page, newest 40), **sealed** to the job's box key
+(`static/champion/box.js`: ECDH P-256, HKDF-SHA-256, AES-256-GCM) at
+`shmupX/champions/subs/<holder>`. The yes is kept (`optedIn`): permission the
+origin was given for something else, such as the editor's export alerts, is not
+one. A player who said yes gets a line that the new best is in hand, with TURN
+OFF, which deletes the box and drops the subscription; the box is sealed again
+for every new best, and on the next visit if a seal never made it in or the
+browser replaced the subscription. One who blocked notifications is never asked.
+The script runs only on the hosts `config.json` names (`codemonkey.games` and
+its level subdomains), in a secure context with service workers and the Push
+API, so the packaged launcher's loopback page, the itch.io channel and a browser
+without Web Push offer no holder. Safari on iOS has Web Push only for a site
+added to the Home Screen.
+
+**The job runs in GitHub Actions, not the server.**
+`.github/workflows/daily-champion.yml` runs `deno task champion:run --send` at
+00:07 UTC, and again at 04:07: GitHub starts scheduled runs late under load and
+can drop one, both crown the day that just ended, and the second finishes
+whatever the first could not. For each board, `lib/daily-champion/job.ts` reads
+yesterday's `leaderboards/<gameId>/daily/<date>` and opens the holder's box. It
+sends only if the secret inside hashes to the holder the board names (a box
+filed under another browser's holder is refused), only for a game that box lists
+(a board someone files under a player's public holder for a game they never
+played tells them nothing), and only to a known push service (FCM, Mozilla,
+Apple, Windows) with well-formed keys. The game's name is the one the player's
+page sealed, or its level's title, plain text of at most 40 characters. The push
+goes straight to the browser's push service — Web Push as RFC 8291 (aes128gcm)
+and RFC 8292 (VAPID) say, WebCrypto and nothing else
+(`lib/daily-champion/web-push.ts`), so it needs no Firebase or vendor SDK — with
+a 15 s timeout and no redirects, then records
+`shmupX/champions/sent/<date>/<gameId>`, so neither run sends anything twice. A
+subscription the push service has forgotten (404, 410) is deleted; one it turns
+away is reported and not tried again; a push service down (429, 5xx, a timeout)
+or the database out of reach is that game's failure, tried again by the 04:07
+run, and the only thing that turns the run red. Each game is crowned on its own,
+so one game's trouble never costs another its notification. It lives in a
+workflow, rather than `Deno.cron` with KV, because it needs only the open
+database and one secret: Deno Deploy is due to shut down in 2027, and this keeps
+working wherever the site moves. A day still being played cannot be sent for.
+
+```sh
+deno task champion:run                       # dry run: who would be told for yesterday (UTC)
+deno task champion:run --date 2026-10-30     # another day that has ended
+deno task champion:keys --secret-out ~/daily-champion-keys.json   # new key pairs: public halves into config.json
+deno task champion:keys --check              # DAILY_CHAMPION_KEYS against config.json
+```
+
+**Setting it up is one repository secret.** `DAILY_CHAMPION_KEYS` is the JSON
+`champion:keys` writes to `--secret-out` (the private VAPID and box JWKs and the
+VAPID subject, `https://codemonkey.games`); `config.json` carries the public
+halves and is committed. The script refuses a `--secret-out` inside the
+checkout, and `.gitignore` names the file anyway. Without the secret the
+workflow is a warning and a dry run, not a failure. New keys orphan every
+browser that subscribed under the old ones until it sets a TODAY'S BEST again.
+
+**What it trusts.** The database is open-write, so a board is exactly as
+trustworthy as it ever was: whoever writes a higher value onto a game's board
+with their own holder is told they won, and anyone can delete a box or a sent
+marker and so keep a notification from going out. What cannot be done from the
+database is to receive someone else's notification (that takes the secret behind
+their holder), to send anything to a player about a game they did not set a
+board in, or to send anywhere but a real push service (that takes the private
+VAPID key, and the box the player's own page sealed). The holder is public, one
+random id per browser per origin, on the boards it raised.
+`tests/daily_champion_test.ts` pins the encryption to RFC 8291's worked example,
+the job against a database and push service in memory (who is told, once, and
+every way a record is refused), the worker and the pages;
+`tests/game_scores_test.ts` runs the holder and the event through the bundle's
+own submit path.
 
 ## A soundtrack off the tone bank
 
@@ -6260,12 +6713,14 @@ level anyone made, spriteX's ~430 sheets — and shmupX never writes them. shmup
 reads and writes its own games in a subtree beside them, `shmupX/`, holding only
 what it ships:
 
-| path                          | what                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| `shmupX/levels/<key>`         | the seven games: `2019-PS2`, `95-demo`, `evil-invaders`, `foo`, `gs`, `Ramsie` and `rando` |
-| `shmupX/levelAliases/<alias>` | `2019` and `streetfighter` naming `2019-PS2`, `squad` `gs`, `95` `95-demo` |
-| `shmupX/characters/<id>`      | the 29 library characters those games name                                 |
-| `shmupX/atlases/<id>`         | each one's art, under the character's own id                               |
+| path                                    | what                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `shmupX/levels/<key>`                   | the seven games: `2019-PS2`, `95-demo`, `evil-invaders`, `foo`, `gs`, `Ramsie` and `rando` |
+| `shmupX/levelAliases/<alias>`           | `2019` and `streetfighter` naming `2019-PS2`, `squad` `gs`, `95` `95-demo`                 |
+| `shmupX/characters/<id>`                | the 29 library characters those games name                                                 |
+| `shmupX/atlases/<id>`                   | each one's art, under the character's own id                                               |
+| `shmupX/champions/subs/<holder>`        | a daily world champion's push subscription, sealed (**The daily world champion**)          |
+| `shmupX/champions/sent/<date>/<gameId>` | who was told they won that game's day                                                      |
 
 Two of the copies are not verbatim, because a level's `gameId` picks its
 leaderboard (see **WORLD BEST and TODAY'S BEST, per game**). `foo` is pinned to

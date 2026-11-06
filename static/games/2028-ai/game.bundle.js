@@ -450,9 +450,12 @@
   }
   function cutFrames(image, frames) {
     const keys = Object.keys(frames);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, ...keys.map((k) => frames[k].frame.w));
-    canvas.height = Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0));
+    // A stableCanvas, like the atlas it is stacked onto: a stable canvas drawn
+    // from one on the GPU goes down with it on a GPU reset.
+    const canvas = stableCanvas(
+      Math.max(1, ...keys.map((k) => frames[k].frame.w)),
+      Math.max(1, keys.reduce((sum, k) => sum + frames[k].frame.h, 0)),
+    );
     const ctx = canvas.getContext("2d");
     const out = {};
     let y = 0;
@@ -463,6 +466,193 @@
       y += f.h;
     }
     return { canvas, frames: out };
+  }
+  // A canvas that is painted once and must still be there after a GPU reset.
+  //
+  // A GPU reset — the GPU process restarting, which Android does under memory
+  // pressure and when a game is backgrounded — clears EVERY 2D canvas: Chromium
+  // fires `contextlost` on each, then `contextrestored` with an empty bitmap, and
+  // willReadFrequently (a canvas kept in CPU memory) does not exempt it. Phaser
+  // rebuilds each texture from the canvas it was cut from once its WebGL context
+  // is back, so a level's stacked atlas, scenery, SP faces and HUD line came back
+  // as nothing: no ship, no enemies, no shots, no stage, the image-backed HUD
+  // band still up and the score still climbing. Measured on a bare page with
+  // CDP's Browser.crashGpuProcess: plain and willReadFrequently canvases alike
+  // read 0 opaque pixels afterwards.
+  //
+  // So the canvas keeps its recipe. Every call and property set on its 2D
+  // context is logged (the images, gradients and ImageData it used are held by
+  // reference), and when the canvas is restored the log is played back onto it,
+  // oldest canvas first, because a later one draws from an earlier one. Then the
+  // canvas-backed textures are uploaded again (armCanvasRepaint). A canvas is
+  // built in the task that makes it (up to CANVAS_LOG_LIMIT calls); after that
+  // it may log only CANVAS_LATER_LIMIT more, and past that it is one the game
+  // repaints itself every frame (the SP lens): it stops logging and is left to.
+  //
+  // willReadFrequently is kept, as the first getContext the canvas gets: it is
+  // harmless, and where a browser does keep such a canvas in CPU memory the
+  // replay never has to run.
+  const CANVAS_LOG_LIMIT = 30000;
+  const CANVAS_LATER_LIMIT = 2000;
+  const CANVAS_CALLS = new Set([
+    "arc", "arcTo", "beginPath", "bezierCurveTo", "clearRect", "clip", "closePath",
+    "drawImage", "ellipse", "fill", "fillRect", "fillText", "lineTo", "moveTo",
+    "putImageData", "quadraticCurveTo", "rect", "reset", "resetTransform",
+    "restore", "rotate", "roundRect", "save", "scale", "setLineDash",
+    "setTransform", "stroke", "strokeRect", "strokeText", "transform", "translate",
+  ]);
+  const paintedCanvases = [];
+  const canvasRepaintHooks = new Set();
+  const armedGames = new WeakSet();
+  let canvasRepaintTimer = 0;
+
+  function stableCanvas(width, height) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (ctx) rememberCanvas(canvas, ctx);
+    return canvas;
+  }
+
+  // Log what is drawn on `canvas` and arrange for it to be drawn again. The
+  // context handed out from now on (this canvas's getContext, which Phaser's
+  // CanvasTexture calls too) is a pass-through that notes each call first.
+  function rememberCanvas(canvas, ctx) {
+    if (
+      typeof Proxy !== "function" || typeof canvas.addEventListener !== "function"
+    ) return;
+    const entry = {
+      ref: typeof WeakRef === "function" ? new WeakRef(canvas) : { deref: () => canvas },
+      getContext: canvas.getContext,
+      width: canvas.width,
+      height: canvas.height,
+      ops: [],
+      building: true,
+      later: 0,
+      lost: false,
+      live: false,
+    };
+    setTimeout(() => {
+      entry.building = false;
+    }, 0);
+    const note = (op) => {
+      if (entry.building ? entry.ops.length >= CANVAS_LOG_LIMIT : ++entry.later > CANVAS_LATER_LIMIT) {
+        entry.live = true;
+        entry.ops = [];
+      } else entry.ops.push(op);
+    };
+    const logged = new Proxy(ctx, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target);
+        if (typeof value !== "function") return value;
+        if (!entry.live && CANVAS_CALLS.has(prop)) {
+          return (...args) => {
+            note({ call: prop, args });
+            return value.apply(target, args);
+          };
+        }
+        return value.bind(target);
+      },
+      set(target, prop, value) {
+        if (!entry.live) note({ set: prop, value });
+        return Reflect.set(target, prop, value, target);
+      },
+    });
+    canvas.getContext = (type, options) =>
+      type === "2d" ? logged : entry.getContext.call(canvas, type, options);
+    canvas.addEventListener("contextlost", () => {
+      entry.lost = true;
+    });
+    canvas.addEventListener("contextrestored", () => scheduleCanvasRepaint());
+    paintedCanvases.push(entry);
+  }
+
+  function canvasContextLost(ctx) {
+    return typeof ctx.isContextLost === "function" && ctx.isContextLost();
+  }
+
+  function scheduleCanvasRepaint(attempt = 0) {
+    if (canvasRepaintTimer) return;
+    canvasRepaintTimer = setTimeout(() => repaintLostCanvases(attempt), attempt ? 100 : 0);
+  }
+
+  // Play the log back onto every canvas that was lost, oldest first. A canvas
+  // that draws from an older one must not be painted before that one is back, so
+  // while any lost canvas is still waiting for its own `contextrestored` this
+  // tries again shortly (and gives up waiting after ~3 s).
+  function repaintLostCanvases(attempt) {
+    canvasRepaintTimer = 0;
+    const lost = [];
+    for (let i = paintedCanvases.length - 1; i >= 0; i--) {
+      const entry = paintedCanvases[i];
+      const canvas = entry.ref.deref();
+      if (!canvas) paintedCanvases.splice(i, 1);
+      else if (entry.lost) lost.unshift([entry, canvas]);
+    }
+    if (!lost.length) return;
+    const contexts = lost.map(([entry, canvas]) => entry.getContext.call(canvas, "2d"));
+    if (attempt < 30 && contexts.some((ctx) => !ctx || canvasContextLost(ctx))) {
+      scheduleCanvasRepaint(attempt + 1);
+      return;
+    }
+    let repainted = 0;
+    lost.forEach(([entry, canvas], i) => {
+      const ctx = contexts[i];
+      if (!ctx || canvasContextLost(ctx)) return;
+      entry.lost = false;
+      if (entry.live || canvas.width !== entry.width || canvas.height !== entry.height) return;
+      if (typeof ctx.reset === "function") ctx.reset();
+      else {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      for (const op of entry.ops) {
+        try {
+          if (op.call) ctx[op.call](...op.args);
+          else ctx[op.set] = op.value;
+        } catch (_e) { /* a source that is gone: the rest of the recipe still paints */ }
+      }
+      repainted++;
+    });
+    if (!repainted) return;
+    for (const hook of canvasRepaintHooks) {
+      try {
+        hook(repainted);
+      } catch (_e) { /* one hook must not stop the others */ }
+    }
+  }
+
+  // Make `game` take its canvas-backed textures back after a GPU reset: when the
+  // WebGL context is restored, repaint whatever canvas was lost (scheduled, since
+  // the 2D canvases come back on their own events), and once canvases have been
+  // repainted upload every canvas texture again if the context is live — the
+  // textures Phaser rebuilt at restore were cut from blank canvases when the 2D
+  // context came back later than WebGL's. When it came back earlier, Phaser's
+  // own rebuild already read the repainted canvases. Safe to call twice.
+  function armCanvasRepaint(game) {
+    if (!game || armedGames.has(game)) return;
+    armedGames.add(game);
+    const arm = () => {
+      const renderer = game.renderer;
+      if (!renderer || typeof renderer.on !== "function") return;
+      canvasRepaintHooks.add(() => {
+        const gl = renderer.gl;
+        if (!gl || renderer.contextLost || (typeof gl.isContextLost === "function" && gl.isContextLost())) return;
+        const textures = game.textures;
+        if (!textures) return;
+        for (const key of textures.getTextureKeys()) {
+          for (const source of textures.get(key).source) {
+            if (source.isCanvas && source.glTexture) source.update();
+          }
+        }
+      });
+      renderer.on("restorewebgl", () => scheduleCanvasRepaint());
+    };
+    if (game.renderer) arm();
+    else if (game.events && typeof game.events.once === "function") game.events.once("ready", arm);
   }
   // Is this page an app built around one game? The export's shell says so
   // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
@@ -605,6 +795,9 @@
     return class LevelLoaderPlugin extends Phaser2.Plugins.ScenePlugin {
       constructor(scene, pluginManager, pluginKey) {
         super(scene, pluginManager, pluginKey);
+        // The game this plugin runs in takes its canvas textures back after a
+        // GPU reset (see rememberCanvas).
+        armCanvasRepaint(pluginManager && pluginManager.game);
       }
       // ---- URL parameter readers --------------------------------------------
       readLevelParam() {
@@ -799,9 +992,7 @@
           }
           const localW = localSource.width;
           const localH = localSource.height;
-          const mergedCanvas = document.createElement("canvas");
-          mergedCanvas.width = Math.max(localW, image.width);
-          mergedCanvas.height = localH + image.height;
+          const mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
           const mctx = mergedCanvas.getContext("2d");
           mctx.drawImage(localSource, 0, 0);
           mctx.drawImage(image, 0, localH);
@@ -848,9 +1039,7 @@
           const art = sheet.source && sheet.source[0] ? sheet.source[0].image : null;
           const local = atlas.source && atlas.source[0] ? atlas.source[0].image : null;
           if (!art || !local) return false;
-          const canvas = document.createElement("canvas");
-          canvas.width = local.width;
-          canvas.height = local.height;
+          const canvas = stableCanvas(local.width, local.height);
           const ctx = canvas.getContext("2d");
           ctx.drawImage(local, 0, 0);
           const stock = {};
@@ -2174,6 +2363,7 @@
     state.remoteHighScore = normalizeScore(state.remoteHighScore);
     state.highScore = Math.max(state.highScore, state.localHighScore, state.remoteHighScore);
     state.dailyHighScore = normalizeScore(state.dailyHighScore);
+    state.godHighScore = normalizeScore(state.godHighScore);
     if (typeof state.scoreSyncStatus !== "string" || !state.scoreSyncStatus) {
       state.scoreSyncStatus = "idle";
     }
@@ -2258,11 +2448,29 @@
   globalThis.__CMG_GAME_STATE__ = gameState;
   ensureScoreState(gameState);
   ensureRuntimeState(gameState);
+  // This runtime has haptics of its own, and the launcher's generic ones
+  // (static/frame-haptics.js, which rumbles for a game's sounds) must leave it
+  // alone: they would double. Set at load, ahead of the frame's load event the
+  // launcher installs them on.
+  globalThis.__CMG_NATIVE_HAPTICS__ = true;
+  // The Guide's Haptics switch, as the launcher (or this page's PAUSE panel)
+  // last left it: true / false, or null when it never has.
+  function readStoredHaptics() {
+    try {
+      var v = localStorage.getItem("cmg-haptics");
+      return v === "1" ? true : v === "0" ? false : null;
+    } catch (e) {
+      return null;
+    }
+  }
   function syncRuntimeFlagsFromLocation(state = gameState) {
     if (!state || typeof state !== "object") {
       return;
     }
-    state.vibrateFlg = readBooleanSearchParam("vibrate", typeof state.vibrateFlg === "boolean" ? state.vibrateFlg : true);
+    // ?vibrate=0|1 wins; else the Guide's Haptics switch (cmg-haptics, shared
+    // with the launcher — same origin); else on.
+    var storedHaptics = readStoredHaptics();
+    state.vibrateFlg = readBooleanSearchParam("vibrate", storedHaptics != null ? storedHaptics : typeof state.vibrateFlg === "boolean" ? state.vibrateFlg : true);
     var canvasPosParam = readSearchParam("canvasPosition");
     if (canvasPosParam === "bottom" || canvasPosParam === "center") {
       state.canvasPosition = canvasPosParam;
@@ -2278,6 +2486,8 @@
       state.secondLoop = false;
     }
     state.godFlg = readBooleanSearchParam("god", typeof state.godFlg === "boolean" ? state.godFlg : false);
+    // ?bfg=1: max weapon power (bfgArm), read once like ?god=1.
+    state.bfgFlg = readBooleanSearchParam("bfg", typeof state.bfgFlg === "boolean" ? state.bfgFlg : false);
     state.playerCount = readPlayerCountParam(state.playerCount === 2 ? 2 : 1);
     state.twoPlayerForced = state.playerCount === 2;
     // Online 2P is opt-in: a title screen should not open a socket to a cloud
@@ -2414,7 +2624,8 @@
     return isImportedLevel() ? false : !!(recipe && recipe.noStory);
   }
   function scoreCountsAsRecord(state = gameState) {
-    return !state.godFlg || isExportedLevelApp();
+    // ?bfg=1 (max weapons, bfgArm) is a cheat the way ?god=1 is.
+    return !(state.godFlg || state.bfgFlg) || isExportedLevelApp();
   }
   // The best the page shows as WORLD BEST (gameState.highScore) is the higher
   // of two that stay apart: localHighScore, the best run played on this
@@ -2631,11 +2842,46 @@
     }
     return normalizeScore(value);
   }
-  function createScorePayload(firebaseNamespace, score) {
-    return {
+  // `holder`, on today's board only, names the browser that raised it, for
+  // the daily world champion (championHolder).
+  function createScorePayload(firebaseNamespace, score, holder) {
+    const payload = {
       value: normalizeScore(score),
       updatedAt: firebaseNamespace.database.ServerValue.TIMESTAMP
     };
+    if (holder) {
+      payload.holder = holder;
+    }
+    return payload;
+  }
+  // The daily world champion: this browser's champion id, when the page
+  // offers one (static/champion/champion.js, on the hosted site, where a push
+  // can reach the player at UTC midnight), else null. It goes onto today's
+  // board with the run that raises it, and the midnight job tells whoever a
+  // board names when its day ends (lib/daily-champion/job.ts). A page
+  // without the script, an exported app or an older bundle writes none.
+  var CHAMPION_HOLDER = /^[A-Za-z0-9_-]{43}$/;
+  function championHolder() {
+    const champion = globalThis.__SHMUPX_CHAMPION__;
+    try {
+      const holder = champion && typeof champion.holder === "function" ? champion.holder() : null;
+      return typeof holder === "string" && CHAMPION_HOLDER.test(holder) ? holder : null;
+    } catch (_e) {
+      return null;
+    }
+  }
+  // Told once the board a run raised is this browser's: champion.js offers
+  // the midnight notification on it.
+  function announceDailyBest(gameId, dailyPath, value, holder) {
+    if (typeof window === "undefined" || typeof window.dispatchEvent !== "function" || typeof CustomEvent !== "function") {
+      return;
+    }
+    try {
+      window.dispatchEvent(new CustomEvent("shmupx:daily-best", {
+        detail: { gameId, date: dailyPath.slice(dailyPath.lastIndexOf("/") + 1), value, holder, name: boardName() }
+      }));
+    } catch (_e) {
+    }
   }
   function ensureDatabase() {
     const firebaseNamespace = getFirebaseNamespace();
@@ -2726,6 +2972,69 @@
     }
     return normalizeScore(gameState.dailyHighScore);
   }
+  // TODAY'S GOD BEST. A run under ?god=1 — the editor's GOD MODE, what the
+  // Saturn's TEST PLAY panel calls MUTEKI — reaches no board and never the
+  // local best (submitHighScore, scoreCountsAsRecord), so a score made with
+  // the flag on was shown nowhere. It keeps a best of its own, for this
+  // device and this UTC day: the highest score reached while the flag was
+  // on, read off the score as it climbs (GameScene.updateHUD), since a test
+  // play is as likely to be closed mid-stage as played out. One cookie per
+  // game, afc2019_godHighScore_<gameId>, holding "<UTC day>:<score>" for two
+  // days; any other day's reads as 0 and is written over. A game with no id
+  // keeps it for the page alone, as the local best does. Never folded into
+  // the boards or the local best, and never the other way: a god run is not
+  // a record, and a mortal run is not a god run.
+  var GOD_SCORE_COOKIE = "afc2019_godHighScore";
+  // The UTC day gameState.godHighScore is for, or null before it is read.
+  var godScoreDay = null;
+  function godScoreCookieKey(gameId = resolveGameId()) {
+    return gameId ? GOD_SCORE_COOKIE + "_" + gameId : null;
+  }
+  function setGodHighScore(value) {
+    gameState.godHighScore = normalizeScore(value);
+    return gameState.godHighScore;
+  }
+  // Today's god best off the cookie: a cookie of any other day is 0.
+  function loadGodHighScore(cookieKey = godScoreCookieKey()) {
+    const today = dailyBoardKey();
+    godScoreDay = today;
+    const raw = cookieKey ? readCookie(cookieKey) : null;
+    const at = raw === null ? -1 : raw.indexOf(":");
+    if (at < 0 || raw.slice(0, at) !== today) {
+      return setGodHighScore(0);
+    }
+    return setGodHighScore(raw.slice(at + 1));
+  }
+  function saveGodHighScore(cookieKey = godScoreCookieKey()) {
+    const best = normalizeScore(gameState.godHighScore);
+    if (typeof document === "undefined" || !cookieKey) {
+      return best;
+    }
+    const twoDaysSeconds = 60 * 60 * 24 * 2;
+    document.cookie = encodeURIComponent(cookieKey) + "=" + encodeURIComponent(dailyBoardKey() + ":" + String(best)) + ";path=/;max-age=" + String(twoDaysSeconds);
+    return best;
+  }
+  // TODAY'S GOD BEST as of now: past UTC midnight yesterday's is dropped and
+  // the new day's read, as TODAY'S BEST is (currentDailyHighScore).
+  function currentGodHighScore() {
+    if (godScoreDay !== dailyBoardKey()) {
+      loadGodHighScore();
+    }
+    return normalizeScore(gameState.godHighScore);
+  }
+  // A score reached with god mode on. Never lowered, and written through
+  // only when it rises, so the HUD can hand it the score every frame.
+  function keepGodBest(score) {
+    if (!gameState.godFlg) {
+      return currentGodHighScore();
+    }
+    const candidate = normalizeScore(score);
+    if (candidate <= currentGodHighScore()) {
+      return normalizeScore(gameState.godHighScore);
+    }
+    setGodHighScore(candidate);
+    return saveGodHighScore();
+  }
   function readRemoteHighScore() {
     const epoch = scoreEpoch;
     const paths = getBoardPaths();
@@ -2782,6 +3091,7 @@
       const epoch = scoreEpoch;
       const hasBoard = !!getBoardPaths(gameId).allTime;
       loadHighScore();
+      loadGodHighScore();
       if (hasBoard && getFirebaseConfig() && !getFirebaseNamespace()) {
         setScoreSyncStatus("loading");
       }
@@ -2806,6 +3116,8 @@
     gameState.remoteHighScore = 0;
     gameState.dailyHighScore = 0;
     dailyScoreDay = null;
+    gameState.godHighScore = 0;
+    godScoreDay = null;
     setScoreSyncStatus("idle");
   }
   // The boot names the game once its level resolves (PluginBootScene, with
@@ -2848,7 +3160,9 @@
     const value = normalizeScore(score);
     return value >= normalizeScore(gameState.highScore) || value > currentDailyHighScore() || gameState.scoreSyncStatus === "loading" || gameState.scoreSyncStatus === "error";
   }
-  function raiseBoard(path, candidate, firebaseNamespace) {
+  // `onHeld` runs when the board the transaction committed is this run's
+  // and names `holder`: an equal score already there keeps its own.
+  function raiseBoard(path, candidate, firebaseNamespace, holder, onHeld) {
     const ref = refFor(path);
     if (!ref) {
       return Promise.resolve(candidate);
@@ -2858,9 +3172,13 @@
       if (candidate <= currentScore) {
         return currentValue;
       }
-      return createScorePayload(firebaseNamespace, candidate);
+      return createScorePayload(firebaseNamespace, candidate, holder);
     }).then((result) => {
-      return extractScore(result && result.snapshot ? result.snapshot.val() : candidate);
+      const board = result && result.snapshot ? result.snapshot.val() : null;
+      if (holder && onHeld && board && board.holder === holder && extractScore(board) === candidate) {
+        onHeld();
+      }
+      return extractScore(result && result.snapshot ? board : candidate);
     });
   }
   // What a board's meta calls its game: the resolved game's name. Before the
@@ -2907,6 +3225,8 @@
     // no board to raise.
     const epoch = scoreEpoch;
     const paths = getBoardPaths();
+    const gameId = resolveGameId();
+    const holder = raiseDaily && paths.daily ? championHolder() : null;
     if (!paths.allTime) {
       setScoreSyncStatus("disabled", "No game id: local scores only.");
       return Promise.resolve(normalizeScore(gameState.highScore));
@@ -2929,7 +3249,11 @@
       }
       return Promise.allSettled([
         raiseBoard(paths.allTime, candidate, firebaseNamespace),
-        raiseDaily ? raiseBoard(paths.daily, candidate, firebaseNamespace) : Promise.resolve(null),
+        raiseDaily ? raiseBoard(paths.daily, candidate, firebaseNamespace, holder, () => {
+          if (epoch === scoreEpoch) {
+            announceDailyBest(gameId, paths.daily, candidate, holder);
+          }
+        }) : Promise.resolve(null),
         stampBoardMeta(paths.meta, firebaseNamespace)
       ]).then((results) => {
         if (epoch !== scoreEpoch) {
@@ -3245,6 +3569,19 @@
       img.src = url;
     });
   }
+  // textures.createCanvas, for a CanvasTexture this runtime paints once and
+  // keeps: on a stableCanvas (see the level loader above), not one of
+  // Phaser's pool. In a pixelArt game the pool claims its canvases' 2D
+  // context with willReadFrequently false — on the GPU — before
+  // CanvasTexture asks for true, so every such texture went blank on a GPU
+  // reset: the Dezaemon scenery strips, the SP faces, the kernel's HUD line.
+  // CanvasTexture's own getContext gets this context back; smoothing is off,
+  // as the pool's pixelArt canvases had it.
+  function stableCanvasTexture(scene, key, width, height) {
+    var canvas = stableCanvas(width, height);
+    canvas.getContext("2d").imageSmoothingEnabled = false;
+    return scene.textures.addCanvas(key, canvas);
+  }
   function mergeAtlasIntoGameAsset(scene, image, frames) {
     var localAtlas = scene.textures.get("game_asset");
     var localSource = localAtlas && localAtlas.source && localAtlas.source[0] ? localAtlas.source[0].image : null;
@@ -3254,9 +3591,7 @@
     }
     var localW = localSource.width;
     var localH = localSource.height;
-    var mergedCanvas = document.createElement("canvas");
-    mergedCanvas.width = Math.max(localW, image.width);
-    mergedCanvas.height = localH + image.height;
+    var mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
     var mctx = mergedCanvas.getContext("2d");
     mctx.drawImage(localSource, 0, 0);
     mctx.drawImage(image, 0, localH);
@@ -3986,6 +4321,17 @@
   function getDailyBestLabel() {
     return "TODAY'S BEST";
   }
+  // The best of today's god-mode runs (currentGodHighScore). The scenes show
+  // it on a line of its own, and only while the flag is on.
+  function getGodHighScore() {
+    return currentGodHighScore();
+  }
+  function getGodBestLabel() {
+    return "TODAY'S GOD BEST";
+  }
+  function getGodBestText() {
+    return getGodBestLabel() + " " + String(getGodHighScore());
+  }
   function getHighScoreSyncText() {
     const status = typeof gameState.scoreSyncStatus === "string" ? gameState.scoreSyncStatus : "idle";
     return SYNC_COPY[status] || SYNC_COPY.idle;
@@ -4286,9 +4632,7 @@
   }
   function nameLogoTexture(scene, name) {
     if (typeof document === "undefined") return null;
-    var canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 88;
+    var canvas = stableCanvas(256, 88);
     drawNameLogo(canvas, name);
     if (scene.textures.exists(NAME_LOGO_KEY)) scene.textures.remove(NAME_LOGO_KEY);
     var tex = scene.textures.addCanvas(NAME_LOGO_KEY, canvas);
@@ -4316,9 +4660,7 @@
     var frame = scene.textures.getFrame("game_asset", frames[0]);
     var src = frame && frame.source && frame.source.image;
     if (!src || !frame.cutWidth || !frame.cutHeight) return null;
-    var canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 364;
+    var canvas = stableCanvas(256, 364);
     var scale = Math.max(1, Math.min(4, Math.floor(160 / frame.cutWidth), Math.floor(160 / frame.cutHeight)));
     var w = frame.cutWidth * scale;
     var h = frame.cutHeight * scale;
@@ -4897,6 +5239,9 @@
     var game = globalThis.__PHASER_4_GAME__ || globalThis.__PHASER_GAME__;
     if (!game) return;
     cmgPaused = p;
+    // A rumble (and the tail of an envelope) would otherwise run on under the
+    // Guide, the world frozen beneath it.
+    if (p) hapticsStop();
     try {
       if (p) game.loop.sleep();
       else game.loop.wake();
@@ -4964,6 +5309,25 @@
     if (cmgTurboInput) cmgTurboInput.checked = cmgTimeScale !== 1;
   }
   cmgSetTurbo(readBooleanSearchParam("turbo", false));
+  // cmg: Haptics — the Guide's switch for every rumble and vibration the
+  // game makes (cmg-haptics-set). gameState.vibrateFlg is the one flag the
+  // haptics module reads; the launcher stores the choice under cmg-haptics
+  // (same origin, so a game booted later reads it too — readStoredHaptics) and
+  // sends it down, so `persist` is for the PAUSE panel's own switch, on a page
+  // with no Guide. Turning it off stops what is playing at once.
+  var cmgHapticsInput = null;
+  function cmgSetHaptics(on, persist) {
+    on = !!on;
+    gameState.vibrateFlg = on;
+    if (!on) hapticsStop();
+    if (cmgHapticsInput) cmgHapticsInput.checked = on;
+    if (persist) {
+      try {
+        localStorage.setItem("cmg-haptics", on ? "1" : "0");
+      } catch (e) {
+      }
+    }
+  }
   function cmgWrapLoop(game) {
     var loop = game && game.loop;
     if (!loop || loop.__cmgTurbo) return;
@@ -5028,7 +5392,7 @@
     row.style.cssText = "display:flex;align-items:center;gap:10px;margin:14px 0;font-size:11px;letter-spacing:.15em;cursor:pointer;";
     var lbl = document.createElement("span");
     lbl.textContent = label;
-    lbl.style.cssText = "width:64px;text-align:left;";
+    lbl.style.cssText = "min-width:64px;white-space:nowrap;text-align:left;";
     var val = document.createElement("span");
     val.style.cssText = "width:72px;text-align:right;font-family:inherit;";
     var slot = document.createElement("span");
@@ -5070,6 +5434,14 @@
     }, cmgSetTurbo);
     cmgTurboInput = turbo.querySelector("input");
     card.appendChild(turbo);
+    // ...and its Haptics row, saved (cmg-haptics) so a later visit starts there.
+    var haptics = cmgToggleRow("HAPTICS", isHapticsEnabled(), function (on) {
+      return on ? "ON" : "OFF";
+    }, function (on) {
+      cmgSetHaptics(on, true);
+    });
+    cmgHapticsInput = haptics.querySelector("input");
+    card.appendChild(haptics);
     var btn = document.createElement("button");
     btn.textContent = "RESUME";
     btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:16px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
@@ -5115,6 +5487,7 @@
       if (d.type === "cmg-volume") cmgSetVolumes(d.bgm, d.sfx, false);
       else if (d.type === "cmg-pause") cmgSetPaused(!!d.paused);
       else if (d.type === "cmg-turbo-set") cmgSetTurbo(!!d.value);
+      else if (d.type === "cmg-haptics-set") cmgSetHaptics(!!d.value, false);
       // cmg: the launcher's Split Controller mode (a Legion Go's halves as
       // two pads, static/gamepad-compatibility-plugin.js) — a second player
       // asking to be let in; twoPlayerAllowed reads it.
@@ -5145,6 +5518,12 @@
       // cmg-turbo-set reply lands.
       try {
         window.parent.postMessage({ type: "cmg-turbo", value: cmgTimeScale !== 1 }, "*");
+      } catch (e) {
+      }
+      // ...and its Haptics row. `explicit` says ?vibrate= set the state, which
+      // the launcher then keeps for the session instead of overruling.
+      try {
+        window.parent.postMessage({ type: "cmg-haptics", value: isHapticsEnabled(), explicit: readSearchParam("vibrate") != null }, "*");
       } catch (e) {
       }
       return;
@@ -5568,7 +5947,7 @@
       var rowCount = Math.min(STRIP_ROWS, bg.rows - firstRow);
       var key = "dezaBg_" + scene.stageKey + "_" + s;
       if (scene.textures.exists(key)) scene.textures.remove(key);
-      var tex = scene.textures.createCanvas(key, bg.cols * TILE, rowCount * TILE);
+      var tex = stableCanvasTexture(scene, key, bg.cols * TILE, rowCount * TILE);
       var ctx = tex.getContext();
       for (var r = 0; r < rowCount; r++) {
         var row = firstRow + r;
@@ -6567,7 +6946,7 @@
   var ZAKO_BULLET_SPEED = 1.35;
   function ensureZakoBulletTexture(scene) {
     if (scene.textures.exists(ZAKO_BULLET_KEY)) return;
-    var tex = scene.textures.createCanvas(ZAKO_BULLET_KEY, 12, 12);
+    var tex = stableCanvasTexture(scene, ZAKO_BULLET_KEY, 12, 12);
     var ctx = tex.getContext();
     ctx.strokeStyle = "#8ff6ff";
     ctx.lineWidth = 2;
@@ -8701,6 +9080,25 @@
           strokeThickness: 2
         }
       );
+      // A god-mode visit (?god=1: the editor's GOD MODE, the Saturn's MUTEKI)
+      // shows the best of today's god runs on a line of its own, under the
+      // sync line. Those runs reach neither board, so the two above never
+      // move for them (keepGodBest).
+      this.godBestText = gameState.godFlg
+        ? this.add.text(
+          32,
+          this.scoreTitleImg.y + 22 + 11,
+          getGodBestText(),
+          {
+            fontFamily: "Arial",
+            fontSize: "9px",
+            fontStyle: "bold",
+            color: "#ffd24a",
+            stroke: "#000000",
+            strokeThickness: 2
+          }
+        )
+        : null;
       var self = this;
       this.startText.on("pointerup", function() {
         self.titleStart();
@@ -9195,6 +9593,9 @@
         this.scoreSyncLabel.setText(getHighScoreSyncText());
         var syncTint = getHighScoreSyncTint();
         this.scoreSyncLabel.setColor("#" + syncTint.toString(16).padStart(6, "0"));
+      }
+      if (this.godBestText) {
+        this.godBestText.setText(getGodBestText());
       }
       var gp = pollGamepads();
       if (!this.transitioning) {
@@ -9693,9 +10094,23 @@
   };
 
   // ../2019-es7/src/haptics.js
+  //
+  // cmg: hand-extended past its 2019-es7 source (a rebuild from there drops
+  // all of this — README-Technical.md, "Haptics"). What the source had is a
+  // table of single blips. This adds, on top of it:
+  //   * `priority` — a lane (one pad, or "all") keeps playing the heavier of
+  //     two effects, so a stage's worth of kill ticks cannot cut a death
+  //     rumble short;
+  //   * `envelope` — [at, duration, weak, strong] steps from the trigger, for
+  //     the moments that deserve a shape (a swell, a decay, a pulse train) the
+  //     way a single constant-magnitude playEffect cannot give them;
+  //   * a `scale` on triggerHaptic, so a bigger kill or a harder hit lands
+  //     heavier than a small one;
+  //   * hapticsStop() and hapticsAmbient() (the low-hull heartbeat).
   var HAPTIC_PRESETS = {
     ui: {
       cooldown: 60,
+      priority: 0,
       duration: 12,
       vibration: 10,
       weakMagnitude: 0.2,
@@ -9705,6 +10120,7 @@
     },
     ready: {
       cooldown: 400,
+      priority: 1,
       duration: 18,
       vibration: 16,
       weakMagnitude: 0.32,
@@ -9713,6 +10129,7 @@
     },
     pickup: {
       cooldown: 120,
+      priority: 1,
       duration: 22,
       vibration: 18,
       weakMagnitude: 0.45,
@@ -9721,57 +10138,95 @@
     },
     damage: {
       cooldown: 180,
+      priority: 2,
       duration: 34,
       vibration: 28,
       weakMagnitude: 0.55,
       strongMagnitude: 0.4,
       tapticImpact: "medium"
     },
+    // Three rising pulses: the boss is one bomb from dead.
     warning: {
       cooldown: 800,
+      priority: 2,
       duration: 30,
       vibration: [14, 28, 14],
       weakMagnitude: 0.6,
       strongMagnitude: 0.35,
+      envelope: [[0, 110, 0.55, 0.3], [220, 110, 0.65, 0.4], [440, 170, 0.8, 0.55]],
       tapticNotification: "warning",
       tapticImpact: "medium"
     },
+    // A swell into the blast, then a long tail out.
     special: {
       cooldown: 500,
+      priority: 3,
       duration: 44,
       vibration: [18, 24, 40],
       weakMagnitude: 0.9,
       strongMagnitude: 0.85,
+      envelope: [
+        [0, 70, 0.35, 0.2],
+        [70, 90, 0.7, 0.6],
+        [160, 140, 1, 0.95],
+        [300, 160, 0.7, 0.7],
+        [460, 200, 0.4, 0.4],
+        [660, 200, 0.2, 0.2]
+      ],
       tapticImpact: "heavy"
     },
+    // The ground starts to shake before the boss is on screen.
     bossEnter: {
       cooldown: 1200,
+      priority: 3,
       duration: 40,
       vibration: 36,
       weakMagnitude: 0.8,
       strongMagnitude: 0.65,
+      envelope: [
+        [0, 100, 0.25, 0.15],
+        [110, 100, 0.4, 0.3],
+        [220, 110, 0.55, 0.5],
+        [340, 130, 0.75, 0.7],
+        [480, 160, 0.9, 0.85],
+        [650, 250, 0.6, 0.55]
+      ],
       tapticImpact: "heavy"
     },
+    // Blast, blast, blast, then it settles.
     bossDefeat: {
       cooldown: 1500,
+      priority: 4,
       duration: 52,
       vibration: [24, 36, 48],
       weakMagnitude: 1,
       strongMagnitude: 1,
+      envelope: [
+        [0, 140, 1, 1],
+        [160, 100, 0.6, 0.6],
+        [280, 140, 1, 1],
+        [440, 100, 0.5, 0.5],
+        [560, 160, 0.9, 0.9],
+        [740, 300, 0.6, 0.7],
+        [1060, 400, 0.3, 0.35]
+      ],
       tapticNotification: "success",
       tapticImpact: "heavy"
     },
     stageClear: {
       cooldown: 1500,
+      priority: 3,
       duration: 36,
       vibration: [18, 28, 24],
       weakMagnitude: 0.72,
       strongMagnitude: 0.45,
+      envelope: [[0, 90, 0.5, 0.25], [120, 90, 0.65, 0.35], [240, 160, 0.8, 0.5], [420, 260, 0.45, 0.3]],
       tapticNotification: "success",
       tapticImpact: "medium"
     },
     kill: {
       cooldown: 80,
+      priority: 0,
       duration: 10,
       vibration: 8,
       weakMagnitude: 0.15,
@@ -9779,23 +10234,56 @@
       tapticKind: "selection",
       tapticImpact: "light"
     },
+    // The ship coming apart: hard, then ebbing out.
     death: {
       cooldown: 2e3,
+      priority: 4,
       duration: 60,
       vibration: [30, 40, 50, 30, 80],
       weakMagnitude: 1,
       strongMagnitude: 1,
+      envelope: [
+        [0, 120, 1, 1],
+        [130, 110, 0.9, 0.9],
+        [250, 140, 0.7, 0.8],
+        [400, 180, 0.45, 0.55],
+        [590, 240, 0.25, 0.3]
+      ],
       tapticNotification: "error",
       tapticImpact: "heavy"
     },
     deflect: {
       cooldown: 100,
+      priority: 0,
       duration: 8,
       vibration: 6,
       weakMagnitude: 0.12,
       strongMagnitude: 0.05,
       tapticKind: "selection",
       tapticImpact: "light"
+    },
+    // Your shots landing on a boss: a felt thud, not a buzz (it rides the hits
+    // of a stream of bullets, so the cooldown is what sets its cadence).
+    bossHit: {
+      cooldown: 130,
+      priority: 0,
+      duration: 16,
+      vibration: 12,
+      weakMagnitude: 0.28,
+      strongMagnitude: 0.16,
+      tapticImpact: "light"
+    },
+    // Lub-dub, deep in the strong motor: hapticsAmbient plays it while a
+    // ship is down to its last hit points.
+    heartbeat: {
+      cooldown: 0,
+      priority: 0,
+      duration: 70,
+      vibration: [40, 80, 28],
+      weakMagnitude: 0.2,
+      strongMagnitude: 0.55,
+      envelope: [[0, 70, 0.2, 0.55], [150, 55, 0.14, 0.4]],
+      tapticImpact: "medium"
     }
   };
   var lastHapticByPreset = /* @__PURE__ */ Object.create(null);
@@ -9838,7 +10326,40 @@
   function isHapticsEnabled() {
     return gameState.vibrateFlg !== false;
   }
-  function shouldTriggerPreset(name, preset) {
+  // One lane per controller, plus "all" for the game-wide events a boss
+  // arriving or a stage clearing belong to. A lane remembers when its current
+  // effect ends and how much it matters; see HAPTIC_PRESETS.
+  var hapticLanes = Object.create(null);
+  function hapticLane(padIndex) {
+    var key = typeof padIndex === "number" ? padIndex : "all";
+    return hapticLanes[key] || (hapticLanes[key] = { until: 0, priority: 0, timers: [] });
+  }
+  function hapticLength(preset) {
+    var end = preset.duration || 0;
+    if (preset.envelope) {
+      for (var i = 0; i < preset.envelope.length; i++) {
+        end = Math.max(end, preset.envelope[i][0] + preset.envelope[i][1]);
+      }
+    }
+    return end;
+  }
+  // Blocked while a heavier effect is still playing on the lane (a game-wide
+  // event checks every lane, a pad's own checks its lane and the game-wide
+  // one), so a stage's worth of kill ticks cannot cut a death rumble short.
+  function hapticBlocked(padIndex, priority, now) {
+    var scoped = typeof padIndex === "number";
+    for (var key in hapticLanes) {
+      if (scoped && key !== "all" && key !== String(padIndex)) continue;
+      var lane = hapticLanes[key];
+      if (now < lane.until && priority < lane.priority) return true;
+    }
+    return false;
+  }
+  function clearHapticTimers(lane) {
+    for (var i = 0; i < lane.timers.length; i++) clearTimeout(lane.timers[i]);
+    lane.timers.length = 0;
+  }
+  function shouldTriggerPreset(name, preset, padIndex) {
     if (!isHapticsEnabled()) {
       return false;
     }
@@ -9849,6 +10370,9 @@
     var cooldown = preset.cooldown || 0;
     var lastPresetAt = lastHapticByPreset[name] || 0;
     if (cooldown > 0 && now - lastPresetAt < cooldown) {
+      return false;
+    }
+    if (hapticBlocked(padIndex, preset.priority || 0, now)) {
       return false;
     }
     lastHapticByPreset[name] = now;
@@ -10034,20 +10558,147 @@
     }
     return triggered;
   }
-  function triggerHaptic(name, padIndex) {
+  // A heavier or lighter version of a preset: `scale` multiplies the motors'
+  // magnitudes, and the length follows more gently (a big hit is mostly
+  // stronger, a little longer).
+  function scaleHaptic(preset, scale) {
+    var s = Math.max(0.25, Math.min(2, scale));
+    var len = Math.max(0.6, Math.min(1.5, s));
+    var out = {};
+    for (var key in preset) out[key] = preset[key];
+    out.weakMagnitude = Math.min(1, preset.weakMagnitude * s);
+    out.strongMagnitude = Math.min(1, preset.strongMagnitude * s);
+    out.duration = Math.round(preset.duration * len);
+    if (typeof preset.vibration === "number") {
+      out.vibration = Math.round(preset.vibration * len);
+    } else if (Array.isArray(preset.vibration)) {
+      out.vibration = preset.vibration.map(function(ms, i) {
+        return i % 2 === 0 ? Math.round(ms * len) : ms;
+      });
+    }
+    if (preset.envelope) {
+      out.envelope = preset.envelope.map(function(st) {
+        return [st[0], st[1], Math.min(1, st[2] * s), Math.min(1, st[3] * s)];
+      });
+    }
+    return out;
+  }
+  function hapticStepper(step, padIndex) {
+    return function() {
+      if (isHapticsEnabled()) tryGamepadHaptics(step, padIndex);
+    };
+  }
+  // The pad half of an envelope: the first step now, the rest on timers. The
+  // motors take one constant magnitude per playEffect (and a new one preempts
+  // the last), so the shape is a chain of them. The browser's vibrate() and the
+  // Cordova engines get the preset's own pattern once, in triggerHaptic.
+  function playHapticEnvelope(preset, padIndex, lane) {
+    var played = false;
+    for (var i = 0; i < preset.envelope.length; i++) {
+      var st = preset.envelope[i];
+      var step = { duration: st[1], weakMagnitude: st[2], strongMagnitude: st[3] };
+      if (st[0] <= 0) {
+        played = tryGamepadHaptics(step, padIndex) || played;
+      } else {
+        lane.timers.push(setTimeout(hapticStepper(step, padIndex), st[0]));
+      }
+    }
+    return played;
+  }
+  function triggerHaptic(name, padIndex, scale) {
     var presetName = name || "ui";
-    var preset = resolvePreset(presetName);
-    if (!shouldTriggerPreset(presetName, preset)) {
+    var base = resolvePreset(presetName);
+    if (!shouldTriggerPreset(presetName, base, padIndex)) {
       return false;
     }
+    var preset = typeof scale === "number" && scale !== 1 ? scaleHaptic(base, scale) : base;
+    var lane = hapticLane(padIndex);
+    lane.until = nowMs() + hapticLength(preset);
+    lane.priority = preset.priority || 0;
+    // The new effect preempts whatever the motors were doing, so the tail of
+    // the last envelope must not play over it.
+    clearHapticTimers(lane);
+    if (lane !== hapticLanes.all && hapticLanes.all) clearHapticTimers(hapticLanes.all);
     var triggered = false;
     var usedCordovaDevice = tryCordovaEngine(preset) || tryCordovaNotificationVibrate(preset);
     triggered = usedCordovaDevice || triggered;
     if (!usedCordovaDevice) {
       triggered = tryNavigatorVibrate(preset) || triggered;
     }
-    triggered = tryGamepadHaptics(preset, padIndex) || triggered;
+    if (preset.envelope) {
+      triggered = playHapticEnvelope(preset, padIndex, lane) || triggered;
+    } else {
+      triggered = tryGamepadHaptics(preset, padIndex) || triggered;
+    }
     return triggered;
+  }
+  // Silence everything now: the pending steps of any envelope, the browser's
+  // vibration, and each pad's motors. The Guide turning haptics off, or
+  // opening over the game, must not leave a rumble running.
+  function hapticsStop() {
+    for (var key in hapticLanes) {
+      clearHapticTimers(hapticLanes[key]);
+      hapticLanes[key].until = 0;
+      hapticLanes[key].priority = 0;
+    }
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function" && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
+        navigator.vibrate(0);
+      }
+    } catch (error) {
+    }
+    try {
+      var pads = typeof navigator !== "undefined" && typeof navigator.getGamepads === "function" ? navigator.getGamepads() : null;
+      for (var i = 0; pads && i < pads.length; i++) {
+        var actuators = getGamepadActuators(pads[i]);
+        for (var j = 0; j < actuators.length; j++) {
+          if (typeof actuators[j].reset === "function") {
+            var result = actuators[j].reset();
+            if (result && typeof result.catch === "function") result.catch(function() {
+            });
+          }
+        }
+      }
+    } catch (error) {
+    }
+  }
+  // How heavy a kill or a hit feels: a 10-point popcorn ship ticks, a
+  // 100-point one is the preset as authored, a 10,000-point one thumps.
+  function hapticKillScale(score) {
+    return Math.min(1.65, Math.max(0.65, 0.35 + Math.log10(Math.max(10, score || 100)) * 0.325));
+  }
+  function hapticDamageScale(amount) {
+    return Math.min(1.6, Math.max(0.8, 0.8 + (amount || 1) * 0.2));
+  }
+  // The pad a player's shot or kill belongs to (undefined → game-wide).
+  function hapticPadOf(scene, owner) {
+    var p = killer(scene, owner);
+    return p ? p.padIndex : void 0;
+  }
+  // Low-hull heartbeat. Once a ship is down to a third of its hit points it
+  // thumps, quicker the lower it goes (1.25 s a beat at the threshold, 0.67 s
+  // on the last sliver). Counted in fixed steps rather than milliseconds, so
+  // it stops with the world (the Guide, a stage clear) and runs at Turbo's
+  // pace with it.
+  var HAPTIC_LOW_HULL = 1 / 3;
+  function hapticsAmbient(scene) {
+    if (!isHapticsEnabled()) return;
+    var ps = scene && scene.players;
+    if (!ps) return;
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i];
+      if (!p || p.dead || !(p.maxHp > 0) || !(p.hp > 0)) continue;
+      var frac = p.hp / p.maxHp;
+      if (frac > HAPTIC_LOW_HULL) {
+        p.hapticBeat = 0;
+        continue;
+      }
+      var period = Math.round(80 + 70 * Math.min(1, frac / HAPTIC_LOW_HULL));
+      if ((p.hapticBeat = (p.hapticBeat || 0) + 1) >= period) {
+        p.hapticBeat = 0;
+        triggerHaptic("heartbeat", p.padIndex);
+      }
+    }
   }
 
   // ../2019-es7/src/phaser/game-objects/Shadow.js
@@ -10467,6 +11118,7 @@
     p.dezaShotLocked = false;
     p.dezaLoadoutIndex = void 0;
     dezaSeedPower(scene, p);
+    bfgArm(scene, p);
     p.bossContactAt = 0;
     // A ship starts LOCAL. Anything networked re-attaches through
     // cmgNetSeatGuest; leaving a previous guest's buttons on a fresh ship would
@@ -10509,6 +11161,7 @@
     p.dezaBombInvuln = false;
     p.dezaBombStock = 3;
     dezaSeedPower(scene, p);
+    bfgArm(scene, p);
     p.bossContactAt = 0;
     p.remote = null;
     if (p.hpBar) {
@@ -10654,7 +11307,7 @@
     // scaleX only: the bar's HEIGHT carries which player it belongs to once the
     // HUD has split, and setScale(x, 1) would reset that every hit.
     if (p.hpBar) p.hpBar.scaleX = Math.max(0, p.hp / p.maxHp);
-    triggerHaptic("damage", p.padIndex);
+    triggerHaptic("damage", p.padIndex, hapticDamageScale(amount));
     scene.playSound("se_damage", 0.15);
     scene.playSound("g_damage_voice", 0.5);
     scene.cameras.main.shake(150, 0.01);
@@ -10908,6 +11561,9 @@
         p.shootMode = "normal";
         break;
     }
+    // ?bfg=1: no drop takes a maxed ship back down (a 3-way pickup would
+    // trade BIG for the spread and drop the rapid cadence).
+    bfgArm(scene, p);
   }
 
   // ../2019-es7/src/phaser/game-objects/Enemy.js
@@ -11430,7 +12086,7 @@
     // on the same tick and only then decides how to render the death.
     enemy.setData("dezaChainOwner", p.index);
     var death = runDeathWord(scene, enemy);
-    triggerHaptic("kill", p.padIndex);
+    triggerHaptic("kill", p.padIndex, hapticKillScale(score));
     if (!(death && death.silent)) {
       scene.showExplosion(enemy.x, enemy.y);
       scene.playSound("se_explosion", 0.175);
@@ -11520,6 +12176,29 @@
     p.dezaPodSub = void 0;
     p.dezaPodN = void 0;
     p.dezaPodTrail = null;
+  }
+  // ?bfg=1 — max weapon power from the first shot. The web shot goes to its
+  // strongest, BIG (2 damage, piercing) at the R drop's rapid cadence, and
+  // wherever the Dezaemon weapons run (a cart, or a web game in MOD) the shot
+  // level goes to the ship's own cap: the OPTION count every MAIN, SUB and
+  // CHARGE table is indexed by (dezaShotLevel), the stat a cart's POWER-UP
+  // item raises (collectItem). The power level is the ship's SPEED, not a
+  // weapon, and is left alone. Armed wherever a ship is seeded (a new ship, a
+  // revived one, the next ship from the stock) and again after every pickup,
+  // so a 3-way or F drop never takes it back down. The Guide's Cheats list it
+  // (cmgBroadcastCheats), the editor's PLAY passes it on (debugPlayParams),
+  // and like ?god=1 it keeps the run off WORLD BEST (scoreCountsAsRecord).
+  function bfgOn() {
+    return gameState.bfgFlg === true;
+  }
+  function bfgArm(scene, p) {
+    if (!bfgOn()) return;
+    var pd = playerRecord(scene, p.index) || {};
+    if (pd.shootBig) p.shootMode = PLAYER_STATES.SHOOT_NAME_BIG;
+    else if (pd.shoot3way) p.shootMode = PLAYER_STATES.SHOOT_NAME_3WAY;
+    p.shootSpeed = PLAYER_STATES.SHOOT_SPEED_HIGH;
+    var sh = dezaShip(scene, p.index);
+    if (sh) p.dezaOptions = Math.max(0, Math.min(4, sh.maxOptions == null ? 4 : sh.maxOptions));
   }
   function dezaLoadout(scene, p) {
     var m = dezaKit(scene);
@@ -11622,10 +12301,12 @@
     // The icon lands on its own scratch canvas first: the spent face
     // flattens it to dark greyscale, and filtering it in place would take
     // the rim and the ground down with it.
-    var scratch = document.createElement("canvas");
-    scratch.width = w;
-    scratch.height = h;
-    var sctx = scratch.getContext("2d", { willReadFrequently: !lit });
+    // Off the GPU even for the lit face, which reads nothing back: a face
+    // drawn from a GPU-backed scratch was lost with it on a GPU reset, though
+    // its own canvas is a stableCanvas (the spent face, whose scratch was
+    // already willReadFrequently, came through).
+    var scratch = stableCanvas(w, h);
+    var sctx = scratch.getContext("2d");
     sctx.imageSmoothingEnabled = false;
     sctx.drawImage(img, f.cutX, f.cutY, f.width, f.height, 0, 0, w, h);
     if (!lit) {
@@ -11636,7 +12317,7 @@
       }
       sctx.putImageData(px, 0, 0);
     }
-    var tex = scene.textures.createCanvas(key, size, size);
+    var tex = stableCanvasTexture(scene, key, size, size);
     var ctx = tex.getContext();
     var disc = function (radius) {
       ctx.beginPath();
@@ -11849,15 +12530,16 @@
       fieldOx: NaN, fieldOy: NaN, row: null
     };
     try {
-      var canvas = function (w, h, opts) {
-        var el = document.createElement("canvas");
-        el.width = w;
-        el.height = h;
-        var ctx = el.getContext("2d", opts);
+      // All of them off the GPU (stableCanvas): the field, rim, trail, flare
+      // and scan are baked once, and a GPU reset would have left the disc
+      // without its grid, rim and sweep.
+      var canvas = function (w, h) {
+        var el = stableCanvas(w, h);
+        var ctx = el.getContext("2d");
         if (!ctx) throw new Error("no 2d context");
         return { el: el, ctx: ctx };
       };
-      lens.subjects = canvas(L, L, { willReadFrequently: true });
+      lens.subjects = canvas(L, L);
       lens.holo = canvas(L, L);
       lens.holoR = canvas(L, L);
       lens.holoB = canvas(L, L);
@@ -11875,7 +12557,7 @@
       // One texture for the game's life: a restarted scene draws into it again.
       lens.tex = scene.textures.exists(SP_LENS_TEXTURE)
         ? scene.textures.get(SP_LENS_TEXTURE)
-        : scene.textures.createCanvas(SP_LENS_TEXTURE, L, L);
+        : stableCanvasTexture(scene, SP_LENS_TEXTURE, L, L);
       lens.tex.getContext().clearRect(0, 0, L, L);
       lens.tex.refresh();
       // The pixels of the sheet nearly everything behind the disc is cut
@@ -16239,6 +16921,12 @@
   // not traced, so every cart is drawn in this one.
   var DEZA_HUD_SCORE = { x: 48, y: 8, digits: 8 };
   var DEZA_HUD_BOMB = { x: 216, y: DEZA_SCREEN_H - 216, digits: 2 };
+  // TEST PLAY's watermark: the Saturn marks the editor's own run of a stage
+  // (組立 → TEST, MUTEKI on) with TESTING in this font, top right — SCORE's
+  // row, in the column BOMB has at the bottom, 48 px in from the right edge
+  // as SCORE is from the left. Drawn whenever god mode is on
+  // (gameState.godFlg), which is what that panel's MUTEKI is.
+  var DEZA_HUD_TESTING = { x: 216, y: 8, text: "TESTING" };
   var DEZA_HUD_INK = ["#ffffff", "#ffffff", "#ffffff", "#ffffff", "#ffffff", "#e7ffff", "#d6ffff", "#d6ffff"];
   var DEZA_HUD_SHADOW = "#484848";
   // The glyph sheet in the HUD's colours: built from the white sheet the
@@ -16249,10 +16937,8 @@
     if (!scene.textures.exists("athenaFont")) return null;
     var src = scene.textures.get("athenaFont").getSourceImage();
     var w = src.width, h = Math.min(src.height, DEZA_CELL);
-    var scratch = document.createElement("canvas");
-    scratch.width = w;
-    scratch.height = h;
-    var sctx = scratch.getContext("2d", { willReadFrequently: true });
+    var scratch = stableCanvas(w, h);
+    var sctx = scratch.getContext("2d");
     sctx.drawImage(src, 0, 0);
     var alpha = sctx.getImageData(0, 0, w, h).data;
     // Body pixel (x, y) of the cell that starts at column `cell`; anything
@@ -16260,7 +16946,7 @@
     var body = function(cell, x, y) {
       return x >= 0 && y >= 0 && alpha[(y * w + cell + x) * 4 + 3] > 127;
     };
-    var tex = scene.textures.createCanvas(key, w, h);
+    var tex = stableCanvasTexture(scene, key, w, h);
     var ctx = tex.getContext();
     for (var cell = 0; cell + DEZA_CELL <= w; cell += DEZA_CELL) {
       for (var y = 0; y < h; y++) {
@@ -16284,7 +16970,7 @@
     if (!sheet) return null;
     var tex = scene.textures.exists(key)
       ? scene.textures.get(key)
-      : scene.textures.createCanvas(key, cells * DEZA_CELL, DEZA_CELL);
+      : stableCanvasTexture(scene, key, cells * DEZA_CELL, DEZA_CELL);
     var ctx = tex.getContext();
     var line = scene.add.image(x, y, key);
     line.setOrigin(0, 0);
@@ -16763,6 +17449,35 @@
           this.dezaBombLine.setDepth(101);
           this.dezaBombLine.setText(dezaHudBombText(this.players[0].dezaBombStock));
         }
+      }
+      // God mode is the Saturn's TEST PLAY with MUTEKI on, and the stage wears
+      // its watermark: TESTING in the kernel font, off the same glyph sheet as
+      // SCORE and BOMB (dezaHudLine), where the Saturn puts it
+      // (DEZA_HUD_TESTING) — over the web band too, which has no row of its
+      // own for it. Under it, the one number a god run can move: the best of
+      // today's god runs (keepGodBest), on the band's WORLD BEST row where
+      // there is a band, else on the row under the kernel's SCORE line.
+      this.dezaTestingLine = null;
+      this.godBestText = null;
+      if (gameState.godFlg) {
+        this.dezaTestingLine = dezaHudLine(
+          this,
+          "dezaHudTesting",
+          dezaSatX(DEZA_HUD_TESTING.x),
+          DEZA_HUD_TESTING.y,
+          DEZA_HUD_TESTING.text.length
+        );
+        if (!this.dezaTestingLine) {
+          // No glyph sheet (athenaFont.png never loaded): the same face as
+          // TrueType, cell by cell, as the title's Dezaemon prompt is set.
+          this.dezaTestingLine = dezaCellText(this, dezaSatX(DEZA_HUD_TESTING.x), DEZA_HUD_TESTING.y, "");
+        }
+        this.dezaTestingLine.setDepth(102);
+        this.dezaTestingLine.setText(DEZA_HUD_TESTING.text);
+        this.godBestText = componentOn("hud")
+          ? this.add.text(30, 50, getGodBestText(), { fontFamily: "Arial", fontSize: "9px", fontStyle: "bold", color: "#ffd24a", stroke: "#000000", strokeThickness: 2 })
+          : this.add.text(dezaSatX(DEZA_HUD_SCORE.x), DEZA_HUD_SCORE.y + DEZA_CELL + 2, getGodBestText(), { fontFamily: "Arial", fontSize: "9px", fontStyle: "bold", color: "#ffd24a", stroke: "#000000", strokeThickness: 2 });
+        this.godBestText.setDepth(102);
       }
     }
     // The band across the top — the HP and COMBO troughs, the score and the
@@ -17770,6 +18485,7 @@
       }
       if (!this.gameStarted) return;
       if (!anyAlive || this.stageCleared) return;
+      hapticsAmbient(this);
       // Sample every pad ONCE for this rendered frame, then let each player
       // read its own: two readers advancing the edge state would have the
       // second one see every press as already handled.
@@ -17896,7 +18612,11 @@
               if (poolHp !== "infinity") {
                 enemy.setData("hp", poolHp - pbPool);
                 pb.setData("dezaPool", pbPool - poolHp);
-                if (isBoss) { this.bossHp = poolHp - pbPool; this.checkBossDanger(); }
+                if (isBoss) {
+                  this.bossHp = poolHp - pbPool;
+                  triggerHaptic("bossHit", hapticPadOf(this, pb.getData("owner")));
+                  this.checkBossDanger();
+                }
                 if (poolHp - pbPool <= 0) {
                   if (isBoss) this.bossDie(enemy, pb.getData("owner"));
                   else this.enemyDie(enemy, false, pb.getData("owner"));
@@ -17940,6 +18660,7 @@
                 enemy.setData("hp", ehp);
                 if (isBoss) {
                   this.bossHp = ehp;
+                  triggerHaptic("bossHit", hapticPadOf(this, pb.getData("owner")));
                   this.checkBossDanger();
                 }
                 this.showHitImpact(pb.x, pb.y, false);
@@ -18262,8 +18983,16 @@
       // multiplies nothing.
       this._setComboNum(lead.comboCount, lead.index);
       if (this.worldBestText) {
-        var best = Math.max(getDisplayedHighScore(), this.scoreCount);
+        // A run that cannot be a record (?god=1, ?bfg=1) leaves the best as it
+        // found it rather than climbing with a score that will not be kept.
+        var best = scoreCountsAsRecord() ? Math.max(getDisplayedHighScore(), this.scoreCount) : getDisplayedHighScore();
         this.worldBestText.setText(getWorldBestLabel() + " " + String(best));
+      }
+      // The god best rides the score as it climbs, so a test play closed
+      // mid-stage has still counted.
+      if (this.godBestText) {
+        keepGodBest(this.scoreCount);
+        this.godBestText.setText(getGodBestText());
       }
     }
     _setComboNum(num, owner) {
@@ -19023,6 +19752,7 @@
         submitHighScore(Number(gameState.score || 0)).catch(function() {
         });
       }
+      keepGodBest(Number(gameState.score || 0));
       if (!this.anims.exists("congra_bg_anim")) {
         this.anims.create({
           key: "congra_bg_anim",
@@ -19123,6 +19853,24 @@
           strokeThickness: 2
         }
       );
+      // A god run's one number (keepGodBest), under the two it never moves.
+      // The ending is the one card a god run reaches: nothing kills the ship
+      // (playerDamage), so the continue scene never sees the flag.
+      this.godBestText = gameState.godFlg
+        ? this.add.text(
+          32,
+          GCY5 - 23 + 28 + 16 + 11,
+          getGodBestText(),
+          {
+            fontFamily: "Arial",
+            fontSize: "9px",
+            fontStyle: "bold",
+            color: "#ffd24a",
+            stroke: "#000000",
+            strokeThickness: 2
+          }
+        )
+        : null;
       this.tweetBtn = this.createFrameButton(GCX8, GCY5 + 28, "twitterBtn");
       this.tweetBtn.setOrigin(0.5);
       this.tweetBtn.setScale(0);
@@ -19170,7 +19918,7 @@
       // card follows, as the hardware's ranking screen does.
       this.dezaRoll = null;
       if (isImportedLevel() && dezaHasStaffEntries(gameState._phaserRecipe)) {
-        var hidden = [this.gotoTitleBtn, this.worldBestText, this.scoreSyncText, this.congraTxt, this.tweetBtn, this.continueNewrecord, this.scoreContainer];
+        var hidden = [this.gotoTitleBtn, this.worldBestText, this.scoreSyncText, this.godBestText, this.congraTxt, this.tweetBtn, this.continueNewrecord, this.scoreContainer];
         hidden.forEach(function(o) {
           if (o) o.setVisible(false);
         });
@@ -20275,7 +21023,9 @@
     // the web runtime's parts and the Dezaemon ones cross over (CROSSOVER).
     var cheats = [
       { param: "version", kind: "toggle", label: "Mod Mode", on: "mod" },
-      { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" }
+      { param: "bossRush", kind: "toggle", label: "Boss Rush", on: "1" },
+      // Max weapon power for every ship (bfgArm), on any game.
+      { param: "bfg", kind: "toggle", label: "BFG (Max Weapons)", on: "1" }
     ];
     if (isImportedLevel()) {
       cheats.push({ param: "stage", kind: "slider", label: "Start Stage", min: 0, max: lastStageId(recipe) });
@@ -20643,12 +21393,53 @@
     globalThis.__PHASER_4_GAME__ = game;
     globalThis.__PHASER_GAME__ = game;
     cmgWrapLoop(game);
+    retypeTextsAfterGpuReset(game);
+    armCanvasRepaint(game);
     console.log("[2028.Ai] Phaser game started");
     if (typeof window !== "undefined") {
       if (typeof window.__fitCanvas === "function") window.__fitCanvas();
       if (typeof window.__fixPhaserTransform === "function") window.__fixPhaserTransform();
     }
     return game;
+  }
+  // The canvases this runtime paints are stableCanvas, but Phaser's own Text
+  // objects draw on canvases from its pool, which a pixelArt game claims on
+  // the GPU (stableCanvasTexture says why). A GPU reset blanks them, Phaser
+  // rebuilds each Text's texture from its blank canvas when the WebGL context
+  // is restored, and a line that never changes again (WORLD BEST, a menu
+  // label) stays invisible. So once the context is back, every Text on a
+  // running scene is typed again: now if its canvas is back already, else on
+  // the canvas's own contextrestored.
+  function retypeTextsAfterGpuReset(game) {
+    var hook = function() {
+      var renderer = game.renderer;
+      if (!renderer || typeof renderer.on !== "function") return;
+      renderer.on("restorewebgl", function() {
+        var Text = Phaser.GameObjects && Phaser.GameObjects.Text;
+        if (!Text || !game.scene) return;
+        var retype = function(t) {
+          if (t.active && t.scene && t.canvas) t.updateText();
+        };
+        var walk = function(list) {
+          for (var i = 0; i < list.length; i++) {
+            var o = list[i];
+            if (o instanceof Text) {
+              var ctx = o.context;
+              if (ctx && typeof ctx.isContextLost === "function" && ctx.isContextLost()) {
+                o.canvas.addEventListener("contextrestored", retype.bind(null, o), { once: true });
+              } else {
+                retype(o);
+              }
+            }
+            if (o.list) walk(o.list);
+          }
+        };
+        var scenes = game.scene.getScenes(true);
+        for (var s = 0; s < scenes.length; s++) walk(scenes[s].children.list);
+      });
+    };
+    if (game.renderer) hook();
+    else game.events.once("ready", hook);
   }
   function whenPhaserReady(cb) {
     if (globalThis.Phaser) {

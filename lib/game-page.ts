@@ -358,6 +358,7 @@ export function standaloneGamePageHtml(
 <script src="/firebase-config.js"></script>
 <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
 <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+<script type="module" src="/champion/champion.js"></script>
 <script>${CHARACTERS_MODULE}</script>
 <script>${OSD_BRIDGE}</script>
 <script>${AUDIO_UNLOCK}</script>

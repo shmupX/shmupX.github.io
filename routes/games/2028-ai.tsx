@@ -84,6 +84,13 @@ export default define.page(function Game2028() {
           src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"
         >
         </script>
+        {
+          /* The daily world champion: a TODAY'S BEST can ask for a push at
+             UTC midnight if it stood (static/champion/champion.js). It gives
+             the bundle the champion id it writes onto today's board, and is
+             inert off codemonkey.games. */
+        }
+        <script type="module" src="/champion/champion.js"></script>
         <script dangerouslySetInnerHTML={{ __html: CHARACTERS_MODULE }} />
         <script dangerouslySetInnerHTML={{ __html: OSD_BRIDGE }} />
         <script dangerouslySetInnerHTML={{ __html: LEVEL_EDITOR_BROADCAST }} />

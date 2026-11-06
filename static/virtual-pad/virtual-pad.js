@@ -166,6 +166,18 @@ function ensureStyle(doc) {
 }
 
 /**
+ * Whether the player wants haptics: the Guide's Haptics switch keeps its
+ * choice under "cmg-haptics" ("0" off, anything else, or nothing, on). A
+ * storage that throws (a locked-down frame) counts as on.
+ *
+ * @param {{ getItem(key: string): string | null } | null | undefined} [storage]
+ * @returns {boolean}
+ */
+export function hapticsWanted(storage = globalThis.localStorage) {
+  try { return storage?.getItem("cmg-haptics") !== "0"; } catch (_) { return true; }
+}
+
+/**
  * Mount a controller into `root` (positioned; the controller fills it).
  *
  * opts:
@@ -208,6 +220,10 @@ export function mountVirtualPad(root, opts = {}) {
     return before !== state.bits;
   }
   function buzz() {
+    // The Guide's Haptics switch (cmg-haptics) turns the controller's tap off
+    // too; it is read on every tap, so a change takes hold at once, and this
+    // page may be the controller on another screen with no Guide of its own.
+    if (!hapticsWanted()) return;
     try { navigator.vibrate?.(8); } catch (_) { /* no vibration here */ }
   }
 
