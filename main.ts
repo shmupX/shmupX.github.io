@@ -5,6 +5,7 @@ import { dirIndexRedirect } from "./lib/static-indexes.ts";
 import {
   cloudLevelAliases,
   cloudLevelKeys,
+  cloudShelfSlugs,
   subdomainRedirect,
 } from "./lib/level-subdomain.ts";
 import { join } from "@std/path";
@@ -98,12 +99,15 @@ app.use((ctx) => {
 });
 
 // `<name>.codemonkey.games/` is the level called <name>: its root goes to
-// the game with that level, or — when no level has the name — to the
+// the game with that level, or — when no level has the name but the Dezaemon
+// shelf has a game of that slug (elfin.codemonkey.games) — to the editor's
+// ?play= hand-off that runs the cart, or — when neither does — to the
 // editor's NEW GAME with the name filled in. Only the root; every other path
 // on a subdomain serves as the apex does. lib/level-subdomain.ts has the
 // matching rules, the cached level listing and the alias index it reads —
 // both from shmupX's own subtree (shmupX/levels, shmupX/levelAliases), never
-// the root copies cmg keeps — (2019.codemonkey.games is 2019-PS2 by alias).
+// the root copies cmg keeps — (2019.codemonkey.games is 2019-PS2 by alias),
+// and the shelf's slugs from the shared dezaemon/index.
 // Ahead of
 // staticFiles() and the dashboard route, GET and HEAD only.
 app.use(async (ctx) => {
@@ -111,11 +115,18 @@ app.use(async (ctx) => {
   if (new URL(ctx.req.url).pathname !== "/") return ctx.next();
   const peek = subdomainRedirect(ctx.req, []);
   if (peek === null) return ctx.next();
-  const [keys, aliases] = await Promise.all([
+  const [keys, aliases, shelf] = await Promise.all([
     cloudLevelKeys(),
     cloudLevelAliases(),
+    cloudShelfSlugs(),
   ]);
-  return subdomainRedirect(ctx.req, keys, aliases ?? {}) ?? ctx.next();
+  return subdomainRedirect(
+    ctx.req,
+    keys,
+    aliases ?? {},
+    undefined,
+    shelf ?? [],
+  ) ?? ctx.next();
 });
 
 // A packaged app's page keeps nothing past the launch (a fresh CEF profile and

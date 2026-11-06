@@ -5,8 +5,11 @@
 //
 //   2019-ps2.codemonkey.games/   -> /games/2028-ai?level=2019-PS2   (a level
 //                                   that exists: the game, straight in)
-//   anything-else.codemonkey.games/ -> /editor/?new=anything-else  (no such
-//                                   level: NEW GAME, named for the label)
+//   elfin.codemonkey.games/      -> /editor/?game=2028-ai&play=elfin  (no such
+//                                   level, but a SHELF game of that slug: the
+//                                   cart, run straight away)
+//   anything-else.codemonkey.games/ -> /editor/?new=anything-else  (neither:
+//                                   NEW GAME, named for the label)
 //
 // Only the root is redirected. Every other path on a subdomain serves as the
 // apex does, which is what lets the redirect be relative: the game page and
@@ -32,11 +35,25 @@
 // would answer to 2019 first. The level loader reads the same index for
 // ?level=<alias>.
 //
+// The SHELF is the community Dezaemon 2 library (RTDB `dezaemon/index/<slug>`,
+// published by `deno task deza:upload`; the slug is the title lowercased with
+// runs of anything but a-z0-9 made one hyphen, so `Elfin` is `elfin`). It is
+// asked after the levels and the aliases, so a level, or an alias, always keeps
+// a name it already answers to, and before NEW GAME, so a name that is
+// someone's cart is never offered as a blank slate. The editor's own `?play=`
+// hand-off (static/editor/index.html playDezaemonLibrarySlug, the one the
+// launcher's coverflow sends) resolves the slug and runs the cart. Carts that
+// live only in one browser (eShop installs, a visitor's own exports) are not in
+// the database, so no host can name them.
+//
 // The key list comes from one shallow REST read, cached for a minute the way
 // /characters caches its listing. When the database cannot be read at all the
 // label is sent to the GAME, not the editor: a shared link to a real level is
 // the common case, and the loader's own "no such level" screen is a better
-// failure than a stranger's editor opening over a name that exists.
+// failure than a stranger's editor opening over a name that exists. The shelf
+// listing is read the same way, but an unreadable one (with levels readable) is
+// an empty shelf: opening a cart's player over a name nobody has claimed would
+// cost the NEW GAME a stranger came for.
 
 import { rtdbPath } from "./rtdb-root.ts";
 
@@ -52,10 +69,17 @@ export const LEVELS_DB = Deno.env.get("CHARACTERS_DB") ??
   "https://evil-invaders-default-rtdb.firebaseio.com";
 export const LEVELS_PATH = rtdbPath("levels");
 export const ALIASES_PATH = rtdbPath("levelAliases");
+// The Dezaemon library is a shared store, not a game catalog, so it stays at
+// the database root (lib/rtdb-root.ts): rtdbPath leaves it alone.
+export const SHELF_PATH = rtdbPath("dezaemon/index");
 export const KEYS_CACHE_MS = 60_000;
 
 export const GAME_URL = "/games/2028-ai";
 export const NEW_GAME_URL = "/editor/";
+// What the launcher's coverflow sends for a shelf game too
+// (svelte-src/Dashboard.svelte): /editor/?game=2028-ai&play=<slug>.
+export const SHELF_PLAY_URL = "/editor/";
+export const SHELF_GAME_ID = "2028-ai";
 
 // One DNS label: letters, digits and inner hyphens, 63 chars at most.
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -155,42 +179,66 @@ export function planAliases(
 }
 
 /**
- * `path?name=value`, then every parameter of the visitor's own query but
- * `name`: squad.codemonkey.games/?god=1 is the game with god mode on, the way
- * /games/2028-ai?level=gs&god=1 is. The label decides the level, so a `level`
- * (or `new`) the visitor typed as well is the one thing not carried.
+ * `path?name=value…`, then every parameter of the visitor's own query that the
+ * label has not already decided: squad.codemonkey.games/?god=1 is the game with
+ * god mode on, the way /games/2028-ai?level=gs&god=1 is. The label decides the
+ * level, so a `level` (or `new`, or for a shelf game `game` and `play`) the
+ * visitor typed as well is the one thing not carried.
  */
 function withQuery(
   path: string,
-  name: string,
-  value: string,
+  decided: ReadonlyArray<readonly [string, string]>,
   search: string,
 ): string {
   const params = new URLSearchParams();
-  params.set(name, value);
+  for (const [name, value] of decided) params.set(name, value);
+  const names = new Set(decided.map(([name]) => name));
   for (const [k, v] of new URLSearchParams(search)) {
-    if (k !== name) params.append(k, v);
+    if (!names.has(k)) params.append(k, v);
   }
   return `${path}?${params.toString()}`;
 }
 
 /**
+ * The shelf slug a label names, or null. Slugs are lowercase by construction
+ * (see the header) and a hostname label is lowercased before it gets here, so
+ * the match is exact.
+ */
+export function matchShelfSlug(
+  label: string,
+  slugs: readonly string[],
+): string | null {
+  return slugs.includes(label) ? label : null;
+}
+
+/**
  * Where a subdomain's root goes. `keys` null means the database was
  * unreachable. `search` is the visitor's own query, carried along (withQuery).
+ * `shelf` is the Dezaemon library's slugs: asked after every level and alias,
+ * before NEW GAME, and not at all when the levels could not be read.
  */
 export function subdomainTarget(
   label: string,
   keys: readonly string[] | null,
   aliases: LevelAliases = {},
   search = "",
+  shelf: readonly string[] = [],
 ): string {
   if (keys === null) {
     const aliased = Object.hasOwn(aliases, label) ? aliases[label] : label;
-    return withQuery(GAME_URL, "level", aliased, search);
+    return withQuery(GAME_URL, [["level", aliased]], search);
   }
   const key = matchLevelKey(label, keys, aliases);
-  if (key !== null) return withQuery(GAME_URL, "level", key, search);
-  return withQuery(NEW_GAME_URL, "new", label, search);
+  if (key !== null) return withQuery(GAME_URL, [["level", key]], search);
+  const slug = matchShelfSlug(label, shelf);
+  if (slug !== null) {
+    return withQuery(
+      SHELF_PLAY_URL,
+      [["game", SHELF_GAME_ID], ["play", slug]],
+      search,
+    );
+  }
+  return withQuery(NEW_GAME_URL, [["new", label]], search);
 }
 
 /**
@@ -205,6 +253,7 @@ export function subdomainRedirect(
   keys: readonly string[] | null,
   aliases: LevelAliases = {},
   siteHosts: readonly string[] = DEFAULT_SITE_HOSTS,
+  shelf: readonly string[] = [],
 ): Response | null {
   if (req.method !== "GET" && req.method !== "HEAD") return null;
   const url = new URL(req.url);
@@ -216,7 +265,7 @@ export function subdomainRedirect(
   return new Response(null, {
     status: 302,
     headers: {
-      location: subdomainTarget(label, keys, aliases, url.search),
+      location: subdomainTarget(label, keys, aliases, url.search, shelf),
       "cache-control": "no-store",
     },
   });
@@ -294,8 +343,43 @@ export async function cloudLevelAliases(
   }
 }
 
+let shelfCache: { at: number; slugs: string[] } | null = null;
+
+/**
+ * Every Dezaemon shelf game's slug, from a shallow read of the library's index
+ * (a few hundred short keys; the saves themselves are never touched), cached
+ * for a minute like the level listing; null when the read fails and nothing is
+ * cached yet. `fetcher` and `now` are injectable for tests.
+ */
+export async function cloudShelfSlugs(
+  db: string = LEVELS_DB,
+  fetcher: typeof fetch = fetch,
+  now: () => number = Date.now,
+): Promise<string[] | null> {
+  if (shelfCache && now() - shelfCache.at < KEYS_CACHE_MS) {
+    return shelfCache.slugs;
+  }
+  try {
+    const res = await fetcher(`${db}/${SHELF_PATH}.json?shallow=true`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) throw new Error(`${SHELF_PATH}.json ${res.status}`);
+    const body = await res.json() as Record<string, unknown> | null;
+    const slugs = body && typeof body === "object" ? Object.keys(body) : [];
+    shelfCache = { at: now(), slugs };
+    return slugs;
+  } catch (err) {
+    console.warn(
+      "level subdomains: could not list shelf games:",
+      (err as Error).message ?? err,
+    );
+    return shelfCache ? shelfCache.slugs : null;
+  }
+}
+
 /** Forget the cached listings (tests). */
 export function resetLevelKeysCache(): void {
   keysCache = null;
   aliasesCache = null;
+  shelfCache = null;
 }

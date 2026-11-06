@@ -6899,9 +6899,24 @@ of a subdomain is routed by its label (`lib/level-subdomain.ts`, wired in
 
 - `2019-ps2.codemonkey.games/` → `/games/2028-ai?level=2019-PS2` — a level that
   exists opens straight into the game, the way `?level=` does.
+- `elfin.codemonkey.games/` → `/editor/?game=2028-ai&play=elfin` — no level has
+  the name, but the Dezaemon **shelf** has a game of that slug, so the editor's
+  `?play=` hand-off (the one the launcher's coverflow sends) runs the cart
+  straight away. The shelf is the community library, RTDB `dezaemon/index/<slug>`
+  (the title lowercased, runs of anything but `a-z0-9` made one hyphen); it is
+  read as one shallow listing of that node, cached for a minute beside the level
+  keys. It is asked **after** the levels and the aliases — a level, or an alias,
+  keeps a name the shelf also has — and before NEW GAME. Carts that live only in
+  one browser (eShop installs, a visitor's own exports) are not in the database,
+  so no hostname can name them. If only the shelf listing cannot be read, it is
+  an empty shelf, and the name falls through to NEW GAME.
 - `my-first-level.codemonkey.games/` → `/editor/?new=my-first-level` — a name no
-  level has yet opens the editor on **CHOOSE YOUR CHARACTER**, and the game made
-  from it is called `my-first-level`.
+  level and no shelf game has yet opens the editor on **CHOOSE YOUR CHARACTER**,
+  and the game made from it is called `my-first-level`.
+
+The visitor's own query rides along, minus what the label decided (`level`;
+`new`; `game` and `play`): `elfin.codemonkey.games/?turbo=1` is
+`/editor/?game=2028-ai&play=elfin&turbo=1`.
 
 Only the root is redirected; every other path on a subdomain serves exactly as
 the apex does, which is what lets the redirect stay relative (the game and its
