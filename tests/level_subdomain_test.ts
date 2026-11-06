@@ -1,14 +1,17 @@
 // Level subdomains (lib/level-subdomain.ts, wired in main.ts): the root of
 // `<name>.codemonkey.games` goes to the game with that level, or to the
-// editor's NEW GAME named for the label when no level has the name.
+// Dezaemon shelf game of that slug (the editor's ?play= hand-off), or to the
+// editor's NEW GAME named for the label when neither has the name.
 
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import {
   cloudLevelAliases,
   cloudLevelKeys,
+  cloudShelfSlugs,
   hostnameOf,
   isAliasName,
   matchLevelKey,
+  matchShelfSlug,
   planAliases,
   resetLevelKeysCache,
   subdomainOf,
@@ -91,7 +94,10 @@ Deno.test("the visitor's own query rides along — all of it but the level the l
     }),
     KEYS,
   )!;
-  assertEquals(r.headers.get("location"), "/games/2028-ai?level=2019-PS2&god=1");
+  assertEquals(
+    r.headers.get("location"),
+    "/games/2028-ai?level=2019-PS2&god=1",
+  );
 });
 
 Deno.test("only a subdomain's root is redirected, on GET and HEAD, honouring X-Forwarded-Host", () => {
@@ -255,6 +261,134 @@ Deno.test("the alias index is one read, cached, and keeps only well-formed names
   clock += 30_000;
   await cloudLevelAliases("https://db.test", fetcher, now);
   assertEquals(calls.length, 1, "served from the cache inside a minute");
+  resetLevelKeysCache();
+});
+
+// ---- the Dezaemon shelf ----------------------------------------------------------
+
+const SHELF = ["elfin", "2028", "excel-beat", "a28"];
+
+Deno.test("a shelf game's subdomain runs the cart, the way the launcher's coverflow does", () => {
+  assertEquals(matchShelfSlug("elfin", SHELF), "elfin");
+  assertStrictEquals(matchShelfSlug("Elfin", SHELF), null);
+  assertStrictEquals(matchShelfSlug("nobody", SHELF), null);
+  assertStrictEquals(matchShelfSlug("elfin", []), null);
+  assertEquals(
+    subdomainTarget("elfin", KEYS, {}, "", SHELF),
+    "/editor/?game=2028-ai&play=elfin",
+  );
+  // No shelf handed over (or an unreadable one): still NEW GAME, as before.
+  assertEquals(subdomainTarget("elfin", KEYS), "/editor/?new=elfin");
+  assertEquals(
+    subdomainTarget("excel-beat", KEYS, {}, "", SHELF),
+    "/editor/?game=2028-ai&play=excel-beat",
+  );
+  assertEquals(
+    subdomainTarget("my-first-level", KEYS, {}, "", SHELF),
+    "/editor/?new=my-first-level",
+  );
+});
+
+Deno.test("a level, or an alias, keeps a name the shelf also has; no listing ignores the shelf", () => {
+  // "2028" is both a level key and a shelf slug: the level wins.
+  assertEquals(
+    subdomainTarget("2028", KEYS, {}, "", SHELF),
+    "/games/2028-ai?level=2028",
+  );
+  assertEquals(
+    subdomainTarget("elfin", KEYS, { elfin: "2019-PS2" }, "", SHELF),
+    "/games/2028-ai?level=2019-PS2",
+  );
+  assertEquals(
+    subdomainTarget("elfin", null, {}, "", SHELF),
+    "/games/2028-ai?level=elfin",
+  );
+});
+
+Deno.test("a shelf subdomain carries the visitor's query but not the game or cart they typed", () => {
+  // elfin.codemonkey.games/?turbo=1 — the report that found the bug.
+  assertEquals(
+    subdomainTarget("elfin", KEYS, {}, "?turbo=1", SHELF),
+    "/editor/?game=2028-ai&play=elfin&turbo=1",
+  );
+  assertEquals(
+    subdomainTarget("elfin", KEYS, {}, "?play=other&game=x&bfg=1", SHELF),
+    "/editor/?game=2028-ai&play=elfin&bfg=1",
+  );
+  const r = subdomainRedirect(
+    new Request("http://x/?turbo=1", {
+      headers: { host: "elfin.codemonkey.games" },
+    }),
+    KEYS,
+    {},
+    undefined,
+    SHELF,
+  )!;
+  assertEquals(r.status, 302);
+  assertEquals(
+    r.headers.get("location"),
+    "/editor/?game=2028-ai&play=elfin&turbo=1",
+  );
+  // Without the shelf it was NEW GAME — the bug.
+  assertEquals(
+    subdomainRedirect(
+      new Request("http://x/?turbo=1", {
+        headers: { host: "elfin.codemonkey.games" },
+      }),
+      KEYS,
+    )!.headers.get("location"),
+    "/editor/?new=elfin&turbo=1",
+  );
+});
+
+Deno.test("the shelf listing is one shallow read of the library index, cached, and survives an outage once warm", async () => {
+  resetLevelKeysCache();
+  const calls: string[] = [];
+  let clock = 1_000;
+  let fail = false;
+  const fetcher = ((input: string | URL | Request) => {
+    calls.push(String(input));
+    if (fail) return Promise.resolve(new Response("boom", { status: 500 }));
+    return Promise.resolve(
+      new Response(JSON.stringify({ elfin: true, "excel-beat": true })),
+    );
+  }) as typeof fetch;
+  const now = () => clock;
+  assertEquals(await cloudShelfSlugs("https://db.test", fetcher, now), [
+    "elfin",
+    "excel-beat",
+  ]);
+  // The library is a shared store at the database root, not under shmupX/.
+  assertEquals(calls, ["https://db.test/dezaemon/index.json?shallow=true"]);
+  clock += 30_000;
+  await cloudShelfSlugs("https://db.test", fetcher, now);
+  assertEquals(calls.length, 1, "served from the cache inside a minute");
+  clock += 31_000;
+  fail = true;
+  assertEquals(await cloudShelfSlugs("https://db.test", fetcher, now), [
+    "elfin",
+    "excel-beat",
+  ]);
+  assertEquals(
+    calls.length,
+    2,
+    "re-read after a minute, stale copy kept on failure",
+  );
+  resetLevelKeysCache();
+  assertStrictEquals(
+    await cloudShelfSlugs("https://db.test", fetcher, now),
+    null,
+  );
+  // An empty library is an empty list, not a failure.
+  resetLevelKeysCache();
+  assertEquals(
+    await cloudShelfSlugs(
+      "https://db.test",
+      (() => Promise.resolve(new Response("null"))) as typeof fetch,
+      now,
+    ),
+    [],
+  );
   resetLevelKeysCache();
 });
 
