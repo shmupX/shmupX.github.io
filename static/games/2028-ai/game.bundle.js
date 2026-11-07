@@ -11096,6 +11096,7 @@
     p.shadow = createShadow(scene, p.sprite, firstFrame, true, 5, "game_asset");
     p.shadow.play(p.animKey);
     updateShadowPosition(p.shadow, p.sprite);
+    attachTrail(scene, p.sprite, pd && pd.trail);
     p.barrierActive = false;
     p.barrierTimer = 0;
     p.barrierSprite = null;
@@ -11688,6 +11689,52 @@
     }
     return fallback;
   }
+  // A record's `trail`: a particle stream hung on the sprite, the way a Phaser
+  // game hangs an emitter on a ship with startFollow. `texture` names atlas
+  // frames; `speed`, `lifespan` and `angle` take a number or [min, max];
+  // `scale` is a number or {start, end}; `blendMode` defaults to ADD. The
+  // emitter stops while its sprite is hidden and goes with it.
+  function attachTrail(scene, sprite, trail) {
+    if (!trail || typeof trail !== "object" || gameState.lowModeFlg) return null;
+    var frames = bulletFramesInAtlas(scene, [].concat(trail.texture || []), []);
+    if (!frames.length) return null;
+    var range = function(v, d) {
+      if (Array.isArray(v) && v.length === 2) return { min: +v[0], max: +v[1] };
+      return Number.isFinite(v) ? v : d;
+    };
+    var cfg = {
+      frame: frames,
+      speed: range(trail.speed, 0),
+      lifespan: range(trail.lifespan, 250),
+      scale: trail.scale && typeof trail.scale === "object"
+        ? { start: +trail.scale.start || 0, end: +trail.scale.end || 0 }
+        : (Number.isFinite(trail.scale) ? trail.scale : { start: 1, end: 0 }),
+      blendMode: trail.blendMode || "ADD",
+      follow: sprite,
+      followOffset: { x: +trail.offsetX || 0, y: +trail.offsetY || 0 }
+    };
+    if (trail.angle != null) cfg.angle = range(trail.angle, 0);
+    if (Number.isFinite(trail.frequency)) cfg.frequency = trail.frequency;
+    var emitter;
+    try {
+      emitter = scene.add.particles(0, 0, "game_asset", cfg);
+    } catch (e) {
+      return null;
+    }
+    emitter.setDepth((sprite.depth || 0) - 1);
+    var sync = function() {
+      if (!sprite.active) return;
+      emitter.emitting = sprite.visible;
+    };
+    scene.events.on("update", sync);
+    sprite.once("destroy", function() {
+      scene.events.off("update", sync);
+      emitter.stop();
+      scene.time.delayedCall(1000, function() { emitter.destroy(); });
+    });
+    sprite.setData("trail", emitter);
+    return emitter;
+  }
   function createEnemy(scene, data, x, y, itemName) {
     var frames = resolveFrames(scene, "game_asset", data.texture || []);
     var frameKey = frames[0] || "soliderA0.gif";
@@ -11747,6 +11794,7 @@
     }
     enemy.setData("shadow", shadow);
     updateShadowPosition(shadow, enemy);
+    attachTrail(scene, enemy, data.trail);
     scene.enemies.push(enemy);
     return enemy;
   }
@@ -15619,6 +15667,7 @@
     scene.bossShadow = createShadow(scene, scene.bossSprite, bossFrame, bossShadowReverse, bossShadowOffsetY);
     scene.bossSprite.setData("shadow", scene.bossShadow);
     armBossOverlay(scene, scene.bossSprite, bossData);
+    attachTrail(scene, scene.bossSprite, bossData.trail);
     var patternSlot = bossPatternSlot(bossData, stageId);
     armBossStances(scene, bossData, patternSlot);
     // Run by his own record Akuma is Akuma throughout — his voice and his

@@ -6561,6 +6561,56 @@ a level open.
   rows of the texture rather than nine, and the build refuses a stack taller
   than a phone's 4096 (`TEXTURE_LIMIT`).
 
+## RonaGun (hellophaser) as a cloud game
+
+`hellophaser` is RonaGun, the Phaser 3 shooter at
+[easierbycode.com/hellophaser/v4](https://easierbycode.com/hellophaser/v4/)
+(Lincoln against the virus, the sentinels and the Seductress), rebuilt as a
+cloud game by `scripts/hellophaser/build-level.ts`. The record it builds is
+committed as `static/games/hellophaser/game.json`:
+
+```sh
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --out static/games/hellophaser/game.json
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --serve    # play it locally, nothing written
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --apply    # write shmupX/levels/hellophaser (--force replaces it)
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --revert
+```
+
+The source is a Parcel bundle, so its numbers are ported from the modules in
+it into `scripts/hellophaser/source.ts`, and its art is copied byte for byte
+into `scripts/hellophaser/art/`. It is one endless scene. Three lanes each keep
+one enemy falling at 1, 2 and 3 px a frame, and timers swap each lane's sprite
+for the next. Five sentinels cross from the left at 50 px/s, and the Seductress
+arrives at 77 s. It becomes one stage that sends each lane's sprite down once
+per crossing, from a seeded random column, flies the sentinels across on their
+rows, and ends on the Seductress as its boss.
+
+- **Music.** `customAudioURLs.boss_bison_bgm` is the source's title song,
+  streamed from the source's own site (CORS open). The runtime plays stage 0's
+  music under that key from the first wave through the boss, as the source
+  loops it through the whole scene.
+- **Particle trails.** A record can now carry `trail` on `playerData`, an
+  `enemyData` record or a `bossData` record. The runtime's `attachTrail`
+  (game.bundle.js) hangs a Phaser particle emitter on the sprite, as
+  `emitter.startFollow` does in the source. It takes `texture` (atlas frames),
+  `speed`, `lifespan` and `angle` (a number or `[min, max]`), `scale` (a number
+  or `{start, end}`), `blendMode` (default ADD), and optional `frequency`,
+  `offsetX` and `offsetY`. It stops emitting while the sprite is hidden, and
+  fades out and is removed when the sprite goes. Low mode draws none. Lincoln
+  wears the source's blue thruster and the Asteroid its red trail.
+  `validateGameJson` requires a `trail` to name a texture.
+- **What differs from the source.** The SmilEye power-up and its boost, each
+  enemy's own explosion sheet, and the Seductress's morph after her defeat are
+  not ported. The runtime's blasts and stage clear stand in. The Seductress
+  fires nothing in the source, but a shmupX boss runs a stock routine, so hers
+  shoots the fairy bullet the source loads and never uses. The source's
+  starfield emitter is baked into a scrolling 256x256 tile.
+
+`tests/hellophaser_test.ts` pins the record (every sprite spawned, the
+scripts, the music, the trails, the boss), checks that the committed
+game.json matches what the converter builds, and checks that attachTrail is
+wired into the player, the zako and the boss.
+
 ## Evil Invaders as a cloud game
 
 
