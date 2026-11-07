@@ -10,6 +10,7 @@ import {
   cloudShelfSlugs,
   hostnameOf,
   isAliasName,
+  levelSlug,
   matchLevelKey,
   matchShelfSlug,
   planAliases,
@@ -26,6 +27,7 @@ const KEYS = [
   "Ramsie",
   "ramsie",
   "Choh Parody Spirit Twin Ex_Sound ver",
+  "Master Arena Mod",
 ];
 
 Deno.test("the label is read off the Host, without port, case or a www", () => {
@@ -54,6 +56,58 @@ Deno.test("a label finds its level exactly, then by case, ties resolved the same
   assertEquals(matchLevelKey("ramsie", KEYS), "ramsie");
   assertEquals(matchLevelKey("RAMSIE", KEYS), "Ramsie");
   assertStrictEquals(matchLevelKey("nobody", KEYS), null);
+});
+
+Deno.test("a key a hostname cannot spell is reached by its slug: master-arena-mod is `Master Arena Mod`", () => {
+  assertEquals(levelSlug("Master Arena Mod"), "master-arena-mod");
+  assertEquals(
+    levelSlug("Choh Parody Spirit Twin Ex_Sound ver"),
+    "choh-parody-spirit-twin-ex-sound-ver",
+  );
+  assertEquals(levelSlug("  --a.b__c--  "), "a-b-c");
+  assertEquals(levelSlug("___"), "");
+  assertEquals(matchLevelKey("master-arena-mod", KEYS), "Master Arena Mod");
+  assertEquals(
+    matchLevelKey("choh-parody-spirit-twin-ex-sound-ver", KEYS),
+    "Choh Parody Spirit Twin Ex_Sound ver",
+  );
+  // The empty slug is no label: a key of only punctuation answers to nothing.
+  assertStrictEquals(matchLevelKey("", ["___"]), null);
+  // A level's own name beats an alias spelled like another level's slug.
+  assertEquals(
+    matchLevelKey("master-arena-mod", KEYS, { "master-arena-mod": "2028" }),
+    "Master Arena Mod",
+  );
+  // Two keys that slug alike resolve the same way every time.
+  assertEquals(
+    matchLevelKey("a-b", ["a_b", "A B", "a b"]),
+    "A B",
+  );
+  // The game gets the stored key, spaces and all, never the slug.
+  assertEquals(
+    subdomainTarget("master-arena-mod", KEYS),
+    "/games/2028-ai?level=Master+Arena+Mod",
+  );
+  assertEquals(
+    subdomainRedirect(
+      new Request("http://x/?god=1", {
+        headers: { host: "master-arena-mod.codemonkey.games" },
+      }),
+      KEYS,
+    )!.headers.get("location"),
+    "/games/2028-ai?level=Master+Arena+Mod&god=1",
+  );
+  // Still a NEW GAME when no level has the name, slug or not.
+  assertEquals(
+    subdomainTarget("master-arena", KEYS),
+    "/editor/?new=master-arena",
+  );
+});
+
+Deno.test("an alias cannot shadow a level's slug", () => {
+  const plan = planAliases("2028", ["master-arena-mod"], KEYS, {});
+  assertEquals(plan.set, {});
+  assertEquals(plan.errors.length, 1);
 });
 
 Deno.test("a known level goes to the game, an unknown one to NEW GAME under its name, no listing to the game", () => {

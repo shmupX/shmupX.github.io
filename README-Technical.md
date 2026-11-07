@@ -6977,7 +6977,12 @@ and none of shmupX's is a NEW GAME here, not cmg's game. Hostnames are
 case-insensitive and RTDB keys are not, so the label is matched exactly, then by
 case (`2019-ps2` finds `2019-PS2`; a tie between two keys that differ only in
 case resolves to the same one every time). A key the DNS cannot spell — a space,
-a dot, an underscore — is not reachable this way. If the database cannot be read
+a dot, an underscore — is reached by its **slug**: every run of such characters
+becomes one hyphen (`levelSlug`), so `master-arena-mod.codemonkey.games` opens
+the game stored as `Master Arena Mod`. The game gets the stored key, never the
+slug, and the slug is the level's own name, so it outranks an alias (and
+`level:alias` refuses an alias a level's slug already owns). If the database
+cannot be read
 at all, the label goes to the game rather than the editor: a shared link to a
 real level is the common case, and the loader's own "no such level" screen beats
 a stranger's editor opening over a name that exists. `www.codemonkey.games` is

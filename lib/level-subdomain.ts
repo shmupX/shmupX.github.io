@@ -24,7 +24,10 @@
 // — so the label is matched exactly first, then lowercased, then against
 // every key's lowercase (sorted, so a tie such as `ramsie`/`Ramsie` resolves
 // the same way every time). A key the DNS could never spell (a space, an
-// underscore, a dot) is simply not reachable this way.
+// underscore, a dot) is reached by its slug: every run of such characters
+// becomes one hyphen, so master-arena-mod.codemonkey.games is the level stored
+// as `Master Arena Mod` (levelSlug). The slug is the level's own name, so it
+// ranks above an alias.
 //
 // A game can also answer to ALIASES: other labels that name the same level,
 // so 2019.codemonkey.games and streetfighter.codemonkey.games both open
@@ -126,8 +129,18 @@ export function isAliasName(name: string): boolean {
 }
 
 /**
- * The stored key a label stands for: exact, then by case, then an alias whose
- * level still exists, else null.
+ * How a key is spelled as a DNS label: lowercase, every run of characters a
+ * hostname cannot hold (a space, an underscore, a dot...) one hyphen, none at
+ * the ends. `Master Arena Mod` is `master-arena-mod`. "" when nothing is left.
+ */
+export function levelSlug(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/**
+ * The stored key a label stands for: exact, then by case, then by slug (the
+ * key as a label, levelSlug), then an alias whose level still exists, else
+ * null. A level's own name, however it is spelled, beats an alias.
  */
 export function matchLevelKey(
   label: string,
@@ -138,6 +151,10 @@ export function matchLevelKey(
   const wanted = label.toLowerCase();
   const candidates = keys.filter((k) => k.toLowerCase() === wanted).sort();
   if (candidates.length) return candidates[0];
+  const slugged = wanted
+    ? keys.filter((k) => levelSlug(k) === wanted).sort()
+    : [];
+  if (slugged.length) return slugged[0];
   const aliased = Object.hasOwn(aliases, wanted) ? aliases[wanted] : undefined;
   return typeof aliased === "string" && keys.includes(aliased) ? aliased : null;
 }
@@ -167,7 +184,9 @@ export function planAliases(
       errors.push(
         `"${raw}" is not an alias: letters, digits and inner hyphens, as in a subdomain`,
       );
-    } else if (keys.some((k) => k.toLowerCase() === name)) {
+    } else if (
+      keys.some((k) => k.toLowerCase() === name || levelSlug(k) === name)
+    ) {
       errors.push(`"${name}" is already a level's own name`);
     } else if (Object.hasOwn(aliases, name) && aliases[name] !== key) {
       errors.push(`"${name}" already names "${aliases[name]}"`);
