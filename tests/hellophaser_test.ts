@@ -105,3 +105,26 @@ Deno.test("runtime: attachTrail is wired into the player, zako and boss", async 
   assert(src.includes("attachTrail(scene, p.sprite, pd && pd.trail);"));
   assert(src.includes("attachTrail(scene, scene.bossSprite, bossData.trail);"));
 });
+
+Deno.test("hellophaser: the eShop archive and its row", async () => {
+  const { gameEntries } = await import("../scripts/hellophaser/build-zip.ts");
+  const entries = await gameEntries();
+  assertEquals(entries.map((e) => e.path), [
+    "foo.json",
+    "game.bundle.js",
+    "index.html",
+  ]);
+  const foo = JSON.parse(new TextDecoder().decode(entries[0].data));
+  assertEquals(foo.gameId, rec.gameId);
+  assert(
+    new TextDecoder().decode(entries[1].data).includes("function attachTrail("),
+  );
+  const shop = JSON.parse(
+    await Deno.readTextFile(new URL("../data/eshop.json", import.meta.url)),
+  );
+  const rows = Array.isArray(shop) ? shop : Object.values(shop).flat();
+  const row = (rows as any[]).find((r) => r && r.id === "hellophaser");
+  assert(row, "no eShop row");
+  assertEquals(row.downloadUrl, "/games/hellophaser-web.zip");
+  await Deno.stat(new URL("../static" + row.icon, import.meta.url));
+});
