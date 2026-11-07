@@ -433,12 +433,15 @@
       const isBlob = typeof Blob !== "undefined" && src instanceof Blob;
       const url = isBlob ? URL.createObjectURL(src) : src;
       const img = new Image();
-      const done = (value) => {
+      // A loaded image keeps its blob URL: a GPU reset can drop its decoded
+      // pixels, and the canvas replay (rememberCanvas) decodes it again from
+      // that URL. Revoked, the replay drew nothing: a shelf cart's atlas (ship,
+      // enemies, shots) came back blank after the tab was backgrounded.
+      img.onload = () => resolve(img);
+      img.onerror = () => {
         if (isBlob) URL.revokeObjectURL(url);
-        resolve(value);
+        resolve(null);
       };
-      img.onload = () => done(img);
-      img.onerror = () => done(null);
       img.src = url;
     });
   }
@@ -505,6 +508,7 @@
   const canvasRepaintHooks = new Set();
   const armedGames = new WeakSet();
   let canvasRepaintTimer = 0;
+  let canvasDecoding = false;
 
   function stableCanvas(width, height) {
     const canvas = document.createElement("canvas");
@@ -595,6 +599,26 @@
     if (attempt < 30 && contexts.some((ctx) => !ctx || canvasContextLost(ctx))) {
       scheduleCanvasRepaint(attempt + 1);
       return;
+    }
+    // drawImage of an image whose decoded pixels went with the GPU process
+    // paints nothing, so every image the logs draw is decoded again first
+    // (decode() re-reads it from its URL, which loadImage keeps alive).
+    if (!canvasDecoding) {
+      const decodes = [];
+      for (const [entry] of lost) {
+        for (const op of entry.ops) {
+          const src = op.call === "drawImage" ? op.args[0] : null;
+          if (src && typeof src.decode === "function" && src.src) decodes.push(src.decode().catch(() => {}));
+        }
+      }
+      if (decodes.length) {
+        canvasDecoding = true;
+        Promise.all(decodes).then(() => {
+          repaintLostCanvases(attempt);
+          canvasDecoding = false;
+        });
+        return;
+      }
     }
     let repainted = 0;
     lost.forEach(([entry, canvas], i) => {
@@ -3558,8 +3582,8 @@
     return new Promise(function(resolve) {
       var url = URL.createObjectURL(blob);
       var img = new Image();
+      // Kept for a GPU-reset replay, as in loadImage.
       img.onload = function() {
-        URL.revokeObjectURL(url);
         resolve(img);
       };
       img.onerror = function() {
