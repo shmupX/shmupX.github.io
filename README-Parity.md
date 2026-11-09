@@ -421,14 +421,37 @@ passes the slot's icon); only its name is collapsed to the six-way digit.
   shots, gauge, counts); the barrier's duration and hit rule; the bomb-stock
   seed (the runtime hard-codes 3) and the spare-ship count (hard-codes 2).
 
-### P5. SUB weapons 1-4 are not there; Ramsie's player 1 flies one
+### P5. SUB weapons 1-4 fire, on untraced geometry; Ramsie's player 1 flies one
 
-The runtime implements MAIN 1-7, CHARGE 1-3, OPTION A/B/C and the eight
-bomb classes, but SUB 1-4 (H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER) are
-"stood in for" by Duke's stock autofire (interval 23 ticks, damage 1).
-Ramsie's preset 0 is H-MISSILE and preset 2 is G-MISSILE. On the Saturn the
-survey saw H-MISSILE's objects (sprite 21, attack 13312 — the top of its
-per-level table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
+**Landed 2026-11-09, without the disc — the handlers are still untraced.**
+Until then SUB 1-4 (H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER) were "stood
+in for" by Duke's stock autofire (interval 23 ticks, damage 1). They now
+have their own handler (`fireDezaSub`), and the stock autofire is switched
+off while one is equipped (`dezaSubOwnsShot`). Ramsie's preset 0 is
+H-MISSILE and preset 2 is G-MISSILE. On the Saturn the survey saw
+H-MISSILE's objects (sprite 21, attack 13312 — the top of its per-level
+table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
+
+What the web's SUB 1-4 stand on:
+
+| | Source |
+| --- | --- |
+| Reload 24 / 32 / 10 / 32 frames, one dispatcher call per re-arm | traced (`+0x21C60`, `+0x21C68`); that the drain is a plain 1 a frame is assumed from MAIN 1-6 |
+| Damage at OPTION 0 and OPTION 4 (13312/5120, 19712/11520, 256/128, 1024/1152) | traced (the tables' ends) |
+| Damage at OPTION 1-3 | **interpolated** in even steps, as every traced five-entry table of this engine runs |
+| H-MISSILE at OPTION 0 = two shots of 13312, in slots of their own (not MAIN's 30) | surveyed (slots 68-69) |
+| No ×1.5: that rule pays for SUB = 0 | traced (`+0xBA00` tests the SUB field) |
+| SUB 1-4 fire through a held charge | traced (the lockout stores flag 3 only for SUB 7, `+0xA2EA`) |
+| Shot count above OPTION 0, muzzles, speeds, acceleration, homing, lifetime, the 12-slot window | **provisional — invented**, from the editor's names |
+| G-MISSILE and RF-LASER bill per overlapping frame | **assumed** from the size of their tables (two orders under 1 and 2, like MAIN 4-6) |
+
+The provisional behaviours: H-MISSILE launches 2-6 missiles straight up that
+accelerate and turn toward the nearest target; S-MISSILE 2-6 that fly dead
+straight, accelerating; G-MISSILE a slow piercing fan of 2-6; RF-LASER a
+diagonal pair that reflects off the side walls for 96 frames. All of it is
+the `DEZA_SUB_*` constant block in `game.bundle.js`, written so the trace
+replaces numbers, not structure. They draw the ship's stock shot art (P3).
+The web still has no SUB button: it autofires SUB as it autofires MAIN.
 
 - Hardware: dispatcher `+0x15128`, jump table `+0x15150` entries 1→`+0xF498`
   … 4; cadence twins `+0x21C60 = [0,1,1,1,1,1,3,0]` / `+0x21C68 =
@@ -436,20 +459,33 @@ per-level table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
   FORMAT.md L1209, and `+0x21D8C` (19712..11520), `+0x21DAC` (256..128),
   `+0x21DCC` (1024..1152) read out of the spawn sites and recorded only in
   `decode-settings.js` L45-47. FORMAT.md L1231 says the rest is untraced.
-- Code: `dezaSubType` has seven reads in five roles — the pod count,
-  rebuild and update, the charge lockout (type 7 only), the OPTION C
-  re-muzzle through every pod, the OPTION C tables for MAIN 5/6, and the
-  ×1.5 no-SUB bonus (`game.bundle.js` ~12365-12847); none reaches a type
-  1-4 handler.
-- Trace: the four handlers' geometry, speed, lifetime and homing rules —
-  the second trace on the list. It also decides the hp divisor:
-  `shotDamage` is keyed on the SUB field (H-MISSILE's 5120 units → 20 for
-  Ramsie) because the SUB is what the stock autofire stands in for; a
-  divisor built from the MAIN tables would be VULCAN B's 2560 floor → 10,
-  halving every hit count, and the decoder's own comment leaves which field
-  should set the pace open. The Saturn kills Ramsie's D (25600 units) in
-  four VULCAN B bullets of 6656; the web, with hp 5 at 5120 per hit, needs
-  five.
+- Code: `fireDezaSub`, `dezaStepSubHoming`, the SUB gate at the end of
+  `updateDezaWeapons`, `dezaSubOwnsShot` and the `DEZA_SUB_*` block in
+  `game.bundle.js`; `tests/deza_sub_weapons_test.ts` pins the traced and
+  surveyed rows of the table above and leaves the provisional ones free.
+- Trace: still the second on the list (T2) — the four handlers' geometry,
+  speed, lifetime and homing rules, the middle of each damage table, the
+  billing period of 3 and 4, and the SUB slot window.
+- **The hp divisor is not what made the web need five hits on D**
+  (corrected 2026-11-09; this paragraph used to say the trace "decides the
+  hp divisor"). Ramsie's D is 25600 units, hp 5 at the 5120 divisor. The
+  web's own VULCAN B bullet does 6656/5120 = 1.3 and always killed D in
+  four, as the Saturn does; the shot that needed five was the flat
+  1-damage stock autofire standing in for H-MISSILE, which is gone now
+  (two H-MISSILEs of 13312 kill D). Every traced weapon divides by the same
+  number hp does, so the divisor cancels out of its hit count; `shotDamage`
+  (keyed on the SUB field, 20 for Ramsie) only sets what the runtime's
+  remaining flat-damage sources are worth.
+- **The drift that was real was the importer's rounding**, fixed the same
+  day: hp was `max(1, ceil(units / divisor))`, whole steps against
+  fractional damage. A 12800-unit enemy (Ramsie's F and R) became hp 3 and
+  took three VULCAN B bullets at OPTION 0 where the Saturn takes two; at
+  OPTION 2-4 a 256-unit enemy took two instead of one. hp is the unrounded
+  ratio now (`unitsToHp` in `map-to-game.js`; the runtime treats a residue
+  under `DEZA_HP_EPS` as spent and no longer rounds the 2P ×1.5), so the
+  count is `ceil(units / attack)` for every weapon and level
+  (`map-to-game.test.js`). A cart imported before this keeps its rounded hp
+  until it is re-imported (`deno task level:reimport`).
 
 ### P6. Enemy bullets: all shootable, half-speed crossing, a garbage config
 
@@ -619,7 +655,7 @@ pieces of them a 60-second stage exercises.
 | P2 | **landed 2026-10-27** — a big shot is the named record spawned as a zako; its art, hp, armour and script are the record's | importer + runtime | re-survey | none |
 | P3 | ship's shots, pods, charge and bombs drawn with Duke's art / shapes | importer + runtime | yes | effect art per level |
 | P4 | weapon-change items inert; drops fall; barrier timed; cycle baked | runtime + importer | yes | `+0x1CF3C`, barrier, stock seeds |
-| P5 | SUB 1-4 missing (Ramsie P1 flies H-MISSILE) | runtime | yes | SUB handlers |
+| P5 | SUB 1-4 fire on provisional geometry (landed 2026-11-09); hp no longer rounded | runtime + importer | yes | SUB handlers (T2) |
 | P6 | every bullet shootable; blasts stock; type-3 config | runtime | yes | blast objects (T17) |
 | P7 | ship speed/autofire/stock constants | runtime | yes | hit box, respawn, seeds |
 | P8 | parts silent, beam/flame invented, no HP-stage invulnerability | runtime | yes | types 5/6, core frames |
@@ -747,7 +783,7 @@ P-item above.
 | # | What | Where to start | Blocks | Why it matters for Ramsie |
 | --- | --- | --- | --- | --- |
 | T1 | **Settled 2026-10-27.** The seven `+0x16070..+0x165E0` routines are the grid's own spawn wrappers, not updaters: a big shot is the record byte 5 names, spawned through the zako initialiser at the shooter's position, and moves by that record's appearance script and change channels. FORMAT.md "Bullet type 3". | — | P2 | the runtime spawns the roster entry as a zako |
-| T2 | SUB weapons 1-4: H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER handlers (geometry, speed, lifetime, homing) | jump table `+0x15150` entries 1-4 (`+0xF498` is entry 1) | P5 | P1's starting weapon and preset 2's; also decides the hp divisor (SUB 20 vs MAIN 45) |
+| T2 | SUB weapons 1-4: H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER handlers (geometry, speed, lifetime, homing) | jump table `+0x15150` entries 1-4 (`+0xF498` is entry 1) | P5 | P1's starting weapon and preset 2's: the web fires them on invented geometry until this lands. Also the middle three entries of `+0x21D6C/8C/AC/CC`, whether 3 and 4 bill per frame, the SUB slot window, and that SUB is on B. (It does not decide the hp divisor — see P5.) |
 | T3 | Weapon-change pickup `+0x1CF3C`: what it resets | `+0x1CF3C`, the six pod-rebuild events | P4 | eight weapon-change pickups on stage 0 alone |
 | T4 | Boss fire-point types 5 (beam) and 6 (flame): geometry, damage, duration, art | period table `+0x21FA0` and its readers in the executor `+0x19FF4` | P8 | stage-0 boss pattern 0 and 2 run a beam |
 | T5 | Ship: hit box, respawn position/sequence, invincibility window, spare-ship seed, bomb-stock seed, extend rule | player init `+0x90EC`/`+0x92E6`; the lives byte's writers (`--xref 0x06084354`); death bit7 path from `+0x0635C` | P7 | every death and every bomb |

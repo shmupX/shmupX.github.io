@@ -52,7 +52,8 @@ async function bombDamage() {
   return new Function(
     "scene",
     "b",
-    src + "\nreturn dezaBombDamage(scene, b);",
+    // The kill test's float tolerance is a constant of the bundle's IIFE.
+    "var DEZA_HP_EPS = 1e-9;" + src + "\nreturn dezaBombDamage(scene, b);",
   ) as (scene: unknown, b: unknown) => void;
 }
 

@@ -2842,6 +2842,9 @@ var BLANK_WAVES = 8;
 var FRAMES_PER_SOURCE_ROW = 8;
 var PLAYER_SHOT_DAMAGE_BY_LEVEL = [9, 12, 15, 18, 21];
 var ENGINE_SHOT_DAMAGE = 20;
+function unitsToHp(units, shotDamage) {
+  return units / (shotDamage * 256);
+}
 var ENEMY_BULLET_SPEED = 2.5;
 function enemyLetters(index) {
   let n = index;
@@ -2957,7 +2960,7 @@ function sizePartHp(boss, shotDamage) {
       if (spawn.armour) {
         spawn.hp = "infinity";
       } else if (Number.isFinite(spawn.hp)) {
-        spawn.hp = Math.max(1, Math.ceil(spawn.hp / (shotDamage * 256)));
+        spawn.hp = unitsToHp(spawn.hp, shotDamage);
       }
     }
   }
@@ -3018,7 +3021,7 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
     }
     if (e.behavior) {
       const armoured = !!(e.behavior.move && e.behavior.move.mode & 1);
-      rec.hp = armoured ? "infinity" : Math.max(1, Math.ceil(e.behavior.hp / (shotDamage * 256)));
+      rec.hp = armoured ? "infinity" : unitsToHp(e.behavior.hp, shotDamage);
       rec.score = e.behavior.score;
       rec.interval = e.behavior.fire.enabled ? e.behavior.fire.interval : -1;
       if (e.behavior.fire.enabled && rec.bulletData) {
@@ -3142,12 +3145,12 @@ function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntry = nul
       rec.dezaemon = { sizeClass: decodedBoss.sizeClass, row: decodedBoss.row, col: decodedBoss.col };
       if (decodedBoss.behavior) {
         rec.dezaemon.boss = clone(decodedBoss.behavior);
-        rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
+        rec.hp = unitsToHp(decodedBoss.behavior.hp, shotDamage);
         rec.score = decodedBoss.behavior.score;
         sizePartHp(rec.dezaemon.boss, shotDamage);
         setPartSpgage(rec.dezaemon.boss, defaults);
       } else {
-        rec.hp = Math.max(1, Math.ceil(BOSS_HP_TABLE[0] / (shotDamage * 256)));
+        rec.hp = unitsToHp(BOSS_HP_TABLE[0], shotDamage);
       }
       if (decodedBoss.partArt) {
         const partArt = {};
@@ -3551,12 +3554,13 @@ function decodeSettings(sec5) {
     // Player 1's starting MAIN weapon (byte0 bits4-6). Metadata only —
     // nothing downstream branches on it.
     mainWeapon: startWeapons.main,
-    // Shot damage stays keyed on byte0 bits0-2, the SUB field, because
-    // that is the weapon the runtime's own autofire stands in for and the
-    // field WEAPON_FULL_POWER_DAMAGE above was calibrated against. The
+    // Shot damage stays keyed on byte0 bits0-2, the SUB field, the one
+    // WEAPON_FULL_POWER_DAMAGE above was calibrated against. The
     // 2026-09-02 MAIN/SUB correction renamed the field under it and left
-    // the value untouched; whether the pace should instead follow MAIN is
-    // a separate question that would change every save's difficulty.
+    // the value untouched. Since 2026-11-09 it no longer sets any traced
+    // weapon's hit count — hp is the unrounded ratio (unitsToHp in
+    // map-to-game.js) and those weapons divide by the same number — so
+    // it only prices the runtime's remaining flat-damage sources.
     shotDamage: weaponShotDamage(startWeapons.sub),
     // The 8 item slots (+0x1C..+0x23) — decoded 2026-08-28: each byte is
     // (movement << 4) | itemType. Types (effect pointer table +0x25ACC):
@@ -5402,6 +5406,10 @@ var MAX_GRID_COLS = 20;
 function isObj(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
+function checkTrail(where, t, err) {
+  if (t === void 0) return;
+  if (!isObj(t) || !isTextureArray(t.texture)) err(`${where}.trail must be an object with a non-empty texture array`);
+}
 function isTextureArray(v) {
   return Array.isArray(v) && v.length > 0 && v.every((t) => typeof t === "string" && t.length > 0);
 }
@@ -5432,6 +5440,7 @@ function validateGameJson(g) {
       if (!Number.isFinite(e.hp) && e.hp !== "infinity") err(`${k}.hp must be a number or "infinity"`);
       if (!Number.isFinite(e.score)) err(`${k}.score must be a number`);
       if (!isTextureArray(e.texture)) err(`${k}.texture must be a non-empty string array`);
+      checkTrail(k, e.trail, err);
     }
   }
   const stageKeys = Object.keys(g).filter((k) => STAGE_KEY_RE.test(k));
@@ -5494,6 +5503,7 @@ function validateGameJson(g) {
     const p = g.playerData;
     if (!Number.isFinite(p.maxHp)) err("playerData.maxHp must be a number");
     if (!isTextureArray(p.texture)) err("playerData.texture must be a non-empty string array");
+    checkTrail("playerData", p.trail, err);
     for (const shoot of ["shootNormal", "shootBig", "shoot3way"]) {
       if (!isObj(p[shoot]) || !isTextureArray(p[shoot].texture)) {
         err(`playerData.${shoot} must be an object with a non-empty texture array`);
@@ -5524,6 +5534,7 @@ function validateGameJson(g) {
       }
       if (!Number.isFinite(b.hp)) err(`${k}.hp must be a number`);
       if (!isObj(b.anim) || !isTextureArray(b.anim.idle)) err(`${k}.anim.idle must be a non-empty string array`);
+      checkTrail(k, b.trail, err);
     }
     for (const k of stageKeys) {
       const num = Number(k.match(STAGE_KEY_RE)[1]);
@@ -7433,7 +7444,7 @@ function withDeathChild(bytes, index) {
 }
 function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
   const speed = Number.isFinite(rec.speed) ? rec.speed : 1;
-  const hits = rec.hp === "infinity" ? 1 : Math.max(1, Number(rec.hp) || 1);
+  const hits = rec.hp === "infinity" ? 1 : Number(rec.hp) > 0 ? Number(rec.hp) : 1;
   const interval = Number(rec.interval);
   const fires = Number.isFinite(interval) && interval > 0;
   return encodeEnemyRecord({
