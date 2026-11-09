@@ -22,8 +22,10 @@ Two weapon layers run at once on an import.
 shootBig / shoot3way` picked by `p.shootMode` (`normal`, `big`, `3way`),
 `shootSpeed` (`speed_high` = interval × 0.6), a 4-second `barrier`, the SP
 gauge that every kill feeds and the cut-in special it fires. Autofire runs
-at `shootNormal.interval` (Duke's 23 ticks). On an import this layer is the
-declared stand-in for the SUB weapon.
+at `shootNormal.interval` (Duke's 23 ticks). On an import it stood in for
+the SUB weapon until 2026-11-09; it is now switched off while SUB 1-4 is
+equipped (they fire their own shots) and still runs for SUB 0 and the
+OPTION values.
 
 **The Dezaemon kit** (`dezaKit(scene)`: `meta.dezaemonSettings` on a cart,
 `DEZA_CROSSOVER_KIT` — one preset, MAIN 1 / OPTION A / CHARGE 1 / no bomb —
@@ -33,7 +35,7 @@ tables and cadences:
 | Family | Values | State |
 | --- | --- | --- |
 | MAIN | 1 VULCAN A, 2 VULCAN B, 3 MISSILE, 4 HOMING, 5 SHADOW, 6 WAVE, 7 BOUND | implemented (`fireDezaMain`); homing links drawn as a trail; a boss never bounces the WAVE ball |
-| SUB | 1 H-MISSILE, 2 S-MISSILE, 3 G-MISSILE, 4 RF-LASER | **not implemented** — the stock autofire stands in |
+| SUB | 1 H-MISSILE, 2 S-MISSILE, 3 G-MISSILE, 4 RF-LASER | implemented (`fireDezaSub`) with the traced cadence and damage-table ends; **geometry, counts, homing and lifetimes are provisional** until the handlers are traced (README-Parity P5) |
 | SUB | 5 OPTION A, 6 OPTION B, 7 OPTION C | implemented (`updateDezaPods`); A's ring widening on its own key |
 | CHARGE | 1 CANNON, 2 LASER, 3 FIRE | implemented, on its own input (SHIFT / shoulder) since the ship autofires |
 | BOMB | 1-7 + variant → behaviours 1-8 | implemented, drawn as Graphics shapes; stock 3, seed untraced |
@@ -204,7 +206,7 @@ with its own untraced behaviour; "—" means the format has no such thing.
 | Homing chains (MAIN 4) | yes | same (trail) | — | — | ? | ? | — |
 | Column / laser (MAIN 5, CHARGE 2) | yes | same | — | — | similar (contact lasers) | ? | similar (`laser`, power 0-2) |
 | Wave ball, bound pair (MAIN 6, 7) | yes | same | — | — | — | ? | — |
-| H/S/G-MISSILE, RF-LASER (SUB 1-4) | yes (untraced) | **missing** | — | — | ? | ? (weapons 0-5 unnamed) | — |
+| H/S/G-MISSILE, RF-LASER (SUB 1-4) | yes (untraced) | provisional (traced cadence and damage, invented geometry) | — | — | ? | ? (weapons 0-5 unnamed) | — |
 | Option pods A/B/C (SUB 5-7) | yes | same | — | — | — | similar (`option` item) | — |
 | Charge shot (CHARGE 1-3) | yes | same | — | — | — | similar (charge time byte) | — |
 | Bomb by type (7 + variant) | yes | same (shapes) | — | — | similar (8 types, 3 colours, unnamed) | similar (one bomb) | similar (bombs 0-3) |

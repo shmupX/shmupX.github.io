@@ -49,13 +49,26 @@ export const PLAYER_SHOT_DAMAGE_BY_LEVEL = [9, 12, 15, 18, 21];
 // 0x6095040). A save picks its own main weapon (settings +0x0F low nibble),
 // and decode-settings.js hands its full-power bullet over as `shotDamage` in
 // LIFE units — the raw count >> 8, 20 for weapon 1's 5120. Enemy hp is sized
-// as ceil(rawUnits / (shotDamage * 256)) so that one runtime damage point is
-// one full-power main-shot hit, and the runtime's own Dezaemon weapons divide
-// by that same number. Bosses take the SAME divisor — they are the same units
+// as rawUnits / (shotDamage * 256), UNROUNDED (see unitsToHp), so that one
+// runtime damage point is one full-power main-shot hit, and the runtime's own
+// Dezaemon weapons divide by that same number. Bosses take the SAME divisor — they are the same units
 // through the same scaler into the same hp words, and only their table differs
 // (see the boss block below). This is the fallback when a save's settings
 // block does not decode: weapon 1, i.e. exactly 5120 raw.
 export const ENGINE_SHOT_DAMAGE = 20;
+
+// Engine durability units -> the runtime's hp, as an exact ratio. It was
+// `max(1, ceil(...))` until 2026-11-09, which rounded hp UP to whole divisor
+// steps while every traced weapon's damage stayed fractional, and so added
+// hits the engine does not ask for: a 12800-unit enemy (2.5 at 5120) became
+// hp 3, and VULCAN B's 6656 (1.3 a hit) needed three shots where the Saturn
+// needs two; at OPTION 2-4 a 256-unit enemy took two instead of one. Kept as
+// a ratio, the hit count is ceil(units / attack) for every weapon, whatever
+// the divisor is — the divisor now only sets what the runtime's remaining
+// flat 1-damage shots are worth.
+export function unitsToHp(units, shotDamage) {
+    return units / (shotDamage * 256);
+}
 
 // Saturn zako bullets cross the playfield in a couple of seconds; the
 // runtime default of 1 px/frame takes eight, and slow bullets accumulate
@@ -210,7 +223,7 @@ function sizePartHp(boss, shotDamage) {
             if (spawn.armour) {
                 spawn.hp = "infinity";
             } else if (Number.isFinite(spawn.hp)) {
-                spawn.hp = Math.max(1, Math.ceil(spawn.hp / (shotDamage * 256)));
+                spawn.hp = unitsToHp(spawn.hp, shotDamage);
             }
         }
     }
@@ -334,8 +347,9 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             // The record's hp is in engine durability units and `shotDamage`
             // is that unit count >> 8 (LIFE units), so the divisor is
             // shotDamage * 256 — a full-power weapon-1 bullet, 5120 units.
-            // The runtime's shots do 1 damage each, so this is a hit count:
-            // the eight LIFE steps become [1,3,5,10,20,40,50,100].
+            // A flat 1-damage shot therefore needs [1,3,5,10,20,40,50,100]
+            // hits on the eight LIFE steps; the hp itself stays a ratio
+            // ([0.05, 2.5, 5, ...]) so a traced weapon's count is exact.
             //
             // ARMOUR (record byte 2 bit 4, `move.mode` bit 0) is the engine's
             // indestructible attribute: the per-object collision tail
@@ -346,7 +360,7 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
             const armoured = !!(e.behavior.move && (e.behavior.move.mode & 1));
             rec.hp = armoured
                 ? "infinity"
-                : Math.max(1, Math.ceil(e.behavior.hp / (shotDamage * 256)));
+                : unitsToHp(e.behavior.hp, shotDamage);
             rec.score = e.behavior.score;
             // No `rec.speed`: byte 2's low bits are the hp index, not a
             // speed one, so a scripted zako's motion comes from its appearance
@@ -580,7 +594,7 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 // one bar rather than multiplying it (spawn `+0x1B038` fills
                 // the threshold table with hp/2, 2hp/3+hp/3, 3hp/4+2hp/4+hp/4).
                 rec.dezaemon.boss = clone(decodedBoss.behavior);
-                rec.hp = Math.max(1, Math.ceil(decodedBoss.behavior.hp / (shotDamage * 256)));
+                rec.hp = unitsToHp(decodedBoss.behavior.hp, shotDamage);
                 rec.score = decodedBoss.behavior.score;
                 sizePartHp(rec.dezaemon.boss, shotDamage);
                 // The SP-gauge award, which is NOT a record field and so is
@@ -598,7 +612,7 @@ export function mapSaveToGame(decoded, { defaults = BUILTIN_DEFAULTS, sourceEntr
                 // would now drop an unedited boss to a sixth of its neighbours.
                 // (Its score stays the starter's: byte 1's score nibble is a
                 // separate field and this item is the hp ladder.)
-                rec.hp = Math.max(1, Math.ceil(BOSS_HP_TABLE[0] / (shotDamage * 256)));
+                rec.hp = unitsToHp(BOSS_HP_TABLE[0], shotDamage);
             }
             if (decodedBoss.partArt) {
                 // Fire-point part art (types 3/4): record -> atlas frame

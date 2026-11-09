@@ -254,12 +254,13 @@ export function decodeSettings(sec5) {
         // Player 1's starting MAIN weapon (byte0 bits4-6). Metadata only —
         // nothing downstream branches on it.
         mainWeapon: startWeapons.main,
-        // Shot damage stays keyed on byte0 bits0-2, the SUB field, because
-        // that is the weapon the runtime's own autofire stands in for and the
-        // field WEAPON_FULL_POWER_DAMAGE above was calibrated against. The
+        // Shot damage stays keyed on byte0 bits0-2, the SUB field, the one
+        // WEAPON_FULL_POWER_DAMAGE above was calibrated against. The
         // 2026-09-02 MAIN/SUB correction renamed the field under it and left
-        // the value untouched; whether the pace should instead follow MAIN is
-        // a separate question that would change every save's difficulty.
+        // the value untouched. Since 2026-11-09 it no longer sets any traced
+        // weapon's hit count — hp is the unrounded ratio (unitsToHp in
+        // map-to-game.js) and those weapons divide by the same number — so
+        // it only prices the runtime's remaining flat-damage sources.
         shotDamage: weaponShotDamage(startWeapons.sub),
         // The 8 item slots (+0x1C..+0x23) — decoded 2026-08-28: each byte is
         // (movement << 4) | itemType. Types (effect pointer table +0x25ACC):

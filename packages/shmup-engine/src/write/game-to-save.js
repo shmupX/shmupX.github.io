@@ -455,7 +455,9 @@ export function withDeathChild(bytes, index) {
 
 export function enemyRecordFromEditor(rec, { bulletType = 0, dropSlot = null } = {}) {
     const speed = Number.isFinite(rec.speed) ? rec.speed : 1;
-    const hits = rec.hp === "infinity" ? 1 : Math.max(1, Number(rec.hp) || 1);
+    // Fractional on an import (hp is units / SHOT_UNITS, unrounded), so no
+    // floor at 1: 0.05 is the 256-unit step and has to write back as it.
+    const hits = rec.hp === "infinity" ? 1 : (Number(rec.hp) > 0 ? Number(rec.hp) : 1);
     const interval = Number(rec.interval);
     const fires = Number.isFinite(interval) && interval > 0;
     return encodeEnemyRecord({
