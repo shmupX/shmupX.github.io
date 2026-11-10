@@ -122,6 +122,53 @@ names what is still to be read out of GAME.CMP before the fix can be exact;
 
 ### P1. The web plays on a 256×480 window; the Saturn on 320×224
 
+**Landed 2026-11-10 as an opt-in field mode, for vertical carts, and not
+yet re-surveyed** (no disc on the box it was written on; the paragraphs
+below are the measurement it answers). `?field=saturn` plays a vertical
+Dezaemon import on the Saturn's own screen: the runtime boots at 320×224,
+the 20-column grid lies 1:1 from x 0 and the 224-px background at 48..272,
+and the engine's numbers are applied with no scale factor. The shipped
+game, and every level without the flag, keeps 256×480.
+
+| Rule | On the field | Source |
+| --- | --- | --- |
+| Wave gate | `row·16 − 272` (was `− 512`): a row is spawned 48 px above a 224-px top | traced (`+0x152E8`), surveyed |
+| Spawn, scroll axis | the row's own line shifted by the band byte, subtracted for air and added for ground: a 16/32/64-px air sprite starts at y −32/−40/−56, every foot 24 px above the screen | traced (`+0x1679A`) |
+| Spawn, lateral | the cell's left edge plus half the band's width (`col·16 + w/2`) | traced (`+0x169EE`), surveyed |
+| Change-channel lines | 62 / 112 / 164 px, band-shifted, unscaled | traced |
+| Steering kink / split | 64 / 96 px of flight (were 128 / 192) | traced |
+| Fire window | lateral 48..272, scroll 0..224 | traced (`+0x1983E`) |
+| Ship | x 60..259, y 20..212, whatever the art's width | traced (`+0xAB0E`) |
+| Shots and enemy bullets leave | by the despawn box, x 16..304, y −16..256 | traced (`+0x173A4`) |
+| Boss arrival and death presets | in the screen's own px (were doubled along the scroll) | decoded |
+| Title, staff roll, SCORE and BOMB | at their Saturn coordinates, no 32-px window and no band | measured |
+| **An enemy leaves** | under y 256, or 16 px outside the picture at the sides | **provisional**: the box's bottom line; a zako's own bound is per size class (`+0x4C8C`) and unread (T21) |
+| **A ground object's start** | with its row, like an air one, the band byte added | **provisional**: the engine's separate −240 px start (`0x8800`) is not applied — at this gate it would lift a turret 192 px off the terrain it is painted on, and W stood at its row + 8 (T21) |
+
+It is a boot flag because the screen's size is baked into the Phaser
+config and copied into some twenty module-level `GW`/`GH` pairs before any
+level has loaded; `DEZA_FIELD` is read ahead of all of them, so they
+follow it. Once the level resolves the boot scene reloads without the flag
+for anything the field does not fit (`dezaFieldFits`): a level that is no
+Dezaemon import, and a **horizontal cart** — the runtime draws those
+transposed, so they need a 224×320 field with the scroll axis shifted by
+the 96-px entry margin, which is the part of P1 still open. The page fits
+the canvas at the field's size and is not turned for a landscape screen
+(`html.field-saturn`, `lib/game-page.ts` and the exported app's shell); a
+cabinet backdrop or bezel is not drawn (it frames the tall screen); the
+title's WORLD BEST block and the game-over portrait are left out, and the
+story is off, because those three are laid out on 480 lines. The rig takes
+`--field saturn` with `--full` (§6): the web pane is recorded at 320×224,
+the pilot flies inside the ship's clamps and `--survey-lead` defaults to 0.
+
+Checked in a browser on a synthetic cart (the stock game written to a
+`.sav` and imported back, its map extended to 768 rows): the same rows
+came into view 240 px of scroll later than on the tall screen, a 32×32 air
+zako at y −40 and a ground one at −56, columns 0 and 19 centred at x 16
+and 320 (a 32-px sprite). What that does not show is the Saturn beside it: the
+acceptance run is `--field saturn` on Ramsie, every record within one row
+and W settled either way.
+
 **Measured.** Every placement row enters the web's screen 240 scroll-px
 (4.7–5.8 s at 45 px/s) before it enters the Saturn's, on thirteen of the
 eighteen records that appeared in both runs (B is left out because the
@@ -198,7 +245,7 @@ ground spawn offset and the arm test are traced (`+0x152E8`, `+0x1679A`,
   wave gate `scrollPos >= row·16 − 512` and the spawn at `GH + scroll −
   (row·16 + 8)`; `CHANNEL_TRIGGER_SCALE = 480/224`; `DEZA_STEER_PX = 2`;
   `dezaVolley`'s `(rank·4/512 + speedAdd)·2`.
-- Fix: a Dezaemon **field mode** for imports — the simulation on the
+- Fix (landed for vertical carts, above): a Dezaemon **field mode** for imports — the simulation on the
   Saturn's 320×224 screen, letterboxed or scaled into the page (the
   Saturn's own 4:3), the gate and spawns at the traced 272/48/240 px with
   the band shift and the width-aware centre, the ground arm rule, bullet
@@ -206,8 +253,8 @@ ground spawn offset and the arm test are traced (`+0x152E8`, `+0x1679A`,
   ship clamp at x 60..259 / y 20..212. This is the single largest change
   and the precondition for comparing anything else by eye; until it lands,
   every timing comparison must be made in scroll px, as the survey does.
-- Trace: none needed for the field; the clamp, the offsets and the arm
-  test are traced.
+- Trace: T21 — the ground start and a zako's despawn bound. The clamp,
+  the air offset and the arm test are traced; draw order is T18.
 
 ### P2. "Purple fireballs": the big shot is drawn with 2028.Ai's stock bullet
 
@@ -651,7 +698,7 @@ pieces of them a 60-second stage exercises.
 
 | # | Difference | Kind | Blocks 1:1 | Trace needed |
 | --- | --- | --- | --- | --- |
-| P1 | 256×480 window vs 320×224; rows enter 240 px early, ground objects armed like air, bullets cross in 2.14× the time | runtime geometry | yes | draw order only (T18) |
+| P1 | **landed 2026-11-10 as `?field=saturn`, vertical carts** — 320×224 with the engine's gate, spawn, lines, clamps and despawn box; horizontal carts and the default screen still 256×480 | runtime geometry | re-survey; horizontal open | ground start, zako bound (T21); draw order (T18) |
 | P2 | **landed 2026-10-27** — a big shot is the named record spawned as a zako; its art, hp, armour and script are the record's | importer + runtime | re-survey | none |
 | P3 | ship's shots, pods, charge and bombs drawn with Duke's art / shapes | importer + runtime | yes | effect art per level |
 | P4 | weapon-change items inert; drops fall; barrier timed; cycle baked | runtime + importer | yes | `+0x1CF3C`, barrier, stock seeds |
@@ -802,6 +849,7 @@ P-item above.
 | T18 | Object draw priority / sort order (player vs enemy vs bullets vs effects) | the sort key writers around `+0x473E` | P1 | needed once the field is 320×224 and frames are compared pixelwise |
 | T19 | **Settled 2026-10-27.** The seven spawn wrappers write the band's CONTACT attack as an immediate into `0x0608C720`: 256 / 512 / 512 / 768 / 1024 / 1024 / 1280 for bands 0-6 (`+0x160D4` and its six twins), independent of hp — the survey's 256 / 512 / 768 / 1024 / 1280 for bands 0 / 2 / 3 / 4-5 / 6. Not yet read by the runtime. | — | P6 | what a hull touch and a charge orb's mutual-hp trade cost on every enemy |
 | T20 | **Settled 2026-10-27.** `0x6085F90` for a shooter in the four-frame bands 0-3 (records 0-47), `0x6085F80` for bands 4-6 (`+0x154E4` tests the band wrapper's frame-count word against 3); the shot goes out on the frame the reload reads 0 and the same frame refills it, so the period is interval + 1 frames (D: 12). | — | P2 | `bigShotInterval` in the decoder |
+| T21 | Where the ground start applies (`+0x152E8` adds −240 px for a ground object against −48 for an air one, at a gate that puts the row itself at −48), and a zako's own despawn bound per size class | the grid walker around `+0x169EE` and its call into `+0x15434`; the bound resolver `+0x4C8C` | P1 | W never entered the Saturn's screen; the field starts a ground object with its row and retires an enemy by the shot box's bottom line until this is read |
 
 Documentation to strike at the same time, so the plan starts from the
 latest readings: FORMAT.md L219 (scroll curve "open"), L304-331's bullet
@@ -887,6 +935,11 @@ Next:
    (spawn scroll per record, bullet kinds per record, hp per record).
 
 ### Phase 1 — the field (P1)
+
+Landed 2026-11-10 for vertical carts as `?field=saturn` (P1 above). Left:
+the survey re-run with `--field saturn` (the acceptance below, with
+`--survey-lead 0` now the default there), T21, and the horizontal cart's
+224×320 field. As planned:
 
 A Dezaemon import plays on the Saturn's 320×224 screen: the camera, the
 wave gate and spawn offsets (272 / 48 air / 240 ground, band-shifted, the
@@ -981,6 +1034,14 @@ deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsi
 deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsie.sav" --stage 0 --targets saturn,web
 ```
 
+```bash
+deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsie.sav" --full --field saturn --targets saturn,web --console-seconds 60 --max-mb 0 --keep-frames
+```
+
+The last is the first again with the web pane on the Saturn field
+(`?field=saturn`, out dir `ramsie-sav-full-field`): Phase 1's acceptance
+run, judged with no gate lead.
+
 The first is the survey this document is built on; the second plays the
 import on the five exports; the third puts the import's round trip on the
 Saturn instead of the cart; the fourth is the boss rush (the import's
@@ -1003,7 +1064,7 @@ deno run -A scripts/testdrive-parity.ts --survey-report build/testdrive/parity/r
 
 It exits 1 on a failing verdict and 2 when a survey is missing;
 `--survey-lead <px>` sets the gate lead it takes out before judging (240
-today, 0 once Phase 1 lands). Behind §3, two Saturn runs compare through
+on the tall screen, 0 for a `--field saturn` run). Behind §3, two Saturn runs compare through
 the debug tools (Python 3, standard library only; the cell sheet is Deno):
 
 ```bash

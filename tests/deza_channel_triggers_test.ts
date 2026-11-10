@@ -81,7 +81,9 @@ async function sandbox(): Promise<Sandbox> {
     "applyDezaScale",
   ].map((n) => functionSource(js, n)).join("\n");
   return new Function(
-    vars.join("\n") + "\n" + fns +
+    // The runtime's own 256x480 screen; tests/deza_field_mode_test.ts pins
+    // the same lines unscaled on the Saturn field (?field=saturn).
+    "var DEZA_FIELD = false;\n" + vars.join("\n") + "\n" + fns +
       "\nreturn { channelTrigger, dezaBand, makeChannel, armChannels, stepChannel, applyDezaScale };",
   )() as Sandbox;
 }

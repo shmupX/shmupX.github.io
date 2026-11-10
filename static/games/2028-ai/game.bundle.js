@@ -1370,6 +1370,11 @@
       applyCabinet(levelData) {
         const cabinet = normalizeCabinet(levelData && levelData.cabinet);
         if (!cabinet || typeof document === "undefined") return Promise.resolve(false);
+        // A cabinet is drawn around the 256x480 screen; the Saturn field
+        // (?field=saturn) is a different shape, so it plays without one.
+        if (typeof window !== "undefined" && window.__GAME_FIELD__ && window.__GAME_FIELD__.saturn) {
+          return Promise.resolve(false);
+        }
         const host = document.getElementById("phaser-canvas") || document.body;
         if (cabinet.howto) installCabinetHowto(cabinet.howto);
         const backdrop = cabinet.backdrop
@@ -2350,12 +2355,68 @@
     stage_end3: "assets/img/stage/stage_end3.png",
     stage_end4: "assets/img/stage/stage_end4.png"
   };
-  var GAME_DIMENSIONS = {
+  // ---- The Dezaemon field mode (?field=saturn) ------------------------------
+  //
+  // A Dezaemon 2 cart is authored for the Saturn's 320x224 screen; this
+  // runtime's own screen is 256x480, so an import shows the middle 256
+  // columns of the cart's 320 and more than twice as far ahead, and every
+  // rule that counts screen pixels (when a row comes into view, how long a
+  // bullet takes to arrive, where a change channel arms) plays out on the
+  // wrong distance. ?field=saturn plays a VERTICAL import on the Saturn's
+  // own screen instead: 320x224, the 20-column grid 1:1 from x 0, the
+  // 224-px background at 48..272, and the engine's numbers with no scale
+  // factor (README-Parity.md P1). Every DEZA_FIELD test below is one of them.
+  //
+  // It is a boot flag, not a property of the level, because the screen's
+  // size is baked into the Phaser config and into every GW/GH copy in this
+  // file before any level has loaded. The boot scene checks the level once
+  // it resolves and reloads without the flag for anything the field is not
+  // built for (dezaFieldFits): a level that is no Dezaemon import, and a
+  // HORIZONTAL cart, which this runtime draws transposed and which needs a
+  // 224x320 field with the scroll axis shifted by its 96-px entry margin.
+  function readDezaFieldFlag() {
+    try {
+      return new URLSearchParams(window.location.search).get("field") === "saturn";
+    } catch (e) {
+      return false;
+    }
+  }
+  var DEZA_FIELD = readDezaFieldFlag();
+  var GAME_DIMENSIONS = DEZA_FIELD ? {
+    WIDTH: 320,
+    HEIGHT: 224,
+    CENTER_X: 160,
+    CENTER_Y: 112
+  } : {
     WIDTH: 256,
     HEIGHT: 480,
     CENTER_X: 128,
     CENTER_Y: 240
   };
+  // The page reads this to fit the canvas (lib/game-page.ts, the exported
+  // app's shell): it is laid out before the game exists.
+  if (typeof window !== "undefined") {
+    window.__GAME_FIELD__ = { width: GAME_DIMENSIONS.WIDTH, height: GAME_DIMENSIONS.HEIGHT, saturn: DEZA_FIELD };
+  }
+  // The engine's despawn box (+0x173A4), whole pixels of the 320x224 screen:
+  // what a shot or a bullet has left when it is retired.
+  var DEZA_FIELD_BOX = { left: 16, right: 304, top: -16, bottom: 256 };
+  function dezaFieldOutside(o) {
+    return o.x < DEZA_FIELD_BOX.left || o.x > DEZA_FIELD_BOX.right ||
+      o.y < DEZA_FIELD_BOX.top || o.y > DEZA_FIELD_BOX.bottom;
+  }
+  // True when the level the boot resolved can be played on the field: a
+  // vertical Dezaemon import.
+  function dezaFieldFits(recipe) {
+    var m = recipe && recipe.meta && recipe.meta.dezaemonSettings;
+    return !!m && !m.horizontal;
+  }
+  // The same page without ?field=, for a level the field does not fit.
+  function dezaFieldLeaveUrl(href) {
+    var u = new URL(href);
+    u.searchParams.delete("field");
+    return u.toString();
+  }
   var STAGE_DIMENSIONS = {
     WIDTH: typeof window !== "undefined" ? window.innerWidth : GAME_DIMENSIONS.WIDTH,
     HEIGHT: typeof window !== "undefined" ? window.innerHeight : GAME_DIMENSIONS.HEIGHT,
@@ -2642,6 +2703,9 @@
   // ?story=0 overrides all of that for one run. A cart with no story of its
   // own still skips either way (PhaserAdvScene).
   function storyOff(recipe) {
+    // The story panel is laid out on 480 lines; the Saturn field has 224 and
+    // the cart has no story of its own to show there.
+    if (DEZA_FIELD) return true;
     var asked = readSearchParam("story");
     if (asked != null && asked !== "") return !readBooleanSearchParam("story", true);
     if (!componentOn("story")) return true;
@@ -4398,8 +4462,8 @@
   // the engine clears its orientation flag for the whole title.
   var DEZA_SCREEN_W = 320;
   var DEZA_SCREEN_H = 224;
-  var DEZA_TITLE_BAND_Y = 48;
-  var DEZA_ROLL_BAND_Y = 128;
+  var DEZA_TITLE_BAND_Y = DEZA_FIELD ? 0 : 48;
+  var DEZA_ROLL_BAND_Y = DEZA_FIELD ? 0 : 128;
   function dezaSatX(sx) {
     return sx - (DEZA_SCREEN_W - GAME_DIMENSIONS.WIDTH) / 2;
   }
@@ -6180,7 +6244,8 @@
   // and its ground line 46, and only band 7 sits on the bare base.
   var CHANNEL_TRIGGER_BAND = [-16, -16, -8, -8, -8, 8, 8, 0];
   var CHANNEL_TRIGGER_BAND_H = [-16, -8, -16, -8, 8, -8, 8, 0];
-  var CHANNEL_TRIGGER_SCALE = 480 / 224;
+  // On the field (?field=saturn) the lines are the engine's own pixels.
+  var CHANNEL_TRIGGER_SCALE = DEZA_FIELD ? 1 : 480 / 224;
   function channelTrigger(ch, ground, horizontal, band) {
     var mode = ch && ch.trigger ? ch.trigger & 7 : 0;
     if (ground) mode = mode === 0 ? 4 : mode === 4 ? 0 : mode;
@@ -6380,7 +6445,8 @@
   // This runtime's bullets fly at twice the engine's pixel rate to cross a
   // playfield twice as tall, so the same distances are 128 and 192 px here.
   var DEZA_STEER = { KINK: 19, SPLIT: 17, SPLIT_AIMED: 18 };
-  var DEZA_STEER_PX = 2;                  // runtime px per engine px of flight
+  // On the field (?field=saturn) the distances are the engine's own 64 and 96.
+  var DEZA_STEER_PX = DEZA_FIELD ? 1 : 2; // runtime px per engine px of flight
   var DEZA_STEER_DIST = 64 * DEZA_STEER_PX;
   var DEZA_STEER_DIST_AIMED = 96 * DEZA_STEER_PX;
   // State 17 and state 18's no-player fallback both burst into geometry 6.
@@ -7151,6 +7217,9 @@
     var GW = scene.scale ? scene.scale.width : 256;
     var GH = scene.scale ? scene.scale.height : 480;
     var top = dezaHorizontal(scene) ? -96 : 0;
+    // On the field (?field=saturn) the grid is whole, so the lateral band is
+    // the engine's own 48..272.
+    if (DEZA_FIELD) return enemy.y >= top && enemy.y <= GH && enemy.x >= 48 && enemy.x <= 272;
     return enemy.y >= top && enemy.y <= GH && enemy.x >= 16 && enemy.x <= GW - 16;
   }
   function updateEnemyFire(scene, enemy, shootFn) {
@@ -7279,8 +7348,11 @@
     var GW = scene.scale ? scene.scale.width : 256;
     return lateral - 48 + (GW - 224) / 2;
   }
+  // On the field (?field=saturn) the screen is the engine's 224 lines, so a
+  // scroll offset from the park is its own pixels.
+  var BOSS_ENGINE_SCROLL_SCALE = DEZA_FIELD ? 1 : 2;
   function bossEngineY(parkY, scroll) {
-    return parkY + (scroll - BOSS_ENGINE_PARK_SCROLL) * 2;
+    return parkY + (scroll - BOSS_ENGINE_PARK_SCROLL) * BOSS_ENGINE_SCROLL_SCALE;
   }
   // The engine's approach primitive (+0x1A6B4) sets a CONSTANT velocity of
   // distance/256 px per frame (k=1 on arrival, k=1/2 on the death glide,
@@ -9123,6 +9195,14 @@
           }
         )
         : null;
+      // The score block is this runtime's own, set under a 480-line title.
+      // The Saturn's title (?field=saturn) fills its 224 lines with the two
+      // logos, the prompt and the credit, and has no such lines.
+      if (DEZA_FIELD) {
+        [this.scoreTitleImg, this.worldBestLabel, this.highScoreText, this.scoreSyncLabel, this.godBestText].forEach(function(o) {
+          if (o) o.setVisible(false);
+        });
+      }
       var self = this;
       this.startText.on("pointerup", function() {
         self.titleStart();
@@ -11231,8 +11311,16 @@
       onScreenDragEnd(scene, pointer);
     });
   }
+  // The ship's own clamps on the Saturn's screen (+0xAB0E): x 60..259,
+  // y 20..212 — applied to the ship's position, whatever its art's size.
+  var DEZA_FIELD_SHIP = { left: 60, right: 259, top: 20, bottom: 212 };
   function clampPlayerX(p, x) {
+    if (DEZA_FIELD) return clamp(x, DEZA_FIELD_SHIP.left, DEZA_FIELD_SHIP.right);
     return clamp(x, p.halfW, GW - p.halfW);
+  }
+  function clampPlayerY(p, y) {
+    if (DEZA_FIELD) return clamp(y, DEZA_FIELD_SHIP.top, DEZA_FIELD_SHIP.bottom);
+    return clamp(y, 50, GH - 20);
   }
   // Touch drives player 1 only: the game is configured for a single pointer
   // (no addPointer call), so a second finger is never delivered. P2 is a pad or
@@ -11289,7 +11377,7 @@
     }
     if (moveX !== 0 || moveY !== 0) {
       p.unitX = clampPlayerX(p, p.unitX + moveX);
-      p.sprite.y = clamp(p.sprite.y + moveY, 50, GH - 20);
+      p.sprite.y = clampPlayerY(p, p.sprite.y + moveY);
       p.unitY = p.sprite.y;
     }
     if (keys && keys.sp && Phaser.Input.Keyboard.JustDown(keys.sp) || gp.sp) {
@@ -11833,6 +11921,41 @@
       ? scene.recipe.enemyData["enemy" + enemyKey] : null;
     return !(data && data.blocksClear === false);
   }
+  // How far ahead of the screen's bottom edge a placement row is spawned, in
+  // scroll px: this runtime's 480-px screen plus 32, or — on the field
+  // (?field=saturn) — the Saturn's 224 lines plus the 48 px the grid walker
+  // starts an object above the top edge (+0x152E8, 0xE800 = -48 px).
+  var DEZA_FIELD_ENTRY = 48;
+  function dezaWaveLead() {
+    return DEZA_FIELD ? GAME_DIMENSIONS.HEIGHT + DEZA_FIELD_ENTRY : 512;
+  }
+  // Sprite width per art band (the record bands of the stage bank: 16x16,
+  // 32x16, 16x32, 32x32, 64x32, 32x64, 64x64).
+  var DEZA_BAND_WIDTH = [16, 32, 16, 32, 64, 32, 64, 16];
+  // Where a grid spawn stands on the field (?field=saturn), from its cell:
+  // the engine stores the cell's left edge (column << 11, +0x169EE) and the
+  // sprite is drawn from it, so the centre is col*16 + w/2; on the scroll
+  // axis the object starts with its row — 48 px above the top when the gate
+  // opens — shifted by the per-band byte the arm resolver uses
+  // (CHANNEL_TRIGGER_BAND), subtracted for an air object and added for a
+  // ground one (+0x1679A), so a taller sprite's foot enters on the same
+  // line as a smaller one's.
+  //
+  // NOT applied: the engine's separate start for a GROUND object, 240 px
+  // above the top edge (0x8800). Taken at this gate it would lift a turret
+  // 192 px off the terrain it is painted on, and the one ground record the
+  // Ramsie survey saw (W, band 5) stood at its row + 8 px — its row with
+  // the band byte added. Where that -240 applies is still to be read out of
+  // the walker (README-Parity.md, T21).
+  function dezaFieldSpawn(scene, dezaemon, col, row) {
+    var band = dezaBand(dezaemon);
+    var ground = !!(dezaemon && dezaemon.behavior && dezaemon.behavior.ground);
+    var off = CHANNEL_TRIGGER_BAND[band & 7];
+    return {
+      x: col * 16 + DEZA_BAND_WIDTH[band & 7] / 2,
+      y: GAME_DIMENSIONS.HEIGHT + scene.dezaBg._scroll - row * 16 + (ground ? off : -off)
+    };
+  }
   function enemyWave(scene) {
     if (scene.waveCount >= scene.stageEnemyPositionList.length) {
       scene.bossAdd();
@@ -11883,6 +12006,11 @@
       if (deza) {
         ex = gridLeft + i * 16 + 16;
         ey = GH2 + scene.dezaBg._scroll - (dezaRow * 16 + 8);
+        if (DEZA_FIELD && scene.waveDueByScroll && enemyData.dezaemon) {
+          var at = dezaFieldSpawn(scene, enemyData.dezaemon, i, dezaRow);
+          ex = gridLeft + at.x;
+          ey = at.y;
+        }
         if (!scene.waveDueByScroll) {
           // Legacy tick-timed stages keep the fly-in clamp.
           if (ey > -16) ey = -16;
@@ -14698,7 +14826,8 @@
       // A pod is placed by its own updater and lives as long as the loadout
       // does, so it is exempt from the off-screen cull that retires shots.
       if (bullet.getData("dezaPod")) continue;
-      if (bullet.y < -20 || bullet.y > GH3 + 20 || bullet.x < -20 || bullet.x > GW4 + 20) {
+      if (DEZA_FIELD ? dezaFieldOutside(bullet)
+          : bullet.y < -20 || bullet.y > GH3 + 20 || bullet.x < -20 || bullet.x > GW4 + 20) {
         bullet.destroy();
         scene.playerBullets.splice(b, 1);
       }
@@ -17137,6 +17266,18 @@
   var P2_HUD_TINT = 3120639;
   var GW13 = GAME_DIMENSIONS.WIDTH;
   var GH11 = GAME_DIMENSIONS.HEIGHT;
+  // An enemy that has flown off the screen for good. On the field
+  // (?field=saturn) the bottom line is the despawn box's 256; the sides are
+  // that box widened to 16 px outside the picture, because a zako's own
+  // bound is per size class (+0x4C8C) and not yet read (README-Parity.md,
+  // T21), and the grid's outer columns stand inside x 16. Nothing leaves by
+  // the top: a grid spawn enters from there.
+  function dezaZakoLeft(enemy, bottomMargin) {
+    if (DEZA_FIELD) {
+      return enemy.y > DEZA_FIELD_BOX.bottom || enemy.x < -16 || enemy.x > GW13 + 16;
+    }
+    return enemy.y > GH11 + bottomMargin || enemy.x < -40 || enemy.x > GW13 + 40;
+  }
   var GCX6 = GAME_DIMENSIONS.CENTER_X;
   var GCY3 = GAME_DIMENSIONS.CENTER_Y;
   // --- The Saturn's own score line -------------------------------------------
@@ -17425,7 +17566,9 @@
           // to their scenery whatever the save's speed curve does: row r is
           // due when the scroll reaches r*16 - 512 px — the same window the
           // tick formula below encodes at the legacy constant 2 px/frame.
-          if (self0.waveDueByScroll) return Math.max(0, row * 16 - 512);
+          // On the field (?field=saturn) it is the Saturn's own gate, the
+          // row 48 px above a 224-px top (dezaWaveLead).
+          if (self0.waveDueByScroll) return Math.max(0, row * 16 - dezaWaveLead());
           if (self0.dezaBg) {
             return Math.max(0, (row * perRow - 256) * SATURN_TICKS_PER_FRAME);
           }
@@ -18813,7 +18956,7 @@
         // NO-COLLISION attribute, dezaNoCollision); it still leaves when it
         // flies off.
         if (enemy.getData("dezaNoContact") || enemy.getData("dezaNoCollision")) {
-          if (enemy.getData("dezaGone") || enemy.y > GH11 + 20 || enemy.x < -40 || enemy.x > GW13 + 40) {
+          if (enemy.getData("dezaGone") || dezaZakoLeft(enemy, 20)) {
             this.enemies.splice(e, 1);
             var ncShadow = enemy.getData("shadow");
             if (ncShadow && ncShadow.active) ncShadow.destroy();
@@ -18998,7 +19141,7 @@
     // long, or a pool-spawned object outside the despawn box); it used to
     // be honoured only for the no-contact branch above, so a retired zako
     // with a hitbox stayed in the pool.
-    if (!isBoss && (enemy.getData("dezaGone") || enemy.y > GH11 + entryMargin || enemy.x < -40 || enemy.x > GW13 + 40)) {
+    if (!isBoss && (enemy.getData("dezaGone") || dezaZakoLeft(enemy, entryMargin))) {
           var idx = this.enemies.indexOf(enemy);
           if (idx >= 0) this.enemies.splice(idx, 1);
           var osShadow = enemy.getData("shadow");
@@ -19044,7 +19187,8 @@
           }
         }
         if (eBullet.getData("tints")) flashOverlayTint(this, eBullet);
-        if (eBullet.y > GH11 + 20 || eBullet.y < -20 || eBullet.x < -20 || eBullet.x > GW13 + 20) {
+        if (DEZA_FIELD ? dezaFieldOutside(eBullet)
+          : eBullet.y > GH11 + 20 || eBullet.y < -20 || eBullet.x < -20 || eBullet.x > GW13 + 20) {
           eBullet.destroy();
           this.enemyBullets.splice(eb, 1);
           continue;
@@ -19708,20 +19852,29 @@
       }
     }
     showGameOverPanel() {
+      // The panel stacks under the ship's portrait on 480 lines. On the
+      // Saturn field (?field=saturn) there are 224, so the portrait is left
+      // out and the score and GO TO TITLE stack straight under GAME OVER.
+      var stackY = this.loseFace.y + this.loseFace.height;
+      if (DEZA_FIELD) {
+        this.loseFace.setVisible(false);
+        if (this.shipFace && this.shipFace.setVisible) this.shipFace.setVisible(false);
+        stackY = this.gameOverTxt.y + this.gameOverTxt.height / 2 - 22;
+      }
       if (scoreCountsAsRecord() && Number(gameState.score || 0) > Number(gameState.highScore || 0)) {
         // A run played here, so it is this device's best as well, and the
         // cookie keeps it (saveHighScore stores the local best alone).
         keepLocalBest(Number(gameState.score || 0));
         this.add.sprite(
           0,
-          this.loseFace.y + this.loseFace.height + 10,
+          stackY + 10,
           "game_ui",
           "continueNewrecord.gif"
         ).setOrigin(0, 0);
       }
       var scoreTitleTxt = this.add.sprite(
         32,
-        this.loseFace.y + this.loseFace.height + 30,
+        stackY + 30,
         "game_ui",
         "scoreTxt.gif"
       );
@@ -21501,6 +21654,13 @@
           cmgApplyCheatStart(recipe);
         }
       }).then((result) => {
+        // ?field=saturn fits a vertical Dezaemon import and nothing else:
+        // any other level is opened again on this runtime's own screen.
+        if (DEZA_FIELD && !dezaFieldFits(gameState._phaserRecipe)) {
+          console.warn("[2028.Ai] ?field=saturn needs a vertical Dezaemon import — reopening on the 256x480 screen");
+          window.location.replace(dezaFieldLeaveUrl(window.location.href));
+          return;
+        }
         // Which game this is, now that its level has resolved, and only now
         // its WORLD BEST, TODAY'S BEST and local best: nothing reads or
         // writes a board before this line. The title reads gameState every
