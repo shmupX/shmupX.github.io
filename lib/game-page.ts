@@ -122,7 +122,15 @@ if (document.fonts && document.fonts.load) {
 // Screen-fit + portrait, ported from 2019-es7/phaser-game.html.
 export const FIT_PORTRAIT = `
 (function () {
-  var GW = 256, GH = 480;
+  // The screen the game draws: 256x480, or the Saturn's 320x224 under
+  // ?field=saturn (game.bundle.js, DEZA_FIELD — read here as well because the
+  // page is laid out before the bundle runs). That field is landscape, so
+  // the page is not turned for it: html.field-saturn opts out of the
+  // rotation below and the canvas is fitted as it stands.
+  var FIELD_SATURN = false;
+  try { FIELD_SATURN = new URLSearchParams(window.location.search).get("field") === "saturn"; } catch (e) {}
+  var GW = FIELD_SATURN ? 320 : 256, GH = FIELD_SATURN ? 224 : 480;
+  if (FIELD_SATURN) document.documentElement.classList.add("field-saturn");
 
   function isRotated() {
     var t = window.getComputedStyle(document.documentElement).transform;
@@ -308,9 +316,11 @@ export const GAME_PAGE_CSS = `
             image-rendering: crisp-edges;
             touch-action: none;
           }
-          /* Force portrait layout on landscape screens by rotating the page. */
+          /* Force portrait layout on landscape screens by rotating the page —
+             except for the Saturn field (?field=saturn), which is landscape
+             itself (FIT_PORTRAIT sets the class). */
           @media screen and (orientation: landscape) {
-            html {
+            html:not(.field-saturn) {
               transform: rotate(-90deg);
               transform-origin: left top;
               width: 100vh;
@@ -320,8 +330,8 @@ export const GAME_PAGE_CSS = `
               top: 100%;
               left: 0;
             }
-            html body { height: 100%; }
-            html #phaser-canvas { height: 100%; }
+            html:not(.field-saturn) body { height: 100%; }
+            html:not(.field-saturn) #phaser-canvas { height: 100%; }
           }
 `;
 

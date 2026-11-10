@@ -170,6 +170,7 @@ import {
   type RushRecord,
   type SaturnSurveyFile,
   surveyReport,
+  WEB_FIELD,
   WEB_GATE_LEAD,
   type WebSurveyFile,
 } from "./lib/parity-report.ts";
@@ -221,8 +222,11 @@ report.json).
                      out dir (its panes/*.survey.json and rush.json) and exit
                      0 on PASS, 1 on FAIL, 2 when a file is missing
   --survey-lead <px> the web's expected gate lead the report takes out before
-                     judging a record's first-seen scroll (default ${WEB_GATE_LEAD};
-                     a negative lead as --survey-lead=-N)
+                     judging a record's first-seen scroll (default ${WEB_GATE_LEAD},
+                     or 0 with --field saturn; a negative lead as --survey-lead=-N)
+  --field saturn     with --full: the web pane plays on the Saturn's 320x224
+                     screen (?field=saturn), where a row comes into view at
+                     the Saturn's own scroll position; a vertical cart only
   --help`;
 
 const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
@@ -236,6 +240,7 @@ const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
     "sav",
     "survey-report",
     "survey-lead",
+    "field",
   ],
   default: {
     "from-hp": 0.55,
@@ -283,10 +288,29 @@ const cartName = (path: string) =>
   path.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "").replace(/^Dez 2 - /, "")
     .replace(/^Dezaemon 2 \((.*)\)$/, "$1").trim() || "cart";
 const LEVEL = SAV ? cartName(SAV) : String(flags._[0] ?? "gs");
+/** --field saturn: the web pane on the Saturn's 320x224 screen. */
+const FIELD_SATURN = flags.field === "saturn";
+if (flags.field != null && !FIELD_SATURN) {
+  console.error(
+    `error: --field takes "saturn", got ${JSON.stringify(flags.field)}`,
+  );
+  Deno.exit(2);
+}
+if (FIELD_SATURN && !FULL && flags["survey-report"] === undefined) {
+  console.error("error: --field saturn goes with --full");
+  Deno.exit(2);
+}
+// The pane is recorded at the page's own size, and the field's is the
+// Saturn's (the page is not turned for it: lib/game-page.ts).
+if (FIELD_SATURN) {
+  PANES.web.width = WEB_FIELD.width;
+  PANES.web.height = WEB_FIELD.height;
+}
 const slug = (LEVEL.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
   /^-|-$/g,
   "",
-) || "level") + (SAV ? "-sav" : "") + (FULL ? "-full" : "");
+) || "level") + (SAV ? "-sav" : "") + (FULL ? "-full" : "") +
+  (FIELD_SATURN ? "-field" : "");
 const OUT = resolve(
   flags.out ?? join(ROOT, "build", "testdrive", "parity", slug),
 );
@@ -296,7 +320,7 @@ const FPS = Number(flags.fps);
 // first-seen scroll; an unreadable value would judge nothing (NaN compares
 // false), so it is refused up front.
 const SURVEY_LEAD = flags["survey-lead"] == null
-  ? WEB_GATE_LEAD
+  ? (FIELD_SATURN ? 0 : WEB_GATE_LEAD)
   : Number(String(flags["survey-lead"]).trim() || "NaN");
 if (!Number.isFinite(SURVEY_LEAD)) {
   console.error(
@@ -917,7 +941,9 @@ const runWebSurvey: PaneRunner = async (ctx) => {
   try {
     await setViewport(cdp, spec.width, spec.height);
     await cdp.send("Page.navigate", {
-      url: `${ctx.rig.origin}/games/2028-ai?stage=${STAGE}&story=0&god=1`,
+      url: `${ctx.rig.origin}/games/2028-ai?stage=${STAGE}&story=0&god=1${
+        FIELD_SATURN ? "&field=saturn" : ""
+      }`,
     });
     await until(
       "the web stage to start",
@@ -932,7 +958,7 @@ const runWebSurvey: PaneRunner = async (ctx) => {
     );
     await cdp.eval(webSurvey({
       periodMs: 100,
-      box: { x0: 40, x1: 216, y0: 300, y1: 440 },
+      box: FIELD_SATURN ? WEB_FIELD.pilotBox : { x0: 40, x1: 216, y0: 300, y1: 440 },
       seed: 7,
     }));
     const cast = await screencast(cdp, join(OUT, "frames", "web"), spec);

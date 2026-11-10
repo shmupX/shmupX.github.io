@@ -1596,6 +1596,11 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     applyCabinet(levelData) {
       const cabinet = normalizeCabinet(levelData && levelData.cabinet);
       if (!cabinet || typeof document === "undefined") return Promise.resolve(false);
+      // A cabinet is drawn around the 256x480 screen; the Saturn field
+      // (?field=saturn) is a different shape, so it plays without one.
+      if (typeof window !== "undefined" && window.__GAME_FIELD__ && window.__GAME_FIELD__.saturn) {
+        return Promise.resolve(false);
+      }
       const host = document.getElementById("phaser-canvas") || document.body;
       if (cabinet.howto) installCabinetHowto(cabinet.howto);
       const backdrop = cabinet.backdrop

@@ -60,6 +60,20 @@ import type {
 
 /** How early the web's wave gate lets a row on, in scroll px (P1). */
 export const WEB_GATE_LEAD = 512 - 272;
+
+/**
+ * The web runtime's Saturn field (?field=saturn, game.bundle.js DEZA_FIELD):
+ * the Saturn's 320x224 screen, on which a row is spawned at the Saturn's own
+ * gate, so the lead above is 0. `pilotBox` is where the survey pilot flies
+ * the ship there — the lower third of the playfield band, inside the ship's
+ * clamps (x 60..259, y 20..212).
+ */
+export const WEB_FIELD = {
+  width: 320,
+  height: 224,
+  lead: 0,
+  pilotBox: { x0: 72, x1: 248, y0: 140, y1: 204 },
+} as const;
 /** A record's first-seen scroll may differ by this much after the lead. */
 export const SCROLL_TOLERANCE = 16;
 /** A bullet kind with fewer births than this is listed but not judged. */
