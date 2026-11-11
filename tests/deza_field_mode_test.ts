@@ -20,9 +20,30 @@
 //   the despawn box           x 16..304, y -16..256 (+0x173A4)
 //
 // Without the flag every one of them is what it was.
+//
+// A HORIZONTAL cart is the same simulation with that screen turned across
+// it — 320 px along the scroll axis, whose coordinate runs -96..224, and
+// the 224-px playfield band (lateral 48..272) across. The runtime draws
+// such a cart transposed, so its field is 224x320 (?field=saturn-h, which
+// the boot opens for itself): x = lateral - 48, y = scroll coordinate + 96.
+//
+//   the gate                  a row is spawned 48 px beyond the entry edge,
+//                             at -144 (+0x152E8, 0xB800): row*16 - 368
+//   the spawn                 the horizontal band byte (+0x2204C); the
+//                             cell's edge plus half the band's HEIGHT
+//   the change-channel lines  14 / 48 / 116 px of the scroll coordinate
+//   the fire window           the whole screen: lateral 48..272, scroll
+//                             -96..224
+//   the clamps, the box       untraced for a horizontal game (T22): the
+//                             vertical insets about this window
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
-import { WEB_FIELD, WEB_GATE_LEAD } from "../scripts/lib/parity-report.ts";
+import {
+  WEB_FIELD,
+  WEB_FIELD_H,
+  WEB_GATE_LEAD,
+  webFieldFor,
+} from "../scripts/lib/parity-report.ts";
 import { FIT_PORTRAIT, GAME_PAGE_CSS } from "../lib/game-page.ts";
 
 const BUNDLE = "static/games/2028-ai/game.bundle.js";
@@ -38,6 +59,15 @@ function functionSource(js: string, name: string): string {
   const end = js.indexOf("\n  }\n", start);
   assert(end > start, `${name} does not close`);
   return js.slice(start, end + 4);
+}
+
+/** One top-level `var` of the bundle's IIFE, to its closing semicolon. */
+function varSource(js: string, name: string): string {
+  const start = js.indexOf(`\n  var ${name} = `);
+  assert(start >= 0, `no var ${name} in ${BUNDLE}`);
+  const end = js.indexOf(";\n", start);
+  assert(end > start, `${name} does not close`);
+  return js.slice(start + 1, end + 1);
 }
 
 /** The bundle between two of its own lines, the first included. */
@@ -56,6 +86,7 @@ interface Point {
 
 interface Field {
   DEZA_FIELD: boolean;
+  DEZA_FIELD_H: boolean;
   GAME_DIMENSIONS: {
     WIDTH: number;
     HEIGHT: number;
@@ -66,7 +97,12 @@ interface Field {
   DEZA_ROLL_BAND_Y: number;
   DEZA_STEER_DIST: number;
   DEZA_STEER_DIST_AIMED: number;
-  published: { width: number; height: number; saturn: boolean };
+  published: {
+    width: number;
+    height: number;
+    saturn: boolean;
+    horizontal: boolean;
+  };
   dezaWaveLead(): number;
   dezaFieldSpawn(
     scene: unknown,
@@ -75,8 +111,9 @@ interface Field {
     row: number,
   ): Point;
   dezaFieldOutside(o: Point): boolean;
-  dezaFieldFits(recipe: unknown): boolean;
-  dezaFieldLeaveUrl(href: string): string;
+  dezaFieldFor(recipe: unknown): string | null;
+  dezaFieldFits(recipe: unknown, flag?: string | null): boolean;
+  dezaFieldLeaveUrl(href: string, field?: string | null): string;
   channelTrigger(
     ch: unknown,
     ground: boolean,
@@ -107,9 +144,10 @@ async function field(search: string): Promise<Field> {
     /^ {2}var CHANNEL_TRIGGER_\w+ = .*;$/gm,
     /^ {2}var DEZA_STEER_(PX|DIST|DIST_AIMED) = .*;(?: *\/\/.*)?$/gm,
     /^ {2}var BOSS_ENGINE_\w+ = .*;$/gm,
-    /^ {2}var DEZA_FIELD_(ENTRY|SHIP) = .*;$/gm,
-    /^ {2}var DEZA_BAND_WIDTH = .*;$/gm,
+    /^ {2}var DEZA_FIELD_ENTRY = .*;$/gm,
+    /^ {2}var DEZA_BAND_(WIDTH|HEIGHT) = .*;$/gm,
   ].flatMap((re) => js.match(re) ?? []);
+  vars.push(varSource(js, "DEZA_FIELD_SHIP"));
   const fns = [
     "dezaSatX",
     "dezaHorizontal",
@@ -127,6 +165,7 @@ async function field(search: string): Promise<Field> {
   ].map((n) => functionSource(js, n)).join("\n");
   const names = [
     "DEZA_FIELD",
+    "DEZA_FIELD_H",
     "GAME_DIMENSIONS",
     "DEZA_TITLE_BAND_Y",
     "DEZA_ROLL_BAND_Y",
@@ -135,6 +174,7 @@ async function field(search: string): Promise<Field> {
     "dezaWaveLead",
     "dezaFieldSpawn",
     "dezaFieldOutside",
+    "dezaFieldFor",
     "dezaFieldFits",
     "dezaFieldLeaveUrl",
     "channelTrigger",
@@ -166,11 +206,11 @@ async function field(search: string): Promise<Field> {
   return out;
 }
 
-/** A vertical game's scene, with its scroll where the test wants it. */
-const scene = (scroll: number, w: number, h: number) => ({
+/** A game's scene, with its scroll where the test wants it. */
+const scene = (scroll: number, w: number, h: number, horizontal = false) => ({
   scale: { width: w, height: h },
   dezaBg: { _scroll: scroll },
-  recipe: { meta: { dezaemonSettings: { horizontal: false } } },
+  recipe: { meta: { dezaemonSettings: { horizontal } } },
 });
 
 /** A zako's `dezaemon` block: its placement cell and its ground bit. */
@@ -188,7 +228,13 @@ Deno.test("without the flag the screen and every distance are what they were", a
     CENTER_X: 128,
     CENTER_Y: 240,
   });
-  assertEquals(f.published, { width: 256, height: 480, saturn: false });
+  assertStrictEquals(f.DEZA_FIELD_H, false);
+  assertEquals(f.published, {
+    width: 256,
+    height: 480,
+    saturn: false,
+    horizontal: false,
+  });
   assertStrictEquals(f.dezaWaveLead(), 512);
   assertStrictEquals(f.dezaWaveLead() - 272, WEB_GATE_LEAD);
   assertStrictEquals(f.DEZA_TITLE_BAND_Y, 48);
@@ -226,7 +272,13 @@ Deno.test("?field=saturn is the Saturn's 320x224 screen", async () => {
     CENTER_X: 160,
     CENTER_Y: 112,
   });
-  assertEquals(f.published, { width: 320, height: 224, saturn: true });
+  assertStrictEquals(f.DEZA_FIELD_H, false);
+  assertEquals(f.published, {
+    width: 320,
+    height: 224,
+    saturn: true,
+    horizontal: false,
+  });
   // The title, the staff roll and the HUD are drawn in Saturn coordinates;
   // on the field they need no window and no band.
   assertStrictEquals(f.dezaSatX(48), 48);
@@ -348,7 +400,7 @@ Deno.test("a shot leaves by the despawn box, an enemy by the bottom line", async
   assertStrictEquals(f.dezaZakoLeft({ x: 160, y: -56 }, 20), false);
 });
 
-Deno.test("the field fits a vertical Dezaemon import and nothing else", async () => {
+Deno.test("the field fits a Dezaemon import of its own orientation and nothing else", async () => {
   const f = await field("?field=saturn");
   const cart = (horizontal: boolean) => ({
     meta: { dezaemonSettings: { horizontal } },
@@ -357,6 +409,29 @@ Deno.test("the field fits a vertical Dezaemon import and nothing else", async ()
   assertStrictEquals(f.dezaFieldFits(cart(true)), false);
   assertStrictEquals(f.dezaFieldFits({ meta: {} }), false);
   assertStrictEquals(f.dezaFieldFits(null), false);
+  // A horizontal cart is opened again on its own field, and a vertical one
+  // asked for that field on the 320x224.
+  assertStrictEquals(f.dezaFieldFor(cart(true)), "saturn-h");
+  assertStrictEquals(f.dezaFieldFor(cart(false)), "saturn");
+  assertStrictEquals(f.dezaFieldFor({ meta: {} }), null);
+  assertStrictEquals(
+    f.dezaFieldLeaveUrl(
+      "https://x.test/games/2028-ai?level=gs&field=saturn&god=1",
+      f.dezaFieldFor(cart(true)),
+    ),
+    "https://x.test/games/2028-ai?level=gs&field=saturn-h&god=1",
+  );
+  const h = await field("?field=saturn-h");
+  assertStrictEquals(h.dezaFieldFits(cart(true)), true);
+  assertStrictEquals(h.dezaFieldFits(cart(false)), false);
+  assertStrictEquals(h.dezaFieldFits(null), false);
+  assertStrictEquals(
+    h.dezaFieldLeaveUrl(
+      "https://x.test/games/2028-ai?field=saturn-h&stage=0",
+      h.dezaFieldFor(cart(false)),
+    ),
+    "https://x.test/games/2028-ai?field=saturn&stage=0",
+  );
   // Anything else is opened again without the flag, and with the rest of
   // its URL.
   assertStrictEquals(
@@ -383,14 +458,16 @@ Deno.test("the bundle routes its field rules through the flag", async () => {
       "if (DEZA_FIELD ? dezaFieldOutside(bullet)",
       "if (DEZA_FIELD ? dezaFieldOutside(eBullet)",
       "if (DEZA_FIELD && !dezaFieldFits(gameState._phaserRecipe)) {",
-      "window.location.replace(dezaFieldLeaveUrl(window.location.href));",
+      "var fieldWanted = dezaFieldFor(gameState._phaserRecipe);",
+      "window.location.replace(dezaFieldLeaveUrl(window.location.href, fieldWanted));",
     ]
   ) {
     assert(js.includes(line), `the bundle has: ${line}`);
   }
   // The size is read once, ahead of the Phaser config and of every GW/GH
   // copy, all of which still take it from GAME_DIMENSIONS.
-  const flag = js.indexOf("var DEZA_FIELD = readDezaFieldFlag();");
+  const flag = js.indexOf("var DEZA_FIELD_FLAG = readDezaFieldFlag();");
+  assert(flag >= 0, "the flag is read once");
   const copies = [...js.matchAll(/^ {2}var G[WH]\d* = (.*);$/gm)];
   assert(copies.length >= 20, "the module-level size copies");
   for (const m of copies) {
@@ -415,13 +492,24 @@ Deno.test("the page fits the field unturned, in both shells", async () => {
     ]
   ) {
     assert(
-      fit.includes('.get("field") === "saturn"'),
+      fit.includes(
+        'FIELD = new URLSearchParams(window.location.search).get("field")',
+      ),
       `${name} reads the flag`,
     );
     assert(
       fit.includes(
-        "var GW = FIELD_SATURN ? 320 : 256, GH = FIELD_SATURN ? 224 : 480;",
+        'var FIELD_SATURN = FIELD === "saturn" || FIELD === "saturn-h";',
       ),
+      `${name} knows both fields`,
+    );
+    assert(
+      fit.includes(
+        'var GW = FIELD === "saturn-h" ? 224 : FIELD_SATURN ? 320 : 256;',
+      ) &&
+        fit.includes(
+          'var GH = FIELD === "saturn-h" ? 320 : FIELD_SATURN ? 224 : 480;',
+        ),
       `${name} fits the field's size`,
     );
     assert(
@@ -438,4 +526,147 @@ Deno.test("the page fits the field unturned, in both shells", async () => {
   const guard = "window.__GAME_FIELD__ && window.__GAME_FIELD__.saturn";
   assert((await read("static/phaser-plugins/level-loader.js")).includes(guard));
   assert((await read(BUNDLE)).includes(guard));
+});
+
+// --- a horizontal cart's field ----------------------------------------------
+
+Deno.test("?field=saturn-h is the Saturn's screen across a horizontal cart: 224x320", async () => {
+  const f = await field("?stage=0&field=saturn-h");
+  assertStrictEquals(f.DEZA_FIELD, true);
+  assertStrictEquals(f.DEZA_FIELD_H, true);
+  assertEquals(f.GAME_DIMENSIONS, {
+    WIDTH: 224,
+    HEIGHT: 320,
+    CENTER_X: 112,
+    CENTER_Y: 160,
+  });
+  assertEquals(f.published, {
+    width: 224,
+    height: 320,
+    saturn: true,
+    horizontal: true,
+  });
+  // The title and the roll are untransposed 320x224 pictures: the middle
+  // 224 columns, in a band centred on the 320 lines.
+  assertStrictEquals(f.dezaSatX(48), 0);
+  assertStrictEquals(f.dezaSatX(160), 112);
+  assertStrictEquals(f.DEZA_TITLE_BAND_Y, 48);
+  assertStrictEquals(f.DEZA_ROLL_BAND_Y, 48);
+  // The rig takes the field from the cart.
+  const cart = (horizontal: boolean) => ({
+    meta: { dezaemonSettings: { horizontal } },
+  });
+  assertStrictEquals(webFieldFor(cart(true)), WEB_FIELD_H);
+  assertStrictEquals(webFieldFor(cart(false)), WEB_FIELD);
+  assertStrictEquals(webFieldFor({}), WEB_FIELD);
+  assertEquals(
+    [WEB_FIELD_H.flag, WEB_FIELD_H.width, WEB_FIELD_H.height, WEB_FIELD_H.lead],
+    ["saturn-h", f.GAME_DIMENSIONS.WIDTH, f.GAME_DIMENSIONS.HEIGHT, 0],
+  );
+  assertEquals(
+    [WEB_FIELD.flag, WEB_FIELD.width, WEB_FIELD.height],
+    ["saturn", 320, 224],
+  );
+});
+
+Deno.test("a horizontal cart's row is spawned 48 px beyond an entry edge at -96", async () => {
+  const f = await field("?field=saturn-h");
+  // 320 lines of scroll axis and the 48 px beyond them: the object starts
+  // at scroll coordinate -144, which is y -48 on this field.
+  assertStrictEquals(f.dezaWaveLead(), 368);
+  const row = 50;
+  const due = row * 16 - f.dezaWaveLead();
+  assertStrictEquals(due, 432);
+  const s = scene(due, 224, 320, true);
+  // The band byte is the horizontal table's: it follows the sprite's
+  // WIDTH, the side that lies along the scroll axis on the Saturn's turned
+  // screen. Bands 0..6 are 16, 32, 16, 32, 64, 32 and 64 px wide: every
+  // leading edge enters on the same line, 24 px outside.
+  const widths = [16, 32, 16, 32, 64, 32, 64];
+  const ys = widths.map((_w, band) =>
+    f.dezaFieldSpawn(s, zako(band, 0), 4, row).y
+  );
+  assertEquals(ys, [-32, -40, -32, -40, -56, -40, -56]);
+  assertEquals(
+    ys.map((y, band) => y + widths[band] / 2),
+    widths.map(() => -24),
+  );
+  // A ground record takes the byte the other way.
+  assertStrictEquals(f.dezaFieldSpawn(s, zako(4, 0, true), 4, row).y, -40);
+  assertStrictEquals(f.dezaFieldSpawn(s, zako(0, 0, true), 4, row).y, -64);
+});
+
+Deno.test("a horizontal cart's grid spawn is drawn from its cell's edge along the lateral axis", async () => {
+  const f = await field("?field=saturn-h");
+  const s = scene(0, 224, 320, true);
+  // Lateral is the sprite's HEIGHT on the turned screen: 16, 16, 32, 32,
+  // 32, 64 and 64 px. The x handed back is lateral; the wave's gridLeft
+  // (-48 on this field) carries it onto the screen.
+  const laterals = [0, 1, 2, 3, 4, 5, 6].map((band) =>
+    f.dezaFieldSpawn(s, zako(band, 0), 10, 20).x
+  );
+  assertEquals(laterals, [168, 168, 176, 176, 176, 192, 192]);
+  const gridLeft = (f.GAME_DIMENSIONS.WIDTH - 20 * 16) / 2;
+  assertStrictEquals(gridLeft, -48);
+  // Columns 3 and 16 are the first and last wholly on the playfield band.
+  assertStrictEquals(gridLeft + f.dezaFieldSpawn(s, zako(0, 0), 3, 20).x, 8);
+  assertStrictEquals(gridLeft + f.dezaFieldSpawn(s, zako(0, 0), 16, 20).x, 216);
+});
+
+Deno.test("a horizontal cart's lines and windows are its own, on its own axis", async () => {
+  const f = await field("?field=saturn-h");
+  // The resolver's 14 / 48 / 116 px of the scroll coordinate, which this
+  // field draws 96 px down; shifted by the horizontal band byte.
+  assertEquals(
+    [1, 2, 3].map((m) => f.channelTrigger({ trigger: m }, false, true, 7)),
+    [110, 144, 212],
+  );
+  assertStrictEquals(f.channelTrigger({ trigger: 1 }, false, true, 0), 126);
+  assertStrictEquals(f.channelTrigger({ trigger: 1 }, true, true, 0), 94);
+  // Armed from spawn and never armed are no lines at all.
+  assertStrictEquals(f.channelTrigger({ trigger: 0 }, false, true, 0), null);
+  assertStrictEquals(
+    f.channelTrigger({ trigger: 5 }, false, true, 0),
+    Infinity,
+  );
+  // The fire window is the whole screen: lateral 48..272 across, scroll
+  // -96..224 down.
+  const s = scene(0, 224, 320, true);
+  assertStrictEquals(f.dezaFireWindow(s, { x: 0, y: 0 }), true);
+  assertStrictEquals(f.dezaFireWindow(s, { x: 224, y: 320 }), true);
+  assertStrictEquals(f.dezaFireWindow(s, { x: -1, y: 100 }), false);
+  assertStrictEquals(f.dezaFireWindow(s, { x: 225, y: 100 }), false);
+  assertStrictEquals(f.dezaFireWindow(s, { x: 112, y: -1 }), false);
+  assertStrictEquals(f.dezaFireWindow(s, { x: 112, y: 321 }), false);
+  // The boss's lateral maps onto the band, and a scroll offset is 1:1.
+  assertStrictEquals(f.bossEngineX(s, 160), 112);
+  assertStrictEquals(f.bossEngineY(56, 66), 66);
+});
+
+Deno.test("a horizontal cart's ship and despawn box keep the vertical insets about its window", async () => {
+  const f = await field("?field=saturn-h");
+  // Lateral 60..259 is x 12..211; 20 px in from the entry edge and 12 from
+  // the exit edge of scroll -96..224 is y 20..308. Untraced (T22).
+  assertStrictEquals(f.clampPlayerX({ halfW: 16 }, -50), 12);
+  assertStrictEquals(f.clampPlayerX({ halfW: 16 }, 500), 211);
+  assertStrictEquals(f.clampPlayerY({}, 0), 20);
+  assertStrictEquals(f.clampPlayerY({}, 320), 308);
+  const b = WEB_FIELD_H.pilotBox;
+  assert(b.x0 >= 12 && b.x1 <= 211 && b.y0 >= 20 && b.y1 <= 308);
+  // The box: lateral 16..304, scroll -112..256.
+  for (const p of [[-32, -16], [256, 352], [112, 160]]) {
+    assertStrictEquals(f.dezaFieldOutside({ x: p[0], y: p[1] }), false);
+  }
+  for (const p of [[-33, 100], [257, 100], [112, -17], [112, 353]]) {
+    assertStrictEquals(f.dezaFieldOutside({ x: p[0], y: p[1] }), true);
+  }
+  // An enemy: the box's bottom line; the sides 16 px outside the GRID,
+  // which reaches 48 px past each edge of this picture.
+  assertStrictEquals(f.dezaZakoLeft({ x: 112, y: 352 }, 116), false);
+  assertStrictEquals(f.dezaZakoLeft({ x: 112, y: 353 }, 116), true);
+  assertStrictEquals(f.dezaZakoLeft({ x: -40, y: 100 }, 20), false);
+  assertStrictEquals(f.dezaZakoLeft({ x: 264, y: 100 }, 20), false);
+  assertStrictEquals(f.dezaZakoLeft({ x: -65, y: 100 }, 20), true);
+  assertStrictEquals(f.dezaZakoLeft({ x: 289, y: 100 }, 20), true);
+  assertStrictEquals(f.dezaZakoLeft({ x: 112, y: -56 }, 20), false);
 });

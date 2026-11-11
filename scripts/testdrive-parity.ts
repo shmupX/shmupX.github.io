@@ -167,11 +167,15 @@ import {
   webSurvey,
 } from "./lib/parity-survey.ts";
 import {
+  isSavedReading,
   type RushRecord,
   type SaturnSurveyFile,
+  type SavedReading,
+  saveReading,
   surveyReport,
   WEB_FIELD,
   WEB_GATE_LEAD,
+  webFieldFor,
   type WebSurveyFile,
 } from "./lib/parity-report.ts";
 
@@ -221,12 +225,21 @@ report.json).
                      no run: write report-survey.md for an earlier --full run's
                      out dir (its panes/*.survey.json and rush.json) and exit
                      0 on PASS, 1 on FAIL, 2 when a file is missing
+  --saturn-reading <file>
+                     the Saturn's side of the report when this run has no
+                     Saturn survey (no disc on this box, or the pane was not
+                     run): a reading an earlier run saved — every report
+                     built on a Saturn survey leaves one beside it,
+                     panes/saturn.reading.json. The Saturn plays the cart
+                     itself, so a reading stays good for later web runs
   --survey-lead <px> the web's expected gate lead the report takes out before
                      judging a record's first-seen scroll (default ${WEB_GATE_LEAD},
                      or 0 with --field saturn; a negative lead as --survey-lead=-N)
-  --field saturn     with --full: the web pane plays on the Saturn's 320x224
-                     screen (?field=saturn), where a row comes into view at
-                     the Saturn's own scroll position; a vertical cart only
+  --field saturn     with --full: the web pane plays on the Saturn's screen
+                     (?field=saturn), where a row comes into view at the
+                     Saturn's own scroll position: 320x224 for a vertical
+                     cart, 224x320 (that screen across the transposed world)
+                     for a horizontal one
   --help`;
 
 const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
@@ -240,6 +253,7 @@ const flags = parseArgs(Deno.args.filter((a) => a !== "--"), {
     "sav",
     "survey-report",
     "survey-lead",
+    "saturn-reading",
     "field",
   ],
   default: {
@@ -301,7 +315,9 @@ if (FIELD_SATURN && !FULL && flags["survey-report"] === undefined) {
   Deno.exit(2);
 }
 // The pane is recorded at the page's own size, and the field's is the
-// Saturn's (the page is not turned for it: lib/game-page.ts).
+// Saturn's (the page is not turned for it: lib/game-page.ts) — a vertical
+// cart's until the record is loaded and says otherwise (webField below).
+let webField: ReturnType<typeof webFieldFor> = WEB_FIELD;
 if (FIELD_SATURN) {
   PANES.web.width = WEB_FIELD.width;
   PANES.web.height = WEB_FIELD.height;
@@ -330,6 +346,11 @@ if (!Number.isFinite(SURVEY_LEAD)) {
   );
   Deno.exit(2);
 }
+
+/** --saturn-reading: a saved reading that stands in for a Saturn survey. */
+const SATURN_READING = flags["saturn-reading"]
+  ? resolve(String(flags["saturn-reading"]))
+  : null;
 
 // deno-lint-ignore no-explicit-any
 type Json = any;
@@ -817,7 +838,7 @@ interface SurveyVerdict {
 async function writeSurveyReport(
   dir: string,
   rush: RushRecord,
-  files: { saturn: string | null; web: string | null },
+  files: { saturn: string | null; web: string | null; reading?: string | null },
 ): Promise<SurveyVerdict | null> {
   const read = async <T>(
     file: string | null,
@@ -847,7 +868,20 @@ async function writeSurveyReport(
       return null;
     }
   };
-  const saturn = await read<SaturnSurveyFile>(files.saturn, "Saturn");
+  let saturn: SaturnSurveyFile | SavedReading | null = await read<
+    SaturnSurveyFile
+  >(files.saturn, "Saturn");
+  // No Saturn survey this run: the side can still come from a reading an
+  // earlier run saved (--saturn-reading) — the Saturn plays the cart itself.
+  const surveyed = !!saturn;
+  if (!saturn && files.reading) {
+    const saved = await read<SavedReading>(files.reading, "saved Saturn");
+    if (saved && !isSavedReading(saved)) {
+      log(
+        `survey report: ${files.reading} is not a saved reading (no "format")`,
+      );
+    } else saturn = saved;
+  }
   const web = await read<WebSurveyFile>(files.web, "web");
   if (!saturn || !web) return null;
   const report = surveyReport({ saturn, web, rush }, {
@@ -855,6 +889,26 @@ async function writeSurveyReport(
   });
   const file = join(dir, "report-survey.md");
   await Deno.writeTextFile(file, report.markdown);
+  if (surveyed && files.saturn) {
+    // What a later web run on a box without the disc is judged against.
+    const when = (await Deno.stat(files.saturn)).mtime;
+    const readingFile = join(dir, "panes", "saturn.reading.json");
+    await Deno.writeTextFile(
+      readingFile,
+      JSON.stringify(
+        saveReading(report.saturn, {
+          from: `the ${report.saturn.source} surveyed${
+            when ? ` ${when.toISOString().slice(0, 10)}` : ""
+          } (${dir.replace(/^.*[\\/]/, "")}/panes/saturn.survey.json)`,
+          level: LEVEL,
+          stage: 0,
+        }),
+        null,
+        1,
+      ) + "\n",
+    );
+    log(`  ${readingFile}`);
+  }
   log(
     `${file}: ${report.ok ? "PASS" : "FAIL"} — ${report.rows.length} records, ${report.kinds.length} bullet kinds, ${report.failures.length} finding(s)` +
       (report.notJudged.length ? `, ${report.notJudged.length} not judged` : ""),
@@ -887,6 +941,7 @@ async function surveyReportOnly(dir: string): Promise<number> {
   const verdict = await writeSurveyReport(dir, rush, {
     saturn: join(dir, "panes", "saturn.survey.json"),
     web: join(dir, "panes", "web.survey.json"),
+    reading: SATURN_READING,
   });
   if (!verdict) return 2;
   return verdict.ok ? 0 : 1;
@@ -942,7 +997,7 @@ const runWebSurvey: PaneRunner = async (ctx) => {
     await setViewport(cdp, spec.width, spec.height);
     await cdp.send("Page.navigate", {
       url: `${ctx.rig.origin}/games/2028-ai?stage=${STAGE}&story=0&god=1${
-        FIELD_SATURN ? "&field=saturn" : ""
+        FIELD_SATURN ? `&field=${webField.flag}` : ""
       }`,
     });
     await until(
@@ -958,7 +1013,9 @@ const runWebSurvey: PaneRunner = async (ctx) => {
     );
     await cdp.eval(webSurvey({
       periodMs: 100,
-      box: FIELD_SATURN ? WEB_FIELD.pilotBox : { x0: 40, x1: 216, y0: 300, y1: 440 },
+      box: FIELD_SATURN
+        ? webField.pilotBox
+        : { x0: 40, x1: 216, y0: 300, y1: 440 },
       seed: 7,
     }));
     const cast = await screencast(cdp, join(OUT, "frames", "web"), spec);
@@ -1006,6 +1063,9 @@ const runWebSurvey: PaneRunner = async (ctx) => {
       source: "import",
       stage: STAGE,
       modes: ["GOD"],
+      // On a Saturn field a pixel is an engine pixel: the report reads the
+      // objects' positions there, not only their scroll.
+      field: FIELD_SATURN ? webField.flag : null,
     });
     return {
       id: "web",
@@ -2519,6 +2579,20 @@ const previousReport = await Deno.readTextFile(join(OUT, "report.json"))
   .then((t) => JSON.parse(t) as { panes?: PaneResult[] })
   .catch(() => null);
 const record = await loadRecord();
+if (FIELD_SATURN) {
+  // The field is the cart's own orientation's: a horizontal cart plays on
+  // the Saturn's screen laid across the transposed world, 224x320.
+  webField = webFieldFor(record as RushRecord);
+  PANES.web.width = webField.width;
+  PANES.web.height = webField.height;
+  if (!record?.meta?.dezaemonSettings) {
+    log(
+      "--field saturn: not a Dezaemon import; the runtime will reopen it on its own 256x480 screen",
+    );
+  } else {
+    log(`field: ${webField.flag} (${webField.width}x${webField.height})`);
+  }
+}
 const bossKey = `boss${STAGE}`;
 const boss = record.bossData?.[bossKey];
 if (!boss) throw new Error(`${LEVEL} has no ${bossKey}`);
@@ -2625,6 +2699,7 @@ const survey = FULL && STAGE === 0
   ? await writeSurveyReport(OUT, rush as RushRecord, {
     saturn: surveyFileOf("saturn"),
     web: surveyFileOf("web"),
+    reading: SATURN_READING,
   })
   : null;
 const report = {

@@ -2362,27 +2362,45 @@
   // columns of the cart's 320 and more than twice as far ahead, and every
   // rule that counts screen pixels (when a row comes into view, how long a
   // bullet takes to arrive, where a change channel arms) plays out on the
-  // wrong distance. ?field=saturn plays a VERTICAL import on the Saturn's
-  // own screen instead: 320x224, the 20-column grid 1:1 from x 0, the
-  // 224-px background at 48..272, and the engine's numbers with no scale
-  // factor (README-Parity.md P1). Every DEZA_FIELD test below is one of them.
+  // wrong distance. ?field=saturn plays an import on the Saturn's own
+  // screen instead. A VERTICAL cart: 320x224, the 20-column grid 1:1 from
+  // x 0, the 224-px background at 48..272, and the engine's numbers with no
+  // scale factor (README-Parity.md P1). Every DEZA_FIELD test below is one
+  // of them.
+  //
+  // A HORIZONTAL cart is the same simulation with the Saturn's screen turned
+  // across it: 320 px along the scroll axis — the scroll coordinate runs
+  // from -96 at the entry edge to 224 at the exit edge, where a vertical
+  // game's runs 0..224 — and the 224-px playfield band, lateral 48..272,
+  // across. This runtime draws a horizontal cart transposed (lateral across,
+  // the scroll down), so its field is 224x320: screen x = lateral - 48,
+  // screen y = scroll coordinate + 96. That is ?field=saturn-h, and every
+  // DEZA_FIELD_H test below is one of its numbers. Nobody types it: the
+  // boot is asked for ?field=saturn and takes the cart's own orientation.
   //
   // It is a boot flag, not a property of the level, because the screen's
   // size is baked into the Phaser config and into every GW/GH copy in this
   // file before any level has loaded. The boot scene checks the level once
-  // it resolves and reloads without the flag for anything the field is not
-  // built for (dezaFieldFits): a level that is no Dezaemon import, and a
-  // HORIZONTAL cart, which this runtime draws transposed and which needs a
-  // 224x320 field with the scroll axis shifted by its 96-px entry margin.
+  // it resolves (dezaFieldFits) and opens the page again with the flag the
+  // level needs: without it for a level that is no Dezaemon import, and
+  // with the other field for a cart of the other orientation.
   function readDezaFieldFlag() {
     try {
-      return new URLSearchParams(window.location.search).get("field") === "saturn";
+      var f = new URLSearchParams(window.location.search).get("field");
+      return f === "saturn" || f === "saturn-h" ? f : null;
     } catch (e) {
-      return false;
+      return null;
     }
   }
-  var DEZA_FIELD = readDezaFieldFlag();
-  var GAME_DIMENSIONS = DEZA_FIELD ? {
+  var DEZA_FIELD_FLAG = readDezaFieldFlag();
+  var DEZA_FIELD = DEZA_FIELD_FLAG !== null;
+  var DEZA_FIELD_H = DEZA_FIELD_FLAG === "saturn-h";
+  var GAME_DIMENSIONS = DEZA_FIELD_H ? {
+    WIDTH: 224,
+    HEIGHT: 320,
+    CENTER_X: 112,
+    CENTER_Y: 160
+  } : DEZA_FIELD ? {
     WIDTH: 320,
     HEIGHT: 224,
     CENTER_X: 160,
@@ -2396,25 +2414,50 @@
   // The page reads this to fit the canvas (lib/game-page.ts, the exported
   // app's shell): it is laid out before the game exists.
   if (typeof window !== "undefined") {
-    window.__GAME_FIELD__ = { width: GAME_DIMENSIONS.WIDTH, height: GAME_DIMENSIONS.HEIGHT, saturn: DEZA_FIELD };
+    window.__GAME_FIELD__ = {
+      width: GAME_DIMENSIONS.WIDTH,
+      height: GAME_DIMENSIONS.HEIGHT,
+      saturn: DEZA_FIELD,
+      horizontal: DEZA_FIELD_H
+    };
   }
+  // Where the engine's two axes lie on the field: the screen x of lateral 0
+  // and the screen y of scroll coordinate 0. A vertical cart's field is the
+  // engine's own screen; a horizontal cart's shows lateral 48..272 across
+  // and starts its scroll axis 96 px above coordinate 0.
+  var DEZA_FIELD_LATERAL0 = DEZA_FIELD_H ? -48 : 0;
+  var DEZA_FIELD_SCROLL0 = DEZA_FIELD_H ? 96 : 0;
   // The engine's despawn box (+0x173A4), whole pixels of the 320x224 screen:
-  // what a shot or a bullet has left when it is retired.
-  var DEZA_FIELD_BOX = { left: 16, right: 304, top: -16, bottom: 256 };
+  // what a shot or a bullet has left when it is retired — lateral 16..304,
+  // scroll -16..256 in a vertical game. A horizontal game's box is not
+  // traced (README-Parity.md, T22); its field takes the same margins about
+  // its own window, lateral 16..304 and scroll -112..256, which on the
+  // transposed screen is x -32..256, y -16..352.
+  var DEZA_FIELD_BOX = DEZA_FIELD_H
+    ? { left: -32, right: 256, top: -16, bottom: 352 }
+    : { left: 16, right: 304, top: -16, bottom: 256 };
   function dezaFieldOutside(o) {
     return o.x < DEZA_FIELD_BOX.left || o.x > DEZA_FIELD_BOX.right ||
       o.y < DEZA_FIELD_BOX.top || o.y > DEZA_FIELD_BOX.bottom;
   }
-  // True when the level the boot resolved can be played on the field: a
-  // vertical Dezaemon import.
-  function dezaFieldFits(recipe) {
+  // The field a level plays on: "saturn" for a vertical Dezaemon import,
+  // "saturn-h" for a horizontal one, null for anything else.
+  function dezaFieldFor(recipe) {
     var m = recipe && recipe.meta && recipe.meta.dezaemonSettings;
-    return !!m && !m.horizontal;
+    if (!m) return null;
+    return m.horizontal ? "saturn-h" : "saturn";
   }
-  // The same page without ?field=, for a level the field does not fit.
-  function dezaFieldLeaveUrl(href) {
+  // True when the level the boot resolved can be played on the field this
+  // page booted with.
+  function dezaFieldFits(recipe, flag) {
+    return dezaFieldFor(recipe) === (flag === undefined ? DEZA_FIELD_FLAG : flag);
+  }
+  // The same page on the field the level needs: ?field= taken off for a
+  // level that has none, set to the cart's own orientation otherwise.
+  function dezaFieldLeaveUrl(href, field) {
     var u = new URL(href);
-    u.searchParams.delete("field");
+    if (field) u.searchParams.set("field", field);
+    else u.searchParams.delete("field");
     return u.toString();
   }
   var STAGE_DIMENSIONS = {
@@ -4462,8 +4505,11 @@
   // the engine clears its orientation flag for the whole title.
   var DEZA_SCREEN_W = 320;
   var DEZA_SCREEN_H = 224;
-  var DEZA_TITLE_BAND_Y = DEZA_FIELD ? 0 : 48;
-  var DEZA_ROLL_BAND_Y = DEZA_FIELD ? 0 : 128;
+  // On the vertical field the screen IS that 224-line picture. A horizontal
+  // cart's field is 224x320, so the title and the roll keep the middle 224
+  // columns (dezaSatX) in a band centred on its 320 lines.
+  var DEZA_TITLE_BAND_Y = DEZA_FIELD_H ? 48 : DEZA_FIELD ? 0 : 48;
+  var DEZA_ROLL_BAND_Y = DEZA_FIELD_H ? 48 : DEZA_FIELD ? 0 : 128;
   function dezaSatX(sx) {
     return sx - (DEZA_SCREEN_W - GAME_DIMENSIONS.WIDTH) / 2;
   }
@@ -6254,7 +6300,9 @@
     var table = horizontal ? CHANNEL_TRIGGER_PX_H : CHANNEL_TRIGGER_PX;
     var offsets = horizontal ? CHANNEL_TRIGGER_BAND_H : CHANNEL_TRIGGER_BAND;
     var off = offsets[(band || 0) & 7];
-    return (ground ? table[mode] + off : table[mode] - off) * CHANNEL_TRIGGER_SCALE;
+    // The line is a scroll coordinate; a horizontal cart's field draws
+    // coordinate 0 at y 96 (DEZA_FIELD_SCROLL0, 0 everywhere else).
+    return (ground ? table[mode] + off : table[mode] - off) * CHANNEL_TRIGGER_SCALE + DEZA_FIELD_SCROLL0;
   }
   // The band of a formation key: a grid-spawned zako carries its placement
   // cell byte (`1 bbb nnnn`), a death-word child its parent's parameter
@@ -7218,8 +7266,14 @@
     var GH = scene.scale ? scene.scale.height : 480;
     var top = dezaHorizontal(scene) ? -96 : 0;
     // On the field (?field=saturn) the grid is whole, so the lateral band is
-    // the engine's own 48..272.
-    if (DEZA_FIELD) return enemy.y >= top && enemy.y <= GH && enemy.x >= 48 && enemy.x <= 272;
+    // the engine's own 48..272. A horizontal cart's field is exactly that
+    // window — lateral 48..272 across, scroll -96..224 down — so there an
+    // enemy may fire anywhere on the screen.
+    if (DEZA_FIELD) {
+      var lateral = enemy.x - DEZA_FIELD_LATERAL0;
+      var coord = enemy.y - DEZA_FIELD_SCROLL0;
+      return coord >= top && coord <= 224 && lateral >= 48 && lateral <= 272;
+    }
     return enemy.y >= top && enemy.y <= GH && enemy.x >= 16 && enemy.x <= GW - 16;
   }
   function updateEnemyFire(scene, enemy, shootFn) {
@@ -11313,7 +11367,13 @@
   }
   // The ship's own clamps on the Saturn's screen (+0xAB0E): x 60..259,
   // y 20..212 — applied to the ship's position, whatever its art's size.
-  var DEZA_FIELD_SHIP = { left: 60, right: 259, top: 20, bottom: 212 };
+  // A horizontal game's clamps are not traced (README-Parity.md, T22); its
+  // field keeps the same insets about its own window — lateral 60..259,
+  // 20 px in from the entry edge and 12 from the exit edge of scroll
+  // -96..224 — which on the transposed screen is x 12..211, y 20..308.
+  var DEZA_FIELD_SHIP = DEZA_FIELD_H
+    ? { left: 12, right: 211, top: 20, bottom: 308 }
+    : { left: 60, right: 259, top: 20, bottom: 212 };
   function clampPlayerX(p, x) {
     if (DEZA_FIELD) return clamp(x, DEZA_FIELD_SHIP.left, DEZA_FIELD_SHIP.right);
     return clamp(x, p.halfW, GW - p.halfW);
@@ -11924,14 +11984,18 @@
   // How far ahead of the screen's bottom edge a placement row is spawned, in
   // scroll px: this runtime's 480-px screen plus 32, or — on the field
   // (?field=saturn) — the Saturn's 224 lines plus the 48 px the grid walker
-  // starts an object above the top edge (+0x152E8, 0xE800 = -48 px).
+  // starts an object above the top edge (+0x152E8, 0xE800 = -48 px). In a
+  // horizontal game the same helper starts it at -144 px (0xB800), 48 px
+  // beyond an entry edge that lies at -96: on that cart's 320-line field
+  // the lead is 320 + 48 by the same sum.
   var DEZA_FIELD_ENTRY = 48;
   function dezaWaveLead() {
     return DEZA_FIELD ? GAME_DIMENSIONS.HEIGHT + DEZA_FIELD_ENTRY : 512;
   }
-  // Sprite width per art band (the record bands of the stage bank: 16x16,
-  // 32x16, 16x32, 32x32, 64x32, 32x64, 64x64).
+  // Sprite width and height per art band (the record bands of the stage
+  // bank: 16x16, 32x16, 16x32, 32x32, 64x32, 32x64, 64x64).
   var DEZA_BAND_WIDTH = [16, 32, 16, 32, 64, 32, 64, 16];
+  var DEZA_BAND_HEIGHT = [16, 16, 32, 32, 32, 64, 64, 16];
   // Where a grid spawn stands on the field (?field=saturn), from its cell:
   // the engine stores the cell's left edge (column << 11, +0x169EE) and the
   // sprite is drawn from it, so the centre is col*16 + w/2; on the scroll
@@ -11941,18 +12005,33 @@
   // ground one (+0x1679A), so a taller sprite's foot enters on the same
   // line as a smaller one's.
   //
-  // NOT applied: the engine's separate start for a GROUND object, 240 px
-  // above the top edge (0x8800). Taken at this gate it would lift a turret
-  // 192 px off the terrain it is painted on, and the one ground record the
-  // Ramsie survey saw (W, band 5) stood at its row + 8 px — its row with
-  // the band byte added. Where that -240 applies is still to be read out of
-  // the walker (README-Parity.md, T21).
+  // NOT applied: the engine's separate start word for a GROUND object
+  // (0x8800, where an air one takes 0xE800 = -48 px). Read as the signed
+  // -240 px and taken at this gate it would lift a turret 192 px off the
+  // terrain it is painted on, and the one ground record the Ramsie survey
+  // saw (W, band 5) stood at its row + 8 px — its row with the band byte
+  // added — on the Saturn and here alike. What differs is WHEN: here W
+  // comes on with its row, at scroll 467; the Saturn first logs it at 787,
+  // already under the screen, at the 272 px that word is when read
+  // unsigned, plus 8 (run 6). How the walker starts a ground cell is still
+  // to be read out of it (README-Parity.md, T21).
+  //
+  // A HORIZONTAL cart's field (DEZA_FIELD_H) takes the same two rules with
+  // that game's own tables: the band byte is the horizontal one
+  // (CHANNEL_TRIGGER_BAND_H, +0x2204C — there the scroll axis runs along
+  // the sprite's width), and the cell's edge is the sprite's edge along
+  // the lateral axis, which on the Saturn's turned screen is its HEIGHT —
+  // so the lateral centre is col*16 + h/2. That second half is deduced
+  // from the vertical rule, not traced or surveyed (no horizontal cart has
+  // been surveyed; README-Parity.md P1). The x returned is lateral: the
+  // caller's gridLeft carries it onto the screen (-48 on that field).
   function dezaFieldSpawn(scene, dezaemon, col, row) {
     var band = dezaBand(dezaemon);
     var ground = !!(dezaemon && dezaemon.behavior && dezaemon.behavior.ground);
-    var off = CHANNEL_TRIGGER_BAND[band & 7];
+    var off = (DEZA_FIELD_H ? CHANNEL_TRIGGER_BAND_H : CHANNEL_TRIGGER_BAND)[band & 7];
+    var across = (DEZA_FIELD_H ? DEZA_BAND_HEIGHT : DEZA_BAND_WIDTH)[band & 7];
     return {
-      x: col * 16 + DEZA_BAND_WIDTH[band & 7] / 2,
+      x: col * 16 + across / 2,
       y: GAME_DIMENSIONS.HEIGHT + scene.dezaBg._scroll - row * 16 + (ground ? off : -off)
     };
   }
@@ -17272,9 +17351,15 @@
   // bound is per size class (+0x4C8C) and not yet read (README-Parity.md,
   // T21), and the grid's outer columns stand inside x 16. Nothing leaves by
   // the top: a grid spawn enters from there.
+  //
+  // The sides are counted on the lateral axis, 16 px outside the 320-px
+  // grid: on a horizontal cart's field the grid reaches 48 px past each
+  // edge of the picture (DEZA_FIELD_LATERAL0), and its outer columns must
+  // not be retired where they are placed.
   function dezaZakoLeft(enemy, bottomMargin) {
     if (DEZA_FIELD) {
-      return enemy.y > DEZA_FIELD_BOX.bottom || enemy.x < -16 || enemy.x > GW13 + 16;
+      var lateral = enemy.x - DEZA_FIELD_LATERAL0;
+      return enemy.y > DEZA_FIELD_BOX.bottom || lateral < -16 || lateral > 336;
     }
     return enemy.y > GH11 + bottomMargin || enemy.x < -40 || enemy.x > GW13 + 40;
   }
@@ -21654,11 +21739,16 @@
           cmgApplyCheatStart(recipe);
         }
       }).then((result) => {
-        // ?field=saturn fits a vertical Dezaemon import and nothing else:
-        // any other level is opened again on this runtime's own screen.
+        // ?field=saturn fits a Dezaemon import, on the field of its own
+        // orientation: a horizontal cart is opened again on the 224x320
+        // field (and a vertical one asked for that, on the 320x224), any
+        // other level on this runtime's own screen.
         if (DEZA_FIELD && !dezaFieldFits(gameState._phaserRecipe)) {
-          console.warn("[2028.Ai] ?field=saturn needs a vertical Dezaemon import — reopening on the 256x480 screen");
-          window.location.replace(dezaFieldLeaveUrl(window.location.href));
+          var fieldWanted = dezaFieldFor(gameState._phaserRecipe);
+          console.warn(fieldWanted
+            ? "[2028.Ai] ?field=saturn: a " + (fieldWanted === "saturn-h" ? "horizontal" : "vertical") + " cart — reopening on its own field"
+            : "[2028.Ai] ?field=saturn needs a Dezaemon import — reopening on the 256x480 screen");
+          window.location.replace(dezaFieldLeaveUrl(window.location.href, fieldWanted));
           return;
         }
         // Which game this is, now that its level has resolved, and only now

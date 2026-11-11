@@ -122,14 +122,18 @@ if (document.fonts && document.fonts.load) {
 // Screen-fit + portrait, ported from 2019-es7/phaser-game.html.
 export const FIT_PORTRAIT = `
 (function () {
-  // The screen the game draws: 256x480, or the Saturn's 320x224 under
-  // ?field=saturn (game.bundle.js, DEZA_FIELD — read here as well because the
-  // page is laid out before the bundle runs). That field is landscape, so
-  // the page is not turned for it: html.field-saturn opts out of the
-  // rotation below and the canvas is fitted as it stands.
-  var FIELD_SATURN = false;
-  try { FIELD_SATURN = new URLSearchParams(window.location.search).get("field") === "saturn"; } catch (e) {}
-  var GW = FIELD_SATURN ? 320 : 256, GH = FIELD_SATURN ? 224 : 480;
+  // The screen the game draws: 256x480, or the Saturn's under ?field=saturn
+  // (game.bundle.js, DEZA_FIELD — read here as well because the page is
+  // laid out before the bundle runs): 320x224 for a vertical cart, and
+  // 224x320 — that screen laid across a horizontal cart's transposed world —
+  // under ?field=saturn-h, which the bundle opens itself for such a cart.
+  // Neither is turned: html.field-saturn opts out of the rotation below
+  // and the canvas is fitted as it stands.
+  var FIELD = null;
+  try { FIELD = new URLSearchParams(window.location.search).get("field"); } catch (e) {}
+  var FIELD_SATURN = FIELD === "saturn" || FIELD === "saturn-h";
+  var GW = FIELD === "saturn-h" ? 224 : FIELD_SATURN ? 320 : 256;
+  var GH = FIELD === "saturn-h" ? 320 : FIELD_SATURN ? 224 : 480;
   if (FIELD_SATURN) document.documentElement.classList.add("field-saturn");
 
   function isRotated() {

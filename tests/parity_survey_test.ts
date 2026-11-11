@@ -44,7 +44,17 @@ Deno.test("the web and PS2 surveys fly the ship inside the box they are given an
   assert(web.includes("dbg.setButtons"));
   assert(web.includes("S.births.push"));
   assert(web.includes("enemyBullets"));
-  const ps2 = ps2Survey({ periodMs: 100, box: { x0: 40, x1: 200, y0: 300, y1: 440 } });
+  // A big shot is an object of its record; the runtime's own mark says who
+  // fired it, and it rides on the object and on its birth.
+  assert(web.includes('data(o, "dezaBigShotOf")'));
+  assert(web.includes("rec.shotOf = shotOf"));
+  assert(web.includes("birth.shotOf = rec.shotOf"));
+  // The page code is one expression that parses.
+  new Function(`return ${web}`);
+  const ps2 = ps2Survey({
+    periodMs: 100,
+    box: { x0: 40, x1: 200, y0: 300, y1: 440 },
+  });
   assert(ps2.includes("__PS2_GS__"));
   assert(ps2.includes("__PS2_PADS__"));
   // Only strings and numbers leave the page: a port object's frame or

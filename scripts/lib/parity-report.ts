@@ -29,8 +29,15 @@
 //   record's own cells; on the web a bullet's kind follows its art — the
 //   cart's bullet table is a type, the stock bolt or a record's cells a big
 //   shot of the nearest type-3 shooter (the sampler's nearest-enemy guess
-//   lands on bystanders). A kind on one side only — today the web's stock
-//   `normalProjectile` bolts standing in for every big shot — fails the
+//   lands on bystanders). Since 2026-10-27 the web builds a big shot the way
+//   the Saturn does, as an object of the record (spawnBigShot): the sampler
+//   marks such an enemy with the key of the one that fired it (`shotOf`),
+//   and it is counted as that shooter's big shot, drawn as its record's
+//   cells when its frame is one of the record's own. A record the roster
+//   carries only to be spawned (`placements: 0` — a big shot's record, a
+//   death child) is not a placement: its key is never ambiguous. A kind on
+//   one side only — the web's stock `normalProjectile` bolts stood in for
+//   every big shot until then — fails the
 //   run, as does a record whose first-seen scroll differs by more than
 //   SCROLL_TOLERANCE once the web's known gate lead (its wave gate is
 //   row·16−512 against the Saturn's row·16−272, so every row comes on
@@ -49,6 +56,13 @@
 //   removes the object. Rows are ordered by first appearance on the web's
 //   scroll axis (a record the web never saw by its Saturn scroll less the
 //   lead); bullet kinds by births, then name.
+// - The Saturn's side can come from a SAVED READING instead of a survey:
+//   the Saturn pane plays the original cart whatever the web does, so a
+//   reading of one run stays the reference for every later web run of the
+//   same cart, on a box with no disc as well. `saveReading` keeps what the
+//   comparison uses — first sightings, lives, bullet kinds, the ship, the
+//   run's own numbers — by placement id; `loadReading` hands it back. The
+//   report says which it was built from.
 
 import type {
   SaturnBirth,
@@ -69,11 +83,34 @@ export const WEB_GATE_LEAD = 512 - 272;
  * clamps (x 60..259, y 20..212).
  */
 export const WEB_FIELD = {
+  flag: "saturn",
   width: 320,
   height: 224,
   lead: 0,
   pilotBox: { x0: 72, x1: 248, y0: 140, y1: 204 },
 } as const;
+
+/**
+ * The same for a HORIZONTAL cart (?field=saturn-h, DEZA_FIELD_H): that
+ * screen laid across the runtime's transposed world, 224 px of playfield
+ * across and the 320-px scroll axis down, the exit edge at the bottom. The
+ * pilot keeps to the exit side, inside the field's clamps (x 12..211,
+ * y 20..308).
+ */
+export const WEB_FIELD_H = {
+  flag: "saturn-h",
+  width: 224,
+  height: 320,
+  lead: 0,
+  pilotBox: { x0: 24, x1: 200, y0: 232, y1: 300 },
+} as const;
+
+/** The field a record plays on under --field saturn: its own orientation's. */
+export function webFieldFor(
+  rush: RushRecord | null | undefined,
+): typeof WEB_FIELD | typeof WEB_FIELD_H {
+  return rush?.meta?.dezaemonSettings?.horizontal ? WEB_FIELD_H : WEB_FIELD;
+}
 /** A record's first-seen scroll may differ by this much after the lead. */
 export const SCROLL_TOLERANCE = 16;
 /** A bullet kind with fewer births than this is listed but not judged. */
@@ -82,6 +119,17 @@ export const KIND_MIN_BIRTHS = 2;
 export const AMBIGUOUS_SHOT_PX = 12;
 /** The Saturn's frame; what has left it and stopped has exited. */
 export const SATURN_FRAME = { width: 320, height: 224 } as const;
+/**
+ * That frame in the engine's own coordinates, which the sampler reads: a
+ * vertical game shows lateral 0..320 and scroll 0..224, a horizontal one
+ * lateral 48..272 and scroll -96..224 (the 320 px lie along the scroll
+ * axis, 96 of them beyond coordinate 0 at the entry edge).
+ */
+export function saturnFrame(horizontal: boolean) {
+  return horizontal
+    ? { x0: 48, x1: 272, y0: -96, y1: 224 }
+    : { x0: 0, x1: SATURN_FRAME.width, y0: 0, y1: SATURN_FRAME.height };
+}
 /** A web bolt with no type-3 shooter alive looks one sample back, this far. */
 export const SHOOTER_REACH_PX = 64;
 
@@ -133,11 +181,19 @@ export interface WebSurveyFile extends SurveyDump<WebBirth, WebSample> {
   source?: string;
   stage?: number;
   modes?: string[];
+  /** The Saturn field the pane ran on ("saturn", "saturn-h"), or none. */
+  field?: string | null;
 }
 
 /** The parts of a level record the report reads. */
 export interface RushRecord {
   name?: string;
+  /** The import's own metadata; `horizontal` is game mode bit 0. */
+  meta?: { dezaemonSettings?: { horizontal?: boolean } };
+  /** The opening stage's cells (letter + drop digit) and each wave's map row. */
+  enemylist?: unknown[][];
+  waveRows?: number[];
+  stages?: Record<string, { enemylist?: unknown[][]; waveRows?: number[] }>;
   enemyData?: Record<string, RushEnemy>;
   playerData?: Record<string, unknown>;
   dezaemonBullets?: { art?: string[][] };
@@ -145,12 +201,15 @@ export interface RushRecord {
 
 export interface RushEnemy {
   name?: string;
-  hp?: number;
+  /** A number, or "infinity" for an armoured record. */
+  hp?: number | string;
   texture?: string[];
   dezaemon?: {
     stage?: number;
     record?: number;
     placementId?: number;
+    /** Cells of the stage that place the record; 0 = carried only to be spawned. */
+    placements?: number;
     behavior?: {
       hp?: number;
       ground?: boolean;
@@ -176,6 +235,14 @@ export interface RosterEntry {
   hp: number | null;
   webHp: number | null;
   ground: boolean;
+  /**
+   * True for a record no cell places (`placements: 0`): the roster carries
+   * it because a big shot or a death word spawns it. A record without the
+   * count (an import older than it) is taken as placed.
+   */
+  spawnOnly: boolean;
+  /** The frames the web draws the record with. */
+  frames: string[];
   fire: {
     enabled: boolean;
     mode: number;
@@ -208,8 +275,10 @@ export function roster(
       name: e.name ?? key,
       record,
       hp: dz.behavior?.hp ?? null,
-      webHp: e.hp ?? null,
+      webHp: typeof e.hp === "number" ? e.hp : null,
       ground: !!dz.behavior?.ground,
+      spawnOnly: dz.placements === 0,
+      frames: Array.isArray(e.texture) ? e.texture : [],
       fire: {
         enabled: !!fire.enabled,
         mode: fire.mode ?? 0,
@@ -241,6 +310,15 @@ export interface BigShotTarget {
   ambiguous: boolean;
 }
 
+/** Whether a cell of the stage places this key (a spawn-only record's is not). */
+export function isPlaced(
+  placed: Map<number, RosterEntry>,
+  pid: number,
+): boolean {
+  const e = placed.get(pid);
+  return !!e && !e.spawnOnly;
+}
+
 /** The records the stage's type-3 shooters fire, by the key their shots carry. */
 export function bigShotTargets(
   placed: Map<number, RosterEntry>,
@@ -253,7 +331,7 @@ export function bigShotTargets(
       record: e.bigShot.record,
       character: e.bigShot.character,
       shooters: [],
-      ambiguous: placed.has(e.bigShot.pid),
+      ambiguous: isPlaced(placed, e.bigShot.pid),
     };
     t.shooters.push(e.letter);
     out.set(e.bigShot.pid, t);
@@ -321,8 +399,9 @@ export interface FirstSeen {
   /** Seconds on the side's clock (kept for the Saturn, run for the web). */
   t: number;
   scroll: number | null;
-  x: number;
-  y: number;
+  /** Null in a reading transcribed from a report, which prints neither. */
+  x: number | null;
+  y: number | null;
   /** The Saturn sprite index or the web frame. */
   art: string;
 }
@@ -351,6 +430,11 @@ export interface ShipObject {
 
 export interface SideReading {
   side: "saturn" | "web";
+  /**
+   * Set when the reading was loaded from a saved one (loadReading) rather
+   * than read off this run's survey: what the saved file says it is.
+   */
+  saved?: string;
   source: string;
   samples: number;
   seconds: number;
@@ -370,6 +454,12 @@ export interface SideReading {
   lives: Map<number, number[]>;
   bullets: BulletSeen[];
   ship: ShipObject[];
+  /**
+   * Where a spawn stopped once it had left the frame, in the engine's own
+   * coordinates: the engine parks what has exited just past its bound, so
+   * this is that bound measured (README-Parity.md, T21). The Saturn's only.
+   */
+  parks: { pid: number; x: number | null; y: number | null }[];
   /** Placed records the Saturn spawned only in rewound-away play: pid -> scroll. */
   outside: Map<number, number>;
   /** Rewind boundaries: births that were carries, and spawns added from the sample. */
@@ -396,7 +486,9 @@ export function readSaturn(
   sat: SaturnSurveyFile,
   placed: Map<number, RosterEntry>,
   targets: Map<number, BigShotTarget>,
+  options: { horizontal?: boolean } = {},
 ): SideReading {
+  const frame = saturnFrame(!!options.horizontal);
   const samples = [...sat.samples].sort((a, b) => a.wall - b.wall);
   const lastWall = samples.length ? samples[samples.length - 1].wall : null;
   const clock = keptClock(sat.kept, sat.t0, lastWall);
@@ -409,6 +501,7 @@ export function readSaturn(
   const spawns = new Map<number, number>();
   const art = new Map<number, Set<string>>();
   const lives = new Map<number, number[]>();
+  const parks: SideReading["parks"] = [];
   const bullets: BulletSeen[] = [];
   const shipBirths = new Map<string, ShipObject>();
   const attackSeen = new Map<string, Map<number, number>>();
@@ -461,8 +554,12 @@ export function readSaturn(
   const shotOf = (b: SaturnBirth, sample: SaturnSample | undefined) => {
     const target = targets.get(b.key);
     return target &&
-        (!placed.has(b.key) ||
-          nearShooter(sample, b, target.shooters.map((l) => pidOfLetter.get(l))))
+        (!isPlaced(placed, b.key) ||
+          nearShooter(
+            sample,
+            b,
+            target.shooters.map((l) => pidOfLetter.get(l)),
+          ))
       ? target
       : undefined;
   };
@@ -528,9 +625,14 @@ export function readSaturn(
       (art.get(b.key) ?? art.set(b.key, new Set()).get(b.key)!).add(
         `sprite ${b.spr}`,
       );
-      const life = saturnLife(kept, byWall.get(b.wall), b, clock);
+      const life = saturnLife(kept, byWall.get(b.wall), b, clock, frame);
       if (life !== null) {
-        (lives.get(b.key) ?? lives.set(b.key, []).get(b.key)!).push(life);
+        (lives.get(b.key) ?? lives.set(b.key, []).get(b.key)!).push(
+          life.seconds,
+        );
+        if (life.park) {
+          parks.push({ pid: b.key, x: life.park[0], y: life.park[1] });
+        }
       }
       continue;
     }
@@ -609,6 +711,7 @@ export function readSaturn(
     lives,
     bullets,
     ship: [...shipBirths.values()].sort((a, b) => a.firstT - b.firstT),
+    parks,
     outside,
     carried,
     added: added.length,
@@ -656,32 +759,37 @@ function nearestShooter(
  * not left the frame and stopped (the engine parks what has exited just
  * past the edge, alive). The kept spans are contiguous game time — a rewind
  * restores the state the last span ended in — so a life runs on across
- * them.
+ * them. `park` is where it stopped, when that is how the life ended.
  */
 function saturnLife(
   kept: SaturnSample[],
   at: number | undefined,
   b: SaturnBirth,
   clock: KeptClock,
-): number | null {
+  frame: ReturnType<typeof saturnFrame> = saturnFrame(false),
+): { seconds: number; park: [number, number] | null } | null {
   if (at === undefined) return null;
   const born = clock.at(b.wall);
   if (born === null) return null;
   let last = born;
+  let park: [number, number] | null = null;
   let prev: [number, number] = [b.x, b.y];
   for (let i = at + 1; i < kept.length; i++) {
     const s = kept[i];
     const o = s.objs.find((o) => o[0] === b.slot);
     if (!o || o[5] !== b.key || o[4] <= 0) break;
-    const off = o[2] < 0 || o[2] > SATURN_FRAME.width || o[3] < 0 ||
-      o[3] > SATURN_FRAME.height;
-    if (off && Math.abs(o[2] - prev[0]) < 0.05 && Math.abs(o[3] - prev[1]) < 0.05) {
+    const off = o[2] < frame.x0 || o[2] > frame.x1 || o[3] < frame.y0 ||
+      o[3] > frame.y1;
+    if (
+      off && Math.abs(o[2] - prev[0]) < 0.05 && Math.abs(o[3] - prev[1]) < 0.05
+    ) {
+      park = [o[2], o[3]];
       break;
     }
     prev = [o[2], o[3]];
     last = clock.at(s.wall) ?? last;
   }
-  return last - born;
+  return { seconds: last - born, park };
 }
 
 /** A web bullet's art family and what it says about the kind. */
@@ -699,6 +807,7 @@ export function webArt(frame: string | null, tex?: string | null): string {
 export function readWeb(
   web: WebSurveyFile,
   placed: Map<number, RosterEntry>,
+  targets: Map<number, BigShotTarget> = bigShotTargets(placed),
 ): SideReading {
   const samples = [...web.samples].sort((a, b) => a.t - b.t);
   const firsts = new Map<number, FirstSeen>();
@@ -713,7 +822,8 @@ export function readWeb(
     byT.set(s.t, i);
     for (const o of s.objs) {
       lastSeen.set(o.id, s.t);
-      if (o.kind === "enemy" && o.deza != null && o.frame) {
+      // A big shot wears its record's key; its frames are not a placement's.
+      if (o.kind === "enemy" && o.deza != null && o.frame && o.shotOf == null) {
         (art.get(o.deza) ?? art.set(o.deza, new Set()).get(o.deza)!).add(
           o.frame,
         );
@@ -750,8 +860,35 @@ export function readWeb(
     return pick(i === undefined ? undefined : samples[i], Infinity) ??
       pick(i ? samples[i - 1] : undefined, SHOOTER_REACH_PX);
   };
+  // A big shot the runtime built as an object of its record (spawnBigShot):
+  // the sampler names the key of the enemy that fired it. A survey older
+  // than that mark is read by the key alone — one no cell places is a shot.
+  const bigShotOf = (b: WebBirth): BulletSeen | null => {
+    if (b.kind !== "enemy" || b.deza == null) return null;
+    const target = targets.get(b.deza);
+    if (b.shotOf == null && (!target || isPlaced(placed, b.deza))) return null;
+    const shooter = b.shotOf != null ? placed.get(b.shotOf) : undefined;
+    const record = shooter?.bigShot?.record ?? target?.record ??
+      placed.get(b.deza)?.record ?? null;
+    if (record === null) return null;
+    const own = placed.get(placementId(record))?.frames ?? [];
+    return {
+      what: `big shot (record ${record})`,
+      art: b.frame && own.includes(b.frame)
+        ? `record ${record} cells`
+        : webArt(b.frame, b.tex),
+      shooter: shooter?.pid ?? null,
+      t: b.t / 1000,
+      scroll: b.scroll,
+    };
+  };
   const births = [...web.births].sort((a, b) => a.t - b.t);
   for (const b of births) {
+    const shot = bigShotOf(b);
+    if (shot) {
+      bullets.push(shot);
+      continue;
+    }
     if (b.kind === "enemy" && b.deza != null) {
       if (!firsts.has(b.deza)) {
         firsts.set(b.deza, {
@@ -849,10 +986,179 @@ export function readWeb(
     lives,
     bullets,
     ship,
+    parks: [],
     outside: new Map(),
     carried: 0,
     added: 0,
     notes,
+  };
+}
+
+// --- a saved reading --------------------------------------------------------
+
+export const READING_FORMAT = "shmupx-parity-reading/1";
+
+/**
+ * One side's reading as a file: what the comparison uses and nothing else,
+ * keyed by placement id (letters move when the roster grows). Bullets are
+ * kept as counts — the report never reads when one was born.
+ */
+export interface SavedReading {
+  format: typeof READING_FORMAT;
+  side: "saturn";
+  level?: string;
+  stage?: number;
+  /** What it was read from: a survey file of a run, or a report's tables. */
+  from: string;
+  source: string;
+  samples: number;
+  seconds: number;
+  wallSeconds: number;
+  scrollFrom: number | null;
+  scrollTo: number | null;
+  rate: { median: number; min: number; max: number } | null;
+  maxObjs: number;
+  maxLive: number | null;
+  records: {
+    pid: number;
+    first: FirstSeen | null;
+    /** Null when the source did not keep the count. */
+    spawns: number | null;
+    art: string[];
+    lives: number[];
+  }[];
+  bullets: {
+    what: string;
+    art: string;
+    shooter: number | null;
+    births: number;
+  }[];
+  ship: ShipObject[];
+  /** Where spawns stopped after leaving the frame (absent in older files). */
+  parks?: { pid: number; x: number | null; y: number | null }[];
+  outside: [number, number][];
+  carried: number;
+  added: number;
+  notes: string[];
+}
+
+export function isSavedReading(x: unknown): x is SavedReading {
+  return !!x && typeof x === "object" &&
+    (x as { format?: unknown }).format === READING_FORMAT;
+}
+
+/** A Saturn reading as the file `loadReading` takes back. */
+export function saveReading(
+  r: SideReading,
+  meta: { from: string; level?: string; stage?: number },
+): SavedReading {
+  const pids = new Set<number>([
+    ...r.firsts.keys(),
+    ...r.spawns.keys(),
+    ...r.art.keys(),
+    ...r.lives.keys(),
+  ]);
+  const kinds = new Map<string, SavedReading["bullets"][number]>();
+  for (const b of r.bullets) {
+    const id = `${b.what}\n${b.art}\n${b.shooter}`;
+    const k = kinds.get(id) ??
+      { what: b.what, art: b.art, shooter: b.shooter, births: 0 };
+    k.births++;
+    kinds.set(id, k);
+  }
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+  return {
+    format: READING_FORMAT,
+    side: "saturn",
+    level: meta.level,
+    stage: meta.stage,
+    from: meta.from,
+    source: r.source,
+    samples: r.samples,
+    seconds: round(r.seconds),
+    wallSeconds: round(r.wallSeconds),
+    scrollFrom: r.scrollFrom,
+    scrollTo: r.scrollTo,
+    rate: r.rate && {
+      median: round(r.rate.median),
+      min: round(r.rate.min),
+      max: round(r.rate.max),
+    },
+    maxObjs: r.maxObjs,
+    maxLive: r.maxLive,
+    records: [...pids].sort((a, b) => a - b).map((pid) => {
+      const f = r.firsts.get(pid);
+      return {
+        pid,
+        first: f ? { ...f, t: round(f.t) } : null,
+        spawns: r.spawns.get(pid) ?? null,
+        art: [...(r.art.get(pid) ?? [])],
+        lives: (r.lives.get(pid) ?? []).map(round),
+      };
+    }),
+    bullets: [...kinds.values()],
+    ship: r.ship.map((o) => ({
+      ...o,
+      firstT: round(o.firstT),
+      lastT: round(o.lastT),
+    })),
+    parks: r.parks.map((p) => ({ ...p })),
+    outside: [...r.outside.entries()],
+    carried: r.carried,
+    added: r.added,
+    notes: [...r.notes],
+  };
+}
+
+/** A saved reading as the comparison's Saturn side. */
+export function loadReading(saved: SavedReading): SideReading {
+  const firsts = new Map<number, FirstSeen>();
+  const spawns = new Map<number, number>();
+  const art = new Map<number, Set<string>>();
+  const lives = new Map<number, number[]>();
+  for (const rec of saved.records ?? []) {
+    if (rec.first) firsts.set(rec.pid, rec.first);
+    if (rec.spawns !== null && rec.spawns !== undefined) {
+      spawns.set(rec.pid, rec.spawns);
+    }
+    if (rec.art?.length) art.set(rec.pid, new Set(rec.art));
+    if (rec.lives?.length) lives.set(rec.pid, [...rec.lives]);
+  }
+  const bullets: BulletSeen[] = [];
+  for (const k of saved.bullets ?? []) {
+    for (let i = 0; i < k.births; i++) {
+      bullets.push({
+        what: k.what,
+        art: k.art,
+        shooter: k.shooter,
+        t: 0,
+        scroll: null,
+      });
+    }
+  }
+  return {
+    side: "saturn",
+    saved: saved.from,
+    source: saved.source,
+    samples: saved.samples,
+    seconds: saved.seconds,
+    wallSeconds: saved.wallSeconds,
+    scrollFrom: saved.scrollFrom,
+    scrollTo: saved.scrollTo,
+    rate: saved.rate,
+    maxObjs: saved.maxObjs,
+    maxLive: saved.maxLive,
+    firsts,
+    spawns,
+    art,
+    lives,
+    bullets,
+    ship: (saved.ship ?? []).map((o) => ({ ...o })),
+    parks: (saved.parks ?? []).map((p) => ({ ...p })),
+    outside: new Map(saved.outside ?? []),
+    carried: saved.carried ?? 0,
+    added: saved.added ?? 0,
+    notes: [...(saved.notes ?? [])],
   };
 }
 
@@ -904,6 +1210,9 @@ export interface SurveyReport {
   notJudged: string[];
   rows: RecordRow[];
   kinds: KindRow[];
+  /** T21, measured: the ground records' first positions and the exits. */
+  ground: GroundRow[];
+  exits: ExitRow[];
   saturn: SideReading;
   web: SideReading;
 }
@@ -911,7 +1220,8 @@ export interface SurveyReport {
 /** The report for one run: both surveys read, compared and rendered. */
 export function surveyReport(
   input: {
-    saturn: SaturnSurveyFile;
+    /** This run's Saturn survey, or a saved reading of an earlier one. */
+    saturn: SaturnSurveyFile | SavedReading;
     web: WebSurveyFile;
     rush: RushRecord;
     level?: string;
@@ -923,8 +1233,12 @@ export function surveyReport(
   const stage = options.stage ?? input.web.stage ?? 0;
   const placed = roster(input.rush, stage);
   const targets = bigShotTargets(placed);
-  const saturn = readSaturn(input.saturn, placed, targets);
-  const web = readWeb(input.web, placed);
+  const saturn = isSavedReading(input.saturn)
+    ? loadReading(input.saturn)
+    : readSaturn(input.saturn, placed, targets, {
+      horizontal: !!input.rush.meta?.dezaemonSettings?.horizontal,
+    });
+  const web = readWeb(input.web, placed, targets);
   const failures: string[] = [];
   const notJudged: string[] = [];
 
@@ -1000,7 +1314,7 @@ export function surveyReport(
       note: "",
     };
     const target = targets.get(entry.pid);
-    const shared = target
+    const shared = target && !entry.spawnOnly
       ? `key ${entry.pid} is also ${
         target.shooters.join("/")
       }'s big shots (record ${target.record}): births within ${AMBIGUOUS_SHOT_PX} px of a live ${
@@ -1052,7 +1366,13 @@ export function surveyReport(
       }
     } else {
       row.status = "unseen";
-      row.note = "not seen on either side";
+      row.note = entry.spawnOnly && target
+        ? `no cell places it: ${
+          target.shooters.join("/")
+        }'s big shots, counted under the bullet kinds`
+        : entry.spawnOnly
+        ? "no cell places it; not spawned on either side"
+        : "not seen on either side";
     }
     row.note = [row.note, rewoundNote, shared].filter(Boolean).join("; ");
     rows.push(row);
@@ -1124,6 +1444,15 @@ export function surveyReport(
     k.note = notes.join("; ");
   }
   const kinds: KindRow[] = sorted.map(({ by: _by, ...k }) => k);
+  const t21 = groundAndExits({
+    rush: input.rush,
+    stage,
+    placed,
+    saturn,
+    web,
+    field: input.web.field,
+    horizontal: !!input.rush.meta?.dezaemonSettings?.horizontal,
+  });
 
   const markdown = render({
     level: input.level ?? input.rush.name ?? input.web.level ?? "level",
@@ -1139,6 +1468,7 @@ export function surveyReport(
     rush: input.rush,
     targets,
     items: webItems(input.web),
+    t21,
   });
   return {
     markdown,
@@ -1147,9 +1477,145 @@ export function surveyReport(
     notJudged,
     rows,
     kinds,
+    ground: t21.ground,
+    exits: t21.exits,
     saturn,
     web,
   };
+}
+
+// --- ground starts and exits (T21) -----------------------------------------
+
+/** Each letter's first placement in the stage: the lowest map row, and its column. */
+export function firstPlacements(
+  rush: RushRecord,
+  stage = 0,
+): Map<string, { row: number; col: number }> {
+  const st = rush.stages?.[`stage${stage}`] ??
+    (stage === 0 ? rush : undefined);
+  const out = new Map<string, { row: number; col: number }>();
+  const list = st?.enemylist ?? [], rows = st?.waveRows ?? [];
+  for (let w = 0; w < list.length; w++) {
+    const row = rows[w];
+    if (typeof row !== "number") continue;
+    (list[w] ?? []).forEach((cell, col) => {
+      const code = String(cell);
+      if (code === "00" || code.length < 2) return;
+      const letter = code.slice(0, -1);
+      const had = out.get(letter);
+      if (!had || row < had.row) out.set(letter, { row, col });
+    });
+  }
+  return out;
+}
+
+export interface GroundRow {
+  entry: RosterEntry;
+  band: number;
+  row: number | null;
+  /** The scroll at which the walker's gate reaches the row. */
+  gate: number | null;
+  /** First logged: scroll, the object's scroll coordinate, and the row's then. */
+  saturn:
+    | { scroll: number | null; at: number | null; rowAt: number | null }
+    | null;
+  web:
+    | { scroll: number | null; at: number | null; rowAt: number | null }
+    | null;
+}
+
+export interface ExitRow {
+  band: number;
+  edge: "exit edge" | "entry edge" | "lateral low" | "lateral high";
+  count: number;
+  min: number;
+  max: number;
+}
+
+/** The art band's sprite, width x height (the stage bank's seven bands). */
+export const BAND_SIZE = [
+  "16x16",
+  "32x16",
+  "16x32",
+  "32x32",
+  "64x32",
+  "32x64",
+  "64x64",
+  "?",
+];
+
+/**
+ * What the two surveys say about T21. A ground record's first logged
+ * position on each side, set against where its own map row stood at that
+ * scroll (a row is at scroll coordinate 224 - (row*16 - scroll) in either
+ * orientation): the difference is the offset the object keeps from the
+ * terrain it is painted on. And where the Saturn's spawns stopped after
+ * leaving the frame, by art band and edge — the engine parks an object just
+ * past its own bound, so that coordinate is the bound, to a frame's travel.
+ * The web's coordinate is read off its screen only on a Saturn field, where
+ * a pixel is an engine pixel (`field`: y on "saturn", y - 96 on "saturn-h").
+ */
+export function groundAndExits(
+  input: {
+    rush: RushRecord;
+    stage: number;
+    placed: Map<number, RosterEntry>;
+    saturn: SideReading;
+    web: SideReading;
+    field: string | null | undefined;
+    horizontal: boolean;
+  },
+): { ground: GroundRow[]; exits: ExitRow[] } {
+  const rows = firstPlacements(input.rush, input.stage);
+  const frame = saturnFrame(input.horizontal);
+  const entryLead = (input.horizontal ? 320 : 224) + 48;
+  const webCoord = (y: number | null) =>
+    y === null
+      ? null
+      : input.field === "saturn"
+      ? y
+      : input.field === "saturn-h"
+      ? y - 96
+      : null;
+  const ground: GroundRow[] = [];
+  for (const entry of input.placed.values()) {
+    if (!entry.ground || entry.spawnOnly) continue;
+    const row = rows.get(entry.letter)?.row ?? null;
+    const rowAt = (scroll: number | null) =>
+      row === null || scroll === null ? null : 224 - (row * 16 - scroll);
+    const s = input.saturn.firsts.get(entry.pid);
+    const w = input.web.firsts.get(entry.pid);
+    ground.push({
+      entry,
+      band: (entry.pid >> 4) & 7,
+      row,
+      gate: row === null ? null : row * 16 - entryLead,
+      saturn: s ? { scroll: s.scroll, at: s.y, rowAt: rowAt(s.scroll) } : null,
+      web: w
+        ? { scroll: w.scroll, at: webCoord(w.y), rowAt: rowAt(w.scroll) }
+        : null,
+    });
+  }
+  const by = new Map<string, ExitRow>();
+  for (const p of input.saturn.parks) {
+    const band = (p.pid >> 4) & 7;
+    let edge: ExitRow["edge"] | null = null, v: number | null = null;
+    if (p.y !== null && p.y > frame.y1) [edge, v] = ["exit edge", p.y];
+    else if (p.y !== null && p.y < frame.y0) [edge, v] = ["entry edge", p.y];
+    else if (p.x !== null && p.x < frame.x0) [edge, v] = ["lateral low", p.x];
+    else if (p.x !== null && p.x > frame.x1) [edge, v] = ["lateral high", p.x];
+    if (edge === null || v === null) continue;
+    const id = `${band}:${edge}`;
+    const e = by.get(id) ?? { band, edge, count: 0, min: v, max: v };
+    e.count++;
+    e.min = Math.min(e.min, v);
+    e.max = Math.max(e.max, v);
+    by.set(id, e);
+  }
+  const exits = [...by.values()].sort((a, b) =>
+    a.band - b.band || a.edge.localeCompare(b.edge)
+  );
+  return { ground, exits };
 }
 
 /** A row's place on the web's scroll axis; unseen rows keep roster order. */
@@ -1198,15 +1664,24 @@ function render(r: {
   rush: RushRecord;
   targets: Map<number, BigShotTarget>;
   items: { byName: Map<string, number>; pairs: number; total: number };
+  t21: { ground: GroundRow[]; exits: ExitRow[] };
 }): string {
   const { saturn: s, web: w } = r;
   const L: string[] = [];
   L.push(`# ${r.level}: the Saturn against the web, stage ${r.stage}`);
   L.push("");
   L.push(
-    `Built from \`panes/saturn.survey.json\` and \`panes/web.survey.json\` ` +
-      `with the roster of \`rush.json\`. The Saturn is read on its kept clock ` +
-      `(${s.samples} samples inside ${s.seconds.toFixed(1)} kept seconds of a ` +
+    (s.saved
+      ? `Built from \`panes/web.survey.json\` with the roster of \`rush.json\`, ` +
+        `against a SAVED READING of the Saturn — ${s.saved} — not a Saturn ` +
+        `run of this one: the Saturn pane plays the original cart whatever ` +
+        `the web does, so the reading stands until the cart is surveyed ` +
+        `again. It was read on the Saturn's kept clock `
+      : `Built from \`panes/saturn.survey.json\` and \`panes/web.survey.json\` ` +
+        `with the roster of \`rush.json\`. The Saturn is read on its kept clock `) +
+      `(${s.samples} samples inside ${
+        s.seconds.toFixed(1)
+      } kept seconds of a ` +
       `${s.wallSeconds.toFixed(0)} s wall run); the web is one take ` +
       `(${w.samples} samples, ${w.seconds.toFixed(1)} s). A record's first ` +
       `appearance is compared by scroll position after the web's ${r.lead} px ` +
@@ -1221,8 +1696,16 @@ function render(r: {
   L.push("");
   L.push("| | Saturn | Web |");
   L.push("| --- | --- | --- |");
-  L.push(`| Source | ${s.source} | ${w.source} |`);
-  L.push(`| Seconds | ${s.seconds.toFixed(1)} kept of ${s.wallSeconds.toFixed(0)} wall | ${w.seconds.toFixed(1)} |`);
+  L.push(
+    `| Source | ${s.source}${
+      s.saved ? " (saved reading)" : ""
+    } | ${w.source} |`,
+  );
+  L.push(
+    `| Seconds | ${s.seconds.toFixed(1)} kept of ${
+      s.wallSeconds.toFixed(0)
+    } wall | ${w.seconds.toFixed(1)} |`,
+  );
   L.push(`| Samples | ${s.samples} | ${w.samples} |`);
   L.push(`| Scroll | ${fmt(s.scrollFrom)} → ${fmt(s.scrollTo)} | ${fmt(w.scrollFrom)} → ${fmt(w.scrollTo)} |`);
   L.push(`| Scroll px/s | ${rateCell(s.rate)} | ${rateCell(w.rate)} |`);
@@ -1295,6 +1778,67 @@ function render(r: {
         k.note || (k.judged ? "both sides" : "")
       } |`,
     );
+  }
+  if (r.t21.ground.length || r.t21.exits.length) {
+    L.push("");
+    L.push("## Ground starts and exits");
+    L.push("");
+    L.push(
+      "What the surveys say about the two rules still unread in the engine " +
+        "(README-Parity.md, T21). A ground record's first logged position on " +
+        "each side, in the engine's scroll coordinate (0 at the entry edge of " +
+        "a vertical game's screen, 224 at the exit edge), beside where its own " +
+        "map row stood at that scroll: `− row` is the offset the object keeps " +
+        "from the terrain it is painted on. Gate = the scroll at which the " +
+        "walker reaches the row. The web's coordinate is read only on a Saturn " +
+        "field, where its pixels are the engine's.",
+    );
+    L.push("");
+    if (r.t21.ground.length) {
+      L.push(
+        "| Letter | Rec | Band | Row | Gate | Saturn first: scroll / at / row at / − row | Web first: scroll / at / row at / − row |",
+      );
+      L.push("| --- | --- | --- | --- | --- | --- | --- |");
+      const side = (g: GroundRow["saturn"]) =>
+        g === null
+          ? "—"
+          : `${fmt(g.scroll)} / ${fmt(g.at)} / ${fmt(g.rowAt)} / ${
+            g.at === null || g.rowAt === null ? "—" : signed(g.at - g.rowAt)
+          }`;
+      for (const g of r.t21.ground) {
+        L.push(
+          `| ${g.entry.letter} | ${g.entry.record} | ${g.band} (${
+            BAND_SIZE[g.band]
+          }) | ${fmt(g.row)} | ${fmt(g.gate)} | ${side(g.saturn)} | ${
+            side(g.web)
+          } |`,
+        );
+      }
+    } else L.push("No ground record is placed on this stage.");
+    L.push("");
+    if (r.t21.exits.length) {
+      L.push(
+        "Where the Saturn's spawns stopped after leaving the frame (the engine " +
+          "parks an object just past its own bound):",
+      );
+      L.push("");
+      L.push("| Band | Edge | Spawns | Stopped at |");
+      L.push("| --- | --- | --- | --- |");
+      for (const e of r.t21.exits) {
+        L.push(
+          `| ${e.band} (${BAND_SIZE[e.band]}) | ${e.edge} | ${e.count} | ${
+            e.min === e.max
+              ? fmt(e.min, 1)
+              : `${fmt(e.min, 1)} – ${fmt(e.max, 1)}`
+          } |`,
+        );
+      }
+    } else {
+      L.push(
+        "The Saturn's side carries no exit positions (a reading saved before " +
+          "they were kept, or no spawn left the frame and stopped).",
+      );
+    }
   }
   L.push("");
   L.push("## The ship");
