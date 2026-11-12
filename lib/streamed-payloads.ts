@@ -47,7 +47,7 @@ export const ROMSET_PATH =
  * Folders a packaged app downloads once from STREAM_ORIGIN and keeps, beside
  * the romsets (lib/offline-store.ts):
  *
- * - 2028-ai's custom BGM: 41 MB, one track that four bosses share. Should the
+ * - 2028-ai's custom BGM: 8 MB, three cuts of one track. Should the
  *   deploy be unreachable on the first play, the level loader streams each
  *   track from its own source URL and plays the stock sound if that fails too
  *   (static/phaser-plugins/level-loader.js, _queueAudioOverrides).

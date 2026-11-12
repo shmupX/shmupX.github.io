@@ -103,7 +103,7 @@ Deno.test("both loader copies wait for the pictures on both roads in", async () 
     );
     assert(
       js.includes(
-        "return Promise.all([ this._loadAudio(data, o.audio, o.lowMode), this.applyStoryImages(data)",
+        "return Promise.all([ this._loadAudio(data, o.audio, o.lowMode, recipe), this.applyStoryImages(data)",
       ),
       path + ": the cloud road does not wait",
     );

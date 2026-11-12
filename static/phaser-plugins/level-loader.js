@@ -1748,12 +1748,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     // app leaves custom-bgm/ out of its binary); should that fail, the stock
     // sound in opts.stockPaths goes back under the key rather than silence.
     // Returns the discovered source URLs.
-    _queueAudioOverrides(levelData, opts) {
+    _queueAudioOverrides(levelData, opts, recipe) {
       const scene = this.scene;
       const sourceURLs = {};
       if (!levelData.customAudioURLs || typeof levelData.customAudioURLs !== "object") {
         return sourceURLs;
       }
+      const allKeys = Object.keys(levelData.customAudioURLs);
 
       const manifestKey = opts.manifestKey || DEFAULTS.audio.manifestKey;
       const customBgmDir = opts.customBgmDir || DEFAULTS.audio.customBgmDir;
@@ -1774,6 +1775,10 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const uUrl = levelData.customAudioURLs[uKey];
         if (uUrl && typeof uUrl === "string") {
           sourceURLs[uKey] = uUrl;
+          // A track the game says it will not play (opts.wants: a cut of
+          // 2028.Ai's music for a longer stage than the level has) is
+          // named, for whoever lists the level's music, and not downloaded.
+          if (typeof opts.wants === "function" && !opts.wants(uKey, recipe, allKeys)) continue;
           if (scene.cache.audio.exists(uKey)) {
             scene.cache.audio.remove(uKey);
           }
@@ -1822,13 +1827,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     // Queue every audio source (URL overrides + collected blobs), run the
     // loader once, and resolve with the level's BGM source URL map. Resolves
     // immediately when low mode is on or nothing needs loading.
-    _loadAudio(levelData, opts, lowMode) {
+    _loadAudio(levelData, opts, lowMode, recipe) {
       const scene = this.scene;
       if (lowMode || !opts.enabled) {
         return Promise.resolve(this._queueOnlySourceURLs(levelData));
       }
 
-      const sourceURLs = this._queueAudioOverrides(levelData, opts);
+      const sourceURLs = this._queueAudioOverrides(levelData, opts, recipe);
       // Each entry in sourceURLs queued exactly one loader job above.
       let queuedCount = Object.keys(sourceURLs).length;
 
@@ -2013,7 +2018,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
 
           return Promise.all([
-            this._loadAudio(data, o.audio, o.lowMode),
+            this._loadAudio(data, o.audio, o.lowMode, recipe),
             this.applyStoryImages(data),
           ]).then(([bgmSourceURLs]) => ({
             recipe,
