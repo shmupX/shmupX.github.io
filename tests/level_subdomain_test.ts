@@ -538,3 +538,30 @@ Deno.test("the bundle's inlined loader looks aliases up the way the plugin does"
     assertEquals(bundle.includes(line), true, "the bundle lacks: " + line);
   }
 });
+
+Deno.test("an arcade subdomain boots its board in cmg's arcade player, before any level, alias or shelf game", () => {
+  const sfex2 = "https://cmg.easierbycode.deno.net/arcade/play.html?rom=sfex2";
+  assertEquals(subdomainTarget("sfex2", KEYS), sfex2);
+  assertEquals(subdomainTarget("sfex2", null), sfex2);
+  assertEquals(
+    subdomainTarget("sfex2", [...KEYS, "sfex2"], { sfex2: "2019-PS2" }, "", [
+      "sfex2",
+    ]),
+    sfex2,
+  );
+  assertEquals(
+    subdomainTarget("sfex2", KEYS, {}, "?rom=other&args=-nosound"),
+    sfex2 + "&args=-nosound",
+  );
+  assertEquals(
+    subdomainRedirect(
+      new Request("http://x/", { headers: { host: "sfex2.codemonkey.games" } }),
+      KEYS,
+    )!.headers.get("location"),
+    sfex2,
+  );
+  assertEquals(
+    planAliases("2019-PS2", ["sfex2"], KEYS, {}).errors,
+    ['"sfex2" opens an arcade board (ARCADE_SUBDOMAINS)'],
+  );
+});

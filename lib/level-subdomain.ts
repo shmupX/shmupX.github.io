@@ -10,6 +10,8 @@
 //                                   cart, run straight away)
 //   anything-else.codemonkey.games/ -> /editor/?new=anything-else  (neither:
 //                                   NEW GAME, named for the label)
+//   sfex2.codemonkey.games/      -> cmg's arcade player, ?rom=sfex2  (an
+//                                   ARCADE_SUBDOMAINS label, asked first)
 //
 // Only the root is redirected. Every other path on a subdomain serves as the
 // apex does, which is what lets the redirect be relative: the game page and
@@ -83,6 +85,24 @@ export const NEW_GAME_URL = "/editor/";
 // (svelte-src/Dashboard.svelte): /editor/?game=2028-ai&play=<slug>.
 export const SHELF_PLAY_URL = "/editor/";
 export const SHELF_GAME_ID = "2028-ai";
+
+// The arcade player that boots a MAME romset by name (`?rom=<romset>`). It is
+// cmg's page: the launcher mirrors it under this origin through
+// static/emu-sw.js, but only in a browser that has installed the Arcade core,
+// so a cold visit to a subdomain is sent to cmg's own copy, which always
+// answers. Keep the origin in step with CORE_ORIGIN (lib/streamed-payloads.ts).
+export const ARCADE_PLAYER_URL =
+  "https://cmg.easierbycode.deno.net/arcade/play.html";
+
+/**
+ * Labels that open an arcade board rather than a level: label -> the romset
+ * the player boots. sfex2.codemonkey.games is Street Fighter EX2. Fixed here,
+ * not in the database, and asked first: a level or an alias never takes one
+ * of these names.
+ */
+export const ARCADE_SUBDOMAINS: Readonly<Record<string, string>> = {
+  sfex2: "sfex2",
+};
 
 // One DNS label: letters, digits and inner hyphens, 63 chars at most.
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -184,6 +204,8 @@ export function planAliases(
       errors.push(
         `"${raw}" is not an alias: letters, digits and inner hyphens, as in a subdomain`,
       );
+    } else if (Object.hasOwn(ARCADE_SUBDOMAINS, name)) {
+      errors.push(`"${name}" opens an arcade board (ARCADE_SUBDOMAINS)`);
     } else if (
       keys.some((k) => k.toLowerCase() === name || levelSlug(k) === name)
     ) {
@@ -234,7 +256,9 @@ export function matchShelfSlug(
  * Where a subdomain's root goes. `keys` null means the database was
  * unreachable. `search` is the visitor's own query, carried along (withQuery).
  * `shelf` is the Dezaemon library's slugs: asked after every level and alias,
- * before NEW GAME, and not at all when the levels could not be read.
+ * before NEW GAME, and not at all when the levels could not be read. An
+ * arcade label (ARCADE_SUBDOMAINS) is asked before all of them, and needs no
+ * listing at all.
  */
 export function subdomainTarget(
   label: string,
@@ -243,6 +267,13 @@ export function subdomainTarget(
   search = "",
   shelf: readonly string[] = [],
 ): string {
+  if (Object.hasOwn(ARCADE_SUBDOMAINS, label)) {
+    return withQuery(
+      ARCADE_PLAYER_URL,
+      [["rom", ARCADE_SUBDOMAINS[label]]],
+      search,
+    );
+  }
   if (keys === null) {
     const aliased = Object.hasOwn(aliases, label) ? aliases[label] : label;
     return withQuery(GAME_URL, [["level", aliased]], search);
