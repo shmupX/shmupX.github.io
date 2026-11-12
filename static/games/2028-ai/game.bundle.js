@@ -4826,7 +4826,7 @@
     [".: MAKER TESTING :.", "AGENT BASS, AGENT SMITH"],
     [".: PLAN :.", "JC BUSTILLOS"],
     [".: PROGRAM :.", "CODEMONKEY.GAMES"],
-    [".: SOUND :.", "2-D"],
+    [".: SOUND :.", "2-D, MYDIFFERENTBEATS"],
     [".: STORY :.", "BRANDON, AGENT BENAQUISTA"]
   ];
   // A game that brought its own staff roll plate — staffrollName.gif in its
