@@ -53,8 +53,10 @@ const CUT = (minutes: 1 | 2 | 4) => `https://easierbycode.com/${minutes}.mp3`;
  * cut too, for what reads a level's music by its boss: the exporters, and a
  * runtime from before the stage tracks. `title_bgm` is the title's, and the
  * hidden boss's theme is the four-minute cut, whatever the stage's length.
+ * `boss2_bgm` is the fight with the third boss, from his arrival.
  */
 export const SOUNDTRACK: Readonly<Record<string, string>> = {
+  boss2_bgm: "https://easierbycode.com/boss.mp3",
   boss_barlog_bgm: CUT(1),
   boss_bison_bgm: CUT(1),
   boss_fang_bgm: CUT(1),
