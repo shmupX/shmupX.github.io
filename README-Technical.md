@@ -7011,6 +7011,17 @@ shmupX's index only; cmg's root-level `levelAliases` is neither read nor
 written. `planAliases` in `lib/level-subdomain.ts` refuses an alias another
 level holds or a level already owns as its own name.
 
+**Arcade boards.** A few labels open a MAME board instead of a level:
+`sfex2.codemonkey.games/` → cmg's arcade player with `?rom=sfex2` (Street
+Fighter EX2). They live in `ARCADE_SUBDOMAINS` in `lib/level-subdomain.ts`
+(label → romset), are asked before any level, alias or shelf game, and need no
+listing. The redirect goes to cmg's own copy of the player
+(`ARCADE_PLAYER_URL`), not this origin's `/arcade/`: that path is only mirrored
+by `static/emu-sw.js` in a browser that has installed the Arcade core, so a
+cold visit to a subdomain would 404 there. `level:alias` refuses these labels.
+Adding a board is one line in that map, and the board must be one cmg serves
+(`/arcade/<romset>.zip`).
+
 **A cart imported long ago is a snapshot of that day's importer.** `Ramsie`
 was saved in August 2026 by an importer that did not yet pull the cart's own
 ship, bullets and item icons out of the global art bank — the record flew the
