@@ -3504,7 +3504,8 @@
   // 2028.Ai's own record names all three it has — stage_bgm, a two-minute
   // cut and a four-minute one — so a stage built on it gets the cut of the
   // track its length calls for. Its hidden boss has the four-minute cut as
-  // his own theme (boss_goki_bgm), whatever the stage's length.
+  // his own theme (boss_goki_bgm), whatever the stage's length, and its third
+  // boss a track of his own (boss2_bgm, playBossFightBgm).
   //
   // How long a stage runs is its wave list played out, and its boss. A web
   // stage deals one row every STAGE_WAVE_TICKS of GameScene's 120 Hz step
@@ -16128,6 +16129,8 @@
       scene.stageClear();
       return;
     }
+    // His own music, where the level names one for this stage's boss.
+    playBossFightBgm(scene, stageId);
     // Same spawn-time scaler the zako get: the boss core is initialised
     // through it too (`+0x1AFF4`). bossMaxHp follows, so the HP-stage bands —
     // which are fractions of one bar, never a multiplier — are unaffected.
@@ -17609,6 +17612,31 @@
     }
     var seconds = gameState.shortFlg ? 0 : stageRunSeconds(scene.recipe || recipeData(), stageId);
     return stageBgmTrack(keys, seconds) || themeKey;
+  }
+  // A boss's own music. boss<N>_bgm in a level's custom audio is the fight
+  // with stage N's boss, numbered as the record's bossData numbers him, and
+  // it takes over from the stage's music as he arrives (bossAdd), from the
+  // top. A level that names none keeps the stage's music through the fight,
+  // as it always has, and a tone-bank soundtrack keeps its own boss slot.
+  // 2028.Ai names one for its third boss, boss2_bgm.
+  function playBossFightBgm(scene, stageId) {
+    if (scene._dezaBgm || gameState.lowModeFlg) return false;
+    var key = "boss" + String(stageId) + "_bgm";
+    try {
+      if (!scene.cache.audio.exists(key)) return false;
+    } catch (e) {
+      return false;
+    }
+    // The very track the stage is on already plays on.
+    if (sameBgmTrack(scene.stageBgmName, key)) return false;
+    try {
+      var stageBgm = scene.sound.get(scene.stageBgmName);
+      if (stageBgm && stageBgm.isPlaying) stageBgm.stop();
+    } catch (e) {
+    }
+    scene.stageBgmName = key;
+    scene.playBgm(key, 0.4);
+    return true;
   }
   // Whether two audio keys are one track: the level named the same source
   // for both. Such a track plays on where the game would otherwise swap one

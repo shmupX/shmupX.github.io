@@ -7,8 +7,9 @@
 // stage_bgm, stage_bgm_2min, stage_bgm_4min — and the runtime
 // (game.bundle.js, a vendored artifact patched by hand — README) plays each
 // stage the longest one it fills, from the top, and downloads only the cuts
-// some stage of the game will play. title_bgm is the title's, and the hidden
-// boss's theme is the four-minute cut.
+// some stage of the game will play. title_bgm is the title's, the hidden
+// boss's theme is the four-minute cut, and boss<N>_bgm is the fight with
+// stage N's boss, which takes over from the stage's music as he arrives.
 //
 // The helpers are run out of the real bundle; the database script
 // (scripts/2028-ai/stage-bgm.ts) runs against a stand-in, never the real one.
@@ -200,7 +201,13 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm);
   // The hidden boss has the long cut, whatever the stage's length.
   assertEquals(SOUNDTRACK.boss_goki_bgm, SOUNDTRACK.stage_bgm_4min);
-  // Every music entry of the record is one of the three cuts.
+  // The third boss, and only he, has a track of his own.
+  assertEquals(SOUNDTRACK.boss2_bgm, "https://easierbycode.com/boss.mp3");
+  assertEquals(
+    Object.keys(foo.customAudioURLs).filter((k) => /^boss\d+_bgm$/.test(k)),
+    ["boss2_bgm"],
+  );
+  // Every music entry of the record is one the script writes.
   for (const [key, url] of Object.entries(foo.customAudioURLs)) {
     if (/bgm/.test(key)) assert(key in SOUNDTRACK, key + ": " + url);
   }
@@ -280,6 +287,88 @@ Deno.test("sameBgmTrack: one key, or two keys the level gave one source", async 
   assert(foo("stage_bgm_4min", "boss_goki_bgm"));
   assertEquals(same("", ""), false);
   assertEquals(same("boss_bison_bgm", ""), false);
+});
+
+Deno.test("a boss with a track of his own takes the music over as he arrives", async () => {
+  const js = await read(BUNDLE);
+  const flat = js.replace(/\s+/g, " ");
+  // Asked once the stage is known to have a boss, before he is built.
+  assert(
+    flat.includes(
+      "if (!bossData) { scene.stageClear(); return; } " +
+        "// His own music, where the level names one for this stage's boss. " +
+        "playBossFightBgm(scene, stageId);",
+    ),
+    "bossAdd does not start the boss's own music",
+  );
+  const run = (
+    opts: {
+      stageId: number;
+      playing: string;
+      toneBank?: boolean;
+      lowMode?: boolean;
+      urls?: Record<string, string>;
+    },
+  ) => {
+    const log: string[] = [];
+    const cached = new Set(["boss2_bgm", "stage_bgm"]);
+    const scene = {
+      _dezaBgm: opts.toneBank ? {} : null,
+      stageBgmName: opts.playing,
+      cache: { audio: { exists: (k: string) => cached.has(k) } },
+      sound: {
+        get: (k: string) => ({
+          isPlaying: true,
+          stop: () => log.push("stop " + k),
+        }),
+      },
+      playBgm: (k: string, v: number) => log.push("play " + k + " " + v),
+    };
+    const took = new Function(
+      "scene",
+      "stageId",
+      "gameState",
+      functionSource(js, "sameBgmTrack") +
+        functionSource(js, "playBossFightBgm") +
+        "\nreturn playBossFightBgm(scene, stageId);",
+    )(scene, opts.stageId, {
+      lowModeFlg: !!opts.lowMode,
+      bgmSourceURLs: opts.urls ?? SOUNDTRACK,
+    }) as boolean;
+    return { took, log, now: scene.stageBgmName };
+  };
+  // The third boss: the stage's track stops and his starts.
+  assertEquals(run({ stageId: 2, playing: "stage_bgm" }), {
+    took: true,
+    log: ["stop stage_bgm", "play boss2_bgm 0.4"],
+    now: "boss2_bgm",
+  });
+  // Any other boss keeps the stage's music.
+  for (const stageId of [0, 1, 3, 4]) {
+    assertEquals(run({ stageId, playing: "stage_bgm" }), {
+      took: false,
+      log: [],
+      now: "stage_bgm",
+    });
+  }
+  // A tone-bank soundtrack has its own boss slot, and low mode has no music.
+  assertEquals(
+    run({ stageId: 2, playing: "__dezaemon__", toneBank: true }).took,
+    false,
+  );
+  assertEquals(
+    run({ stageId: 2, playing: "stage_bgm", lowMode: true }).log,
+    [],
+  );
+  // Where the stage is on his very track already, it plays on.
+  assertEquals(
+    run({
+      stageId: 2,
+      playing: "stage_bgm",
+      urls: { stage_bgm: "https://x/a.mp3", boss2_bgm: "https://x/a.mp3" },
+    }),
+    { took: false, log: [], now: "stage_bgm" },
+  );
 });
 
 Deno.test("the title plays title_bgm where the level has no title tape", async () => {

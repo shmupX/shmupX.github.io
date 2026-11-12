@@ -7722,6 +7722,7 @@
     }
   },
   "customAudioURLs": {
+    "boss2_bgm": "https://easierbycode.com/boss.mp3",
     "boss_barlog_bgm": "https://easierbycode.com/1.mp3",
     "boss_bison_bgm": "https://easierbycode.com/1.mp3",
     "boss_fang_bgm": "https://easierbycode.com/1.mp3",
