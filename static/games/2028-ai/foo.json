@@ -7722,11 +7722,17 @@
     }
   },
   "customAudioURLs": {
-    "boss_barlog_bgm": "https://res.cloudinary.com/dujip8nqb/video/upload/v1770804101/Sol_Invicto_-_Initium_ft_Zach_Hill_Death_Grips_cdav0i.mp3",
-    "boss_bison_bgm": "https://res.cloudinary.com/dujip8nqb/video/upload/v1770804101/Sol_Invicto_-_Initium_ft_Zach_Hill_Death_Grips_cdav0i.mp3",
-    "boss_sagat_bgm": "https://res.cloudinary.com/dujip8nqb/video/upload/v1770804101/Sol_Invicto_-_Initium_ft_Zach_Hill_Death_Grips_cdav0i.mp3",
-    "boss_vega_bgm": "https://res.cloudinary.com/dujip8nqb/video/upload/v1770804101/Sol_Invicto_-_Initium_ft_Zach_Hill_Death_Grips_cdav0i.mp3",
+    "boss_barlog_bgm": "https://easierbycode.com/1.mp3",
+    "boss_bison_bgm": "https://easierbycode.com/1.mp3",
+    "boss_fang_bgm": "https://easierbycode.com/1.mp3",
+    "boss_goki_bgm": "https://easierbycode.com/4.mp3",
+    "boss_sagat_bgm": "https://easierbycode.com/1.mp3",
+    "boss_vega_bgm": "https://easierbycode.com/1.mp3",
     "boss_vega_voice_projectile": "https://easierbycode.com/assets/sounds/tunotoru44.mp3",
+    "stage_bgm": "https://easierbycode.com/1.mp3",
+    "stage_bgm_2min": "https://easierbycode.com/2.mp3",
+    "stage_bgm_4min": "https://easierbycode.com/4.mp3",
+    "title_bgm": "https://easierbycode.com/1.mp3",
     "voice_titlecall": "https://easierbycode.com/assets/sounds/title_voicecall.mp3"
   },
   "enemyData": {

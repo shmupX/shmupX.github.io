@@ -1500,12 +1500,13 @@
       // app leaves custom-bgm/ out of its binary); should that fail, the stock
       // sound in opts.stockPaths goes back under the key rather than silence.
       // Returns the discovered source URLs.
-      _queueAudioOverrides(levelData, opts) {
+      _queueAudioOverrides(levelData, opts, recipe) {
         const scene = this.scene;
         const sourceURLs = {};
         if (!levelData.customAudioURLs || typeof levelData.customAudioURLs !== "object") {
           return sourceURLs;
         }
+        const allKeys = Object.keys(levelData.customAudioURLs);
         const manifestKey = opts.manifestKey || DEFAULTS.audio.manifestKey;
         const customBgmDir = opts.customBgmDir || DEFAULTS.audio.customBgmDir;
         const baseUrlEl = typeof document !== "undefined" ? document.getElementById(opts.baseUrlElementId || DEFAULTS.audio.baseUrlElementId) : null;
@@ -1520,6 +1521,10 @@
           const uUrl = levelData.customAudioURLs[uKey];
           if (uUrl && typeof uUrl === "string") {
             sourceURLs[uKey] = uUrl;
+            // A track the game says it will not play (opts.wants: a cut of
+            // 2028.Ai's music for a longer stage than the level has) is
+            // named, for whoever lists the level's music, and not downloaded.
+            if (typeof opts.wants === "function" && !opts.wants(uKey, recipe, allKeys)) continue;
             if (scene.cache.audio.exists(uKey)) {
               scene.cache.audio.remove(uKey);
             }
@@ -1567,12 +1572,12 @@
       // Queue every audio source (URL overrides + collected blobs), run the
       // loader once, and resolve with the level's BGM source URL map. Resolves
       // immediately when low mode is on or nothing needs loading.
-      _loadAudio(levelData, opts, lowMode) {
+      _loadAudio(levelData, opts, lowMode, recipe) {
         const scene = this.scene;
         if (lowMode || !opts.enabled) {
           return Promise.resolve(this._queueOnlySourceURLs(levelData));
         }
-        const sourceURLs = this._queueAudioOverrides(levelData, opts);
+        const sourceURLs = this._queueAudioOverrides(levelData, opts, recipe);
         let queuedCount = Object.keys(sourceURLs).length;
         return this.collectCustomAudioEntries(opts).then((entries) => {
           const blobURLs = [];
@@ -1729,7 +1734,7 @@
             const source = usingOffline ? "offline" : "firebase";
             prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
             return Promise.all([
-              this._loadAudio(data, o.audio, o.lowMode),
+              this._loadAudio(data, o.audio, o.lowMode, recipe),
               this.applyStoryImages(data)
             ]).then(([bgmSourceURLs]) => ({
               recipe,
@@ -3489,6 +3494,83 @@
   function lastStageId(recipe) {
     var ids = recipeStageIds(recipe);
     return ids[ids.length - 1];
+  }
+  // ---- A stage's music, by how long the stage runs -----------------------
+  // A level's custom audio may name its stage music by the stage's length
+  // rather than by its boss: stage_bgm for every stage, and stage_bgm_<N>min
+  // for a stage that runs N minutes or longer. A stage plays the longest of
+  // them it fills, from the top (GameScene's playBossBgm), and a level that
+  // names none plays its stage themes (boss_<name>_bgm) as it always has.
+  // 2028.Ai's own record names all three it has — stage_bgm, a two-minute
+  // cut and a four-minute one — so a stage built on it gets the cut of the
+  // track its length calls for. Its hidden boss has the four-minute cut as
+  // his own theme (boss_goki_bgm), whatever the stage's length.
+  //
+  // How long a stage runs is its wave list played out, and its boss. A web
+  // stage deals one row every STAGE_WAVE_TICKS of GameScene's 120 Hz step
+  // (its waveInterval, which only an import's record sets). An import's rows
+  // stand on its scroll, waveInterval Saturn frames apart, so its last row's
+  // number is the measure. A boss fight lasts as long as the player lets it
+  // (the timer allows 99 seconds), so it counts as STAGE_BOSS_SECONDS, about
+  // what one takes: 2028.Ai's own stages, 30 to 46 rows and a boss, come to
+  // 50 to 61 seconds.
+  var STAGE_TICKS_PER_SECOND = 120;
+  var STAGE_WAVE_TICKS = 80;
+  var STAGE_BOSS_SECONDS = 30;
+  var STAGE_BGM_KEY = /^stage_bgm(?:_(\d+)min)?$/;
+  function stageRunSeconds(recipe, stageId) {
+    var stage = recipe && recipe["stage" + String(stageId)];
+    var list = stage && stage.enemylist;
+    var ticks = 0;
+    if (Array.isArray(list) && list.length) {
+      ticks = list.length * STAGE_WAVE_TICKS;
+      if (Array.isArray(stage.waveRows) && stage.waveRows.length === list.length) {
+        var perRow = Number.isFinite(stage.waveInterval) && stage.waveInterval > 0 ? stage.waveInterval : 8;
+        var lastRow = 0;
+        for (var i = 0; i < stage.waveRows.length; i++) {
+          lastRow = Math.max(lastRow, Number(stage.waveRows[i]) || 0);
+        }
+        ticks = lastRow * perRow * SATURN_TICKS_PER_FRAME;
+      }
+    }
+    var boss = recipe && recipe.bossData && recipe.bossData["boss" + String(stageId)];
+    return ticks / STAGE_TICKS_PER_SECOND + (boss ? STAGE_BOSS_SECONDS : 0);
+  }
+  // The stage length, in minutes, from which a stage track plays: 0 for
+  // stage_bgm, N for stage_bgm_<N>min. -1 for any other key.
+  function stageBgmMinutes(key) {
+    var m = STAGE_BGM_KEY.exec(String(key));
+    return m ? Number(m[1] || 0) : -1;
+  }
+  // Of `keys`, the stage track a stage that runs `seconds` plays: the one
+  // that asks for the most of the length it has. null when none of them is a
+  // stage track it fills, and the stage plays its theme.
+  function stageBgmTrack(keys, seconds) {
+    var track = null;
+    var most = -1;
+    for (var i = 0; i < keys.length; i++) {
+      var minutes = stageBgmMinutes(keys[i]);
+      if (minutes > most && minutes * 60 <= seconds) {
+        track = keys[i];
+        most = minutes;
+      }
+    }
+    return track;
+  }
+  // Whether the game plays a custom audio key at all, which the level loader
+  // asks before it downloads one (audio.wants). Every key but a stage track
+  // is played; a stage track only when a stage of the game picks it out of
+  // `keys`, the level's whole list. 2028.Ai's stages all run about a minute,
+  // so it does not download its two-minute cut, which it would decode and
+  // never play. (Its four-minute one comes down all the same, as the hidden
+  // boss's theme.)
+  function stagePlaysAudioKey(key, recipe, keys) {
+    if (stageBgmMinutes(key) < 0) return true;
+    var ids = recipeStageIds(recipe);
+    for (var i = 0; i < ids.length; i++) {
+      if (stageBgmTrack(keys, stageRunSeconds(recipe, ids[i])) === key) return true;
+    }
+    return false;
   }
 
   // ../2019-es7/src/phaser/BootScene.js
@@ -9003,6 +9085,30 @@
 
   // ../2019-es7/src/phaser/TitleScene.js
   var BOARD_CYCLE_MS = 3e3;
+  // The title's music, where the level's custom audio names one (title_bgm):
+  // 2028.Ai's own, whose title played a tone-bank tape until its soundtrack
+  // went back to a recording. It loops at the stage music's level until the
+  // game starts or the title is left.
+  var TITLE_BGM_KEY = "title_bgm";
+  function playTitleBgm(scene) {
+    try {
+      if (!scene.cache.audio.exists(TITLE_BGM_KEY)) return false;
+      var snd = scene.sound.get(TITLE_BGM_KEY) || scene.sound.add(TITLE_BGM_KEY);
+      if (snd.isPlaying) snd.stop();
+      snd.__cmgBgmBase = 0.4;
+      snd.play({ volume: cmgBgmVol(0.4), loop: true });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function stopTitleBgm(scene) {
+    try {
+      var snd = scene.sound.get(TITLE_BGM_KEY);
+      if (snd) snd.stop();
+    } catch (e) {
+    }
+  }
   var PhaserTitleScene = class extends Phaser.Scene {
     constructor() {
       super({ key: "PhaserTitleScene" });
@@ -9343,10 +9449,12 @@
       // The soundtrack's TITLE track: a cart's drawn title's, and any level's
       // whose set list (the editor's MUSIC) names a title tape that sounds.
       // startDezaemonBgm declines a level without one, and this title has no
-      // stock music to clash with.
+      // stock music to clash with. A level with no tape plays the title
+      // track its custom audio names, where it names one (playTitleBgm).
       if (!gameState.lowModeFlg) {
-        startDezaemonBgm(this, "title");
+        if (!startDezaemonBgm(this, "title")) playTitleBgm(this);
       }
+      this.events.once("shutdown", () => stopTitleBgm(this));
       this.enterKey = null;
       this.spaceKey = null;
       try {
@@ -9675,6 +9783,7 @@
     }
     goToAdvScene() {
       stopDezaemonBgm(this);
+      stopTitleBgm(this);
       var recipe = gameState._phaserRecipe;
       if (recipe && recipe.playerData) {
         gameState.spDamage = recipe.playerData.spDamage;
@@ -16301,8 +16410,12 @@
           scene.bossHpBarFg.setVisible(false);
           // A tone-bank soundtrack plays on through the hidden boss as it does
           // through every other boss; only the mp3 path swaps to Goki's own
-          // track.
-          if (!scene._dezaBgm) {
+          // track, whatever the stage was playing: its theme or the stage
+          // track its length called for. A level's custom audio may name his
+          // (2028.Ai's is its four-minute cut), and where that is the very
+          // track the stage is already playing, it plays on instead of
+          // starting over (sameBgmTrack).
+          if (!scene._dezaBgm && !sameBgmTrack(scene.stageBgmName, "boss_goki_bgm")) {
             try {
               var oldBgm = scene.sound.get(scene.stageBgmName);
               if (oldBgm && oldBgm.isPlaying) oldBgm.stop();
@@ -17485,6 +17598,27 @@
   function recipeData() {
     return gameState._phaserRecipe || null;
   }
+  // The key a stage's music plays under: the stage track its length calls
+  // for (stageBgmTrack), of the ones the level loaded, or else `themeKey`.
+  // Boss rush deals no waves, whatever the stage's list holds.
+  function stageBgmKey(scene, stageId, themeKey) {
+    var keys = [];
+    try {
+      keys = scene.cache.audio.getKeys();
+    } catch (e) {
+    }
+    var seconds = gameState.shortFlg ? 0 : stageRunSeconds(scene.recipe || recipeData(), stageId);
+    return stageBgmTrack(keys, seconds) || themeKey;
+  }
+  // Whether two audio keys are one track: the level named the same source
+  // for both. Such a track plays on where the game would otherwise swap one
+  // key's sound for the other's.
+  function sameBgmTrack(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    var urls = gameState.bgmSourceURLs;
+    return !!(urls && urls[a] && urls[a] === urls[b]);
+  }
   function rectOverlap(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
   }
@@ -18290,15 +18424,17 @@
       });
       var game = this.game;
       this.time.delayedCall(2500, function() {
-        var urls = gameState.bgmSourceURLs;
         var currentKey = self.stageBgmName;
         var nextStageId = gameState.stageId + 1;
         var bossNames = ["bison", "barlog", "sagat", "vega", "fang"];
         var nextBossName = bossNames[nextStageId] || "";
-        var nextKey = nextBossName ? "boss_" + nextBossName + "_bgm" : "";
+        // What the next stage will play (stageBgmKey). A theme it shares
+        // with this one pauses here and the next stage resumes it. A stage
+        // track is cut to its stage, so it starts over with every stage.
+        var nextKey = nextBossName ? stageBgmKey(self, nextStageId, "boss_" + nextBossName + "_bgm") : "";
         var recipeNow = gameState._phaserRecipe;
         var lastStage = recipeNow ? lastStageId(recipeNow) : 4;
-        var sameBgm = urls && currentKey && nextKey && urls[currentKey] && urls[nextKey] && urls[currentKey] === urls[nextKey];
+        var sameBgm = stageBgmMinutes(nextKey) < 0 && sameBgmTrack(currentKey, nextKey);
         if (sameBgm) {
           try {
             var sounds = self.sound.getAll();
@@ -18823,7 +18959,9 @@
       }
       var bossNames = ["bison", "barlog", "sagat", "vega", "fang"];
       var name = bossNames[assetStageId(stageId)] || "bison";
-      var key = "boss_" + name + "_bgm";
+      // The stage track the stage's length calls for, or its theme where the
+      // level names none (stageBgmKey).
+      var key = stageBgmKey(this, stageId, "boss_" + name + "_bgm");
       this.stageBgmName = key;
       if (gameState.bgmContinuityActive && gameState.currentBgmKey) {
         try {
@@ -21729,7 +21867,7 @@
         atlasKey: "game_asset",
         defaultLevel: "foo",
         lowMode: !!gameState.lowModeFlg,
-        audio: { stockPaths: RESOURCE_PATHS },
+        audio: { stockPaths: RESOURCE_PATHS, wants: stagePlaysAudioKey },
         onPrimeState: (recipe, info) => {
           gameState._phaserRecipe = recipe;
           gameState.hasCustomEnemies = info.hasCustomEnemies;

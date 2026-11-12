@@ -195,6 +195,26 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
+  - **A stage's music by how long the stage runs.** A level's
+    `customAudioURLs` may name its stage music by length instead of by boss:
+    `stage_bgm` for every stage and `stage_bgm_<N>min` for a stage that runs
+    N minutes or longer. `playBossBgm` plays the longest one the stage fills
+    (`stageBgmKey`, `stageBgmTrack`), from the top at every stage start, where
+    a theme two stages share still pauses at the clear and resumes; a level
+    that names none plays its stage themes (`boss_<name>_bgm`) as before. The
+    hidden boss swaps to his own theme (`boss_goki_bgm`) from either, unless
+    his is the very track already playing, which then plays on
+    (`sameBgmTrack`). A stage's length (`stageRunSeconds`) is its wave list at
+    80 ticks a row of the 120 Hz step, or an import's last row on its scroll,
+    plus half a minute where the stage has a boss, so 2028.Ai's own stages
+    measure 50 to 61 seconds. The loader downloads only the cuts some stage of
+    the game picks: the game hands it `audio.wants` (`stagePlaysAudioKey`),
+    and `_queueAudioOverrides` still names a skipped track in the level's
+    source map. That is in the plugin and the inlined copy alike. `title_bgm`
+    is the title's music where the level has no title tape (`playTitleBgm`).
+    2028.Ai uses all four: see
+    [the soundtrack converter](#a-soundtrack-off-the-tone-bank).
+    `tests/stage_bgm_by_length_test.ts` runs the helpers out of the bundle.
   - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
     process restarting, which Android does under memory pressure — clears
     _every_ 2D canvas: Chromium fires `contextlost` on each, then
@@ -984,6 +1004,7 @@ deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 deno task eshop:publish   # export a level as a Dezaemon 2 cart and publish it to the eShop, replacing that id (--name NAME lists it as; --dry-run writes nothing)
 deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 tone bank: a level's dezaemonBgm, one piece across the stages
+deno task 2028-ai:stage-bgm # swap 2028.Ai's cloud record from its tone-bank soundtrack to its recorded one (dry run; --apply writes, --revert puts the tone bank back)
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
@@ -3536,6 +3557,38 @@ dropped, the two voice entries kept) — the root copy, before the split;
 `rtdb:split` carries it into `shmupX/levels/foo` — and dezaFoo republished from
 it with `deno task eshop:publish foo --name dezaFoo --author "EASIER BY CODE"`.
 
+**foo's own music is a recording again** (2026-11-12), and dezaFoo keeps the
+transcription. The record names three cuts of one track in its
+`customAudioURLs`, by the length of the stage they are for: `stage_bgm`
+(`https://easierbycode.com/1.mp3`, 1:42), `stage_bgm_2min` (`2.mp3`, 2:30) for
+a stage that runs two minutes or longer and `stage_bgm_4min` (`4.mp3`, 4:25)
+for one of four minutes or longer. The runtime picks between them per stage
+and starts the cut over with each stage (the bundle's hand edits, above); foo's
+own five stages run about a minute, so they all play the first and the
+two-minute cut is not downloaded. The hidden boss's theme (`boss_goki_bgm`) is
+the four-minute cut, whatever the stage's length. `title_bgm` is the first cut
+too, where the title played the transcription's opening tape, and the five
+stage themes name it as well for what reads a level's music by its boss (the
+exporters, a runtime from before the stage tracks). The files are AAC in an MP4 container under an
+`.mp3` name, which Chrome, Safari, Firefox and Edge decode; a browser that
+cannot plays the stock themes.
+
+`static/games/2028-ai/foo.json`, which a plain visit bakes, carries those
+entries in place of the Sol Invicto mp3 it still named, so
+`deno task 2028-ai:bgm` now downloads 8 MB for the deploy where it downloaded
+41. The cloud record is changed by
+[`scripts/2028-ai/stage-bgm.ts`](scripts/2028-ai/stage-bgm.ts)
+(`deno task 2028-ai:stage-bgm`, a dry run unless `--apply`): it lays the same
+entries over the record's `customAudioURLs` and removes `dezaemonBgm`, since a
+level that carries a tone-bank soundtrack plays it and never its recording.
+Run it once the runtime that reads the stage tracks is deployed: an older one
+would download all three cuts and play the first under the themes alone. The
+transcription is kept as it was in `scripts/2028-ai/bgm/foo-tone-bank.json`
+and `--revert` puts it back, which a new Saturn cart of foo needs first:
+`build:sav` writes a cart's music from `dezaemonBgm`.
+`tests/stage_bgm_by_length_test.ts` runs the script against a stand-in
+database.
+
 ## The music player and the watch remote
 
 The launcher carries a music player of its own: AZLegendGolden's cassette deck,
@@ -4404,7 +4457,7 @@ localStorage and the emulator service worker all start empty. So the packaged
 `%LOCALAPPDATA%\shmupX`), and none of it runs in a checkout or on the deploy:
 
 - **`offline/`** — a download-once store (`lib/offline-store.ts`). The binary
-  leaves out the arcade romsets and 2028-ai's 41MB custom BGM
+  leaves out the arcade romsets and 2028-ai's 8MB custom BGM
   (`lib/streamed-payloads.ts`, which `build-desktop.ts` reads for its
   `--exclude`s); the first request for one fetches it from the deploy, and every
   later one is served from disk, online or not. The arcade player joins them
