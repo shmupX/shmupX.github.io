@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(deno task 2028-ai:stage-bgm *)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
