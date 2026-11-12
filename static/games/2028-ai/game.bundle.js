@@ -3503,7 +3503,8 @@
   // names none plays its stage themes (boss_<name>_bgm) as it always has.
   // 2028.Ai's own record names all three it has — stage_bgm, a two-minute
   // cut and a four-minute one — so a stage built on it gets the cut of the
-  // track its length calls for.
+  // track its length calls for. Its hidden boss has the four-minute cut as
+  // his own theme (boss_goki_bgm), whatever the stage's length.
   //
   // How long a stage runs is its wave list played out, and its boss. A web
   // stage deals one row every STAGE_WAVE_TICKS of GameScene's 120 Hz step
@@ -3560,8 +3561,9 @@
   // asks before it downloads one (audio.wants). Every key but a stage track
   // is played; a stage track only when a stage of the game picks it out of
   // `keys`, the level's whole list. 2028.Ai's stages all run about a minute,
-  // so it downloads neither of its longer cuts: seven minutes of audio it
-  // would decode and never play.
+  // so it does not download its two-minute cut, which it would decode and
+  // never play. (Its four-minute one comes down all the same, as the hidden
+  // boss's theme.)
   function stagePlaysAudioKey(key, recipe, keys) {
     if (stageBgmMinutes(key) < 0) return true;
     var ids = recipeStageIds(recipe);
@@ -16408,19 +16410,19 @@
           scene.bossHpBarFg.setVisible(false);
           // A tone-bank soundtrack plays on through the hidden boss as it does
           // through every other boss; only the mp3 path swaps to Goki's own
-          // track. That is his theme, or the stage's own track where the
-          // level names its music by length (stageBgmKey), and a track he
-          // shares with the stage plays on as well instead of starting over
-          // (sameBgmTrack).
-          var gokiBgmKey = stageBgmKey(scene, gameState.stageId || 0, "boss_goki_bgm");
-          if (!scene._dezaBgm && !sameBgmTrack(scene.stageBgmName, gokiBgmKey)) {
+          // track, whatever the stage was playing: its theme or the stage
+          // track its length called for. A level's custom audio may name his
+          // (2028.Ai's is its four-minute cut), and where that is the very
+          // track the stage is already playing, it plays on instead of
+          // starting over (sameBgmTrack).
+          if (!scene._dezaBgm && !sameBgmTrack(scene.stageBgmName, "boss_goki_bgm")) {
             try {
               var oldBgm = scene.sound.get(scene.stageBgmName);
               if (oldBgm && oldBgm.isPlaying) oldBgm.stop();
             } catch (e) {
             }
-            scene.stageBgmName = gokiBgmKey;
-            scene.playBgm(gokiBgmKey, 0.4);
+            scene.stageBgmName = "boss_goki_bgm";
+            scene.playBgm("boss_goki_bgm", 0.4);
           }
           var gokiRestY = GH10 / 4 + gokiSprite.height / 2;
           scene.bossBaseY = gokiRestY;

@@ -7,7 +7,8 @@
 // stage_bgm, stage_bgm_2min, stage_bgm_4min — and the runtime
 // (game.bundle.js, a vendored artifact patched by hand — README) plays each
 // stage the longest one it fills, from the top, and downloads only the cuts
-// some stage of the game will play. title_bgm is the title's.
+// some stage of the game will play. title_bgm is the title's, and the hidden
+// boss's theme is the four-minute cut.
 //
 // The helpers are run out of the real bundle; the database script
 // (scripts/2028-ai/stage-bgm.ts) runs against a stand-in, never the real one.
@@ -197,6 +198,8 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(SOUNDTRACK.stage_bgm_2min, "https://easierbycode.com/2.mp3");
   assertEquals(SOUNDTRACK.stage_bgm_4min, "https://easierbycode.com/4.mp3");
   assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm);
+  // The hidden boss has the long cut, whatever the stage's length.
+  assertEquals(SOUNDTRACK.boss_goki_bgm, SOUNDTRACK.stage_bgm_4min);
   // Every music entry of the record is one of the three cuts.
   for (const [key, url] of Object.entries(foo.customAudioURLs)) {
     if (/bgm/.test(key)) assert(key in SOUNDTRACK, key + ": " + url);
@@ -204,7 +207,7 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(foo.dezaemonBgm, undefined);
 });
 
-Deno.test("the game scene plays the stage track, starts it over each stage, and keeps it through the hidden boss", async () => {
+Deno.test("the game scene plays the stage track, starts it over each stage, and gives the hidden boss his own", async () => {
   const js = await read(BUNDLE);
   const flat = js.replace(/\s+/g, " ");
   // The stage's music is asked for by length first, its theme as the fallback.
@@ -233,13 +236,19 @@ Deno.test("the game scene plays the stage track, starts it over each stage, and 
     ),
     "a stage track carries over into the next stage",
   );
-  // Akuma's arrival swaps to his theme unless it is the track already playing.
+  // Akuma's arrival swaps to his theme, from a stage track as from a stage
+  // theme, unless his is the very track already playing.
   assert(
     flat.includes(
-      'var gokiBgmKey = stageBgmKey(scene, gameState.stageId || 0, "boss_goki_bgm"); ' +
-        "if (!scene._dezaBgm && !sameBgmTrack(scene.stageBgmName, gokiBgmKey)) {",
+      'if (!scene._dezaBgm && !sameBgmTrack(scene.stageBgmName, "boss_goki_bgm")) {',
     ),
-    "the hidden boss restarts the stage's own track",
+    "the hidden boss restarts a track he shares with the stage",
+  );
+  assert(
+    flat.includes(
+      'scene.stageBgmName = "boss_goki_bgm"; scene.playBgm("boss_goki_bgm", 0.4);',
+    ),
+    "the hidden boss does not play his own theme",
   );
 });
 
@@ -260,6 +269,15 @@ Deno.test("sameBgmTrack: one key, or two keys the level gave one source", async 
   // Stock themes have no source in the map: two of them are two tracks.
   assertEquals(same("boss_vega_bgm", "boss_goki_bgm"), false);
   assert(same("stage_bgm", "stage_bgm"));
+  // 2028.Ai's hidden boss: his theme is the four-minute cut, so it takes
+  // over from the first cut and plays on over a four-minute stage's.
+  const foo = new Function(
+    "gameState",
+    functionSource(js, "sameBgmTrack") + "\nreturn sameBgmTrack;",
+  )({ bgmSourceURLs: SOUNDTRACK }) as (a: string, b: string) => boolean;
+  assertEquals(foo("stage_bgm", "boss_goki_bgm"), false);
+  assertEquals(foo("stage_bgm_2min", "boss_goki_bgm"), false);
+  assert(foo("stage_bgm_4min", "boss_goki_bgm"));
   assertEquals(same("", ""), false);
   assertEquals(same("boss_bison_bgm", ""), false);
 });
