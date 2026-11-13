@@ -74,7 +74,7 @@
     display: flex; align-items: center; justify-content: center;
     padding: max(2.4vmin, 14px);
     box-sizing: border-box; pointer-events: none;
-    color: var(--green, #9CFF6B); font-family: 'Orbitron', sans-serif;
+    color: var(--green, #9CFF6B); font-family: var(--font-display);
     animation: nudgeIn .16s ease-out;
   }
   @keyframes nudgeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -94,7 +94,7 @@
   .nudge-kicker { font-size: 11px; letter-spacing: .28em; opacity: .62; }
   .nudge-hd { margin: 0; font-size: clamp(18px, 3.2vmin, 26px); letter-spacing: .1em; }
   .nudge-detail, .nudge-warn {
-    margin: 0; font-family: 'Share Tech Mono', monospace;
+    margin: 0; font-family: var(--font-mono);
     font-size: clamp(12px, 1.8vmin, 14px); line-height: 1.5; opacity: .82;
   }
   .nudge-warn { color: var(--amber, #FFC46B); opacity: .95; }
@@ -104,7 +104,7 @@
     display: flex; flex-direction: column; gap: 2px; text-align: left;
     padding: 12px 14px; cursor: pointer;
     color: inherit; font: inherit;
-    background: rgba(156, 255, 107, .05);
+    background: oklch(0.909 0.206 calc(var(--h) + 7) / 0.05);
     border: 1px solid color-mix(in srgb, var(--green, #9CFF6B) 24%, transparent);
     border-radius: 6px;
   }
@@ -116,12 +116,12 @@
   .nudge-row:disabled { cursor: progress; opacity: .6; }
   .nudge-row-label { font-size: clamp(13px, 2vmin, 15px); letter-spacing: .14em; }
   .nudge-row-sub {
-    font-family: 'Share Tech Mono', monospace;
+    font-family: var(--font-mono);
     font-size: clamp(10px, 1.5vmin, 12px); opacity: .68;
   }
 
   .nudge-foot {
-    margin-top: 2px; font-family: 'Share Tech Mono', monospace;
+    margin-top: 2px; font-family: var(--font-mono);
     font-size: 11px; opacity: .55;
   }
   .nudge-foot b { color: var(--green, #9CFF6B); font-weight: 400; }

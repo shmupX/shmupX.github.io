@@ -8828,16 +8828,13 @@
     document.body.classList.toggle('theme-xbox360', xbox360);
     if (nintendo || xbox360) {
       // The Nintendo and Xbox 360 skins are fixed palettes (body.theme-* in
-      // dashboard.css) — drop the inline hue overrides so they win.
-      for (const p of ['--green-glow', '--green', '--tile-edge', '--green-deep']) {
-        root.style.removeProperty(p);
-      }
+      // house-style.css and dashboard.css) — drop the inline hue so the greens
+      // those skins still show sit at the stock hue.
+      root.style.removeProperty('--h');
     } else if (!tweaks.discoMode) {
-      const h = tweaks.hue;
-      root.style.setProperty('--green-glow', `oklch(0.78 0.26 ${h})`);
-      root.style.setProperty('--green', `oklch(0.86 0.22 ${h})`);
-      root.style.setProperty('--tile-edge', `oklch(0.78 0.22 ${h} / 0.55)`);
-      root.style.setProperty('--green-deep', `oklch(0.4 0.18 ${h})`);
+      // Every green in the house style derives from --h (static/house-style.css),
+      // so this one property recolors the whole launcher and the OSD.
+      root.style.setProperty('--h', String(tweaks.hue));
     }
     root.style.setProperty('--breathe-mult', String(tweaks.breatheSpeed));
     document.body.classList.toggle('no-scan', !tweaks.scanlines);
@@ -8850,9 +8847,7 @@
     const root = document.documentElement;
     const id = setInterval(() => {
       h = (h + 4) % 360;
-      root.style.setProperty('--green-glow', `oklch(0.78 0.26 ${h})`);
-      root.style.setProperty('--green', `oklch(0.86 0.22 ${h})`);
-      root.style.setProperty('--tile-edge', `oklch(0.78 0.22 ${h} / 0.55)`);
+      root.style.setProperty('--h', String(h));
     }, 120);
     return () => clearInterval(id);
   });

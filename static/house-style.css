@@ -1,0 +1,88 @@
+/* house-style.css — the one type and color set for the launcher (dashboard,
+   OSD, save picker) and the editor. Loaded ahead of dashboard.css and the
+   editor's own styles; both read these tokens instead of literal values.
+
+   Type: Orbitron is the display face (titles, tile names, buttons, panel
+   headings — uppercase, tracked .12–.22em); Share Tech Mono is everything
+   else. Both are self-hosted by /fonts/launcher.css.
+
+   Color: the same token names in every theme. On the default XBOX theme the
+   green tokens come from one hue, --h, which the launcher's Glow color tweak
+   sets on <html> (Dashboard.svelte). Greens that are not a token are written
+   as oklch(L C calc(var(--h) + n)) so they follow the hue too. Selection and
+   the four states stay fixed so they read the same in every theme.
+   The Nintendo and Xbox 360 themes are fixed palettes: body.theme-* below
+   gives every token that theme's value. */
+
+:root {
+  --h: 130;
+
+  /* Type */
+  --font-display: "Orbitron", "Arial Black", sans-serif;
+  --font-mono: "Share Tech Mono", ui-monospace, "Courier New", monospace;
+  /* Size scale. The launcher is read from across a room, so its steps scale
+     with the screen; the editor is read at a desk and uses the fixed steps. */
+  --t-micro: clamp(9px, 1.1vmin, 12px);
+  --t-small: clamp(11px, 1.4vmin, 15px);
+  --t-body: clamp(13px, 1.8vmin, 18px);
+  --t-head: clamp(16px, 2.6vmin, 30px);
+  --t-title: clamp(20px, 3.4vmin, 38px);
+  --t-micro-fixed: 9px;
+  --t-small-fixed: 11px;
+  --t-body-fixed: 13px;
+  --t-head-fixed: 16px;
+  --t-title-fixed: 20px;
+
+  /* Color — XBOX (default) */
+  --bg: #000;
+  --surface: oklch(0.196 0.04 calc(var(--h) + 20));
+  --surface-hi: oklch(0.309 0.074 calc(var(--h) + 19));
+  --line: oklch(0.78 0.22 var(--h) / 0.28);
+  --line-hi: oklch(0.78 0.22 var(--h) / 0.55);
+  --ink: oklch(0.962 0.084 calc(var(--h) + 1));
+  --ink-dim: oklch(0.962 0.084 calc(var(--h) + 1) / 0.6);
+  --ink-hi: #fff;
+  --accent: oklch(0.86 0.22 var(--h));
+  --accent-glow: oklch(0.78 0.26 var(--h));
+  --accent-deep: oklch(0.4 0.18 var(--h));
+  --select: #f6ff4a;
+  --select-hot: #ffee5a;
+  --select-ink: #0e0e02;
+  --ok: #58e05f;
+  --warn: #f59e0b;
+  --error: #ff5b66;
+  --info: #49c2ff;
+}
+
+body.theme-xbox360 {
+  --surface: #262f38;
+  --surface-hi: #3a444e;
+  --line: rgba(214, 225, 235, 0.38);
+  --line-hi: #5c6b78;
+  --ink: #eef2f5;
+  --ink-dim: #a9b4be;
+  --accent: #9cff6b;
+  --accent-glow: #7cff4f;
+  --accent-deep: #0e6a2b;
+  --select: #9fd63f;
+  --select-hot: #c6f06a;
+  --select-ink: #04120a;
+}
+
+body.theme-nintendo {
+  --bg: #0d0f1a;
+  --surface: #0f1622;
+  --surface-hi: #1f2a3c;
+  --line: rgba(213, 213, 216, 0.3);
+  --line-hi: rgba(213, 213, 216, 0.5);
+  --ink: #e9ecf1;
+  --ink-dim: #8ba0c2;
+  --accent: #e4000f;
+  --accent-glow: #ff3b49;
+  --accent-deep: #5a0e14;
+  --select: #e4000f;
+  --select-hot: #ff4554;
+  --select-ink: #fff;
+  --cabinet: #d5d5d8;
+  --cabinet-dim: #88848b;
+}

@@ -496,7 +496,7 @@
     display: flex; flex-direction: column;
     padding: max(2.4vmin, 14px) max(3vmin, 16px);
     box-sizing: border-box; pointer-events: none;
-    color: var(--green, #9CFF6B); font-family: 'Orbitron', sans-serif;
+    color: var(--green, #9CFF6B); font-family: var(--font-display);
     animation: savIn .16s ease-out;
     --cf-w: clamp(120px, 30vmin, 220px);
   }
@@ -512,7 +512,7 @@
     font-weight: 800; letter-spacing: .26em; font-size: clamp(13px, 2.4vmin, 18px); text-shadow: 0 0 16px var(--green-glow, #7CFF4F);
   }
   .sav-sub, .sav-count {
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.6vmin, 12px);
+    font-family: var(--font-mono); font-size: clamp(9px, 1.6vmin, 12px);
     letter-spacing: .18em; opacity: .6; white-space: nowrap;
   }
   .sav-sub { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -523,7 +523,7 @@
     opacity: .65; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
     font-size: 15px; line-height: 1; align-self: center;
   }
-  .sav-x:hover, .sav-x.on { opacity: 1; background: rgba(120, 255, 90, .12); }
+  .sav-x:hover, .sav-x.on { opacity: 1; background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.12); }
   .sav-x.on { color: var(--yellow, #F6FF4A); }
 
   .sav-findbar { flex: 0 0 auto; display: flex; padding-top: 1.2vmin; }
@@ -533,7 +533,7 @@
     background: rgba(0, 0, 0, .5); color: var(--green, #9CFF6B);
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55)); border-radius: 6px;
     padding: .5em .7em; box-sizing: border-box;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.7vmin, 13px);
+    font-family: var(--font-mono); font-size: clamp(10px, 1.7vmin, 13px);
     letter-spacing: .14em; text-transform: uppercase;
   }
   .sav-find:focus { outline: none; border-color: var(--yellow, #F6FF4A); }
@@ -545,10 +545,10 @@
   .sav-clear {
     display: block; margin: 2.2vmin auto 0;
     appearance: none; cursor: pointer;
-    background: rgba(120, 255, 90, .1); color: var(--green, #9CFF6B);
+    background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.1); color: var(--green, #9CFF6B);
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55)); border-radius: 6px;
     padding: .8em 1.6em;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.7vmin, 12px);
+    font-family: var(--font-mono); font-size: clamp(10px, 1.7vmin, 12px);
     letter-spacing: .18em;
   }
   .sav-clear:hover { color: var(--yellow, #F6FF4A); border-color: var(--yellow, #F6FF4A); }
@@ -558,7 +558,7 @@
        instead of beside it. */
     flex: 1; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 2vmin, 14px);
+    font-family: var(--font-mono); font-size: clamp(11px, 2vmin, 14px);
     letter-spacing: .14em; opacity: .75; padding: 0 8vmin;
   }
   .sav-note.err { color: #ff9a7a; opacity: .95; }
@@ -623,10 +623,10 @@
     align-items: center; justify-content: center; gap: 1.6vmin; padding: 8%;
     box-sizing: border-box; text-align: center;
     background:
-      linear-gradient(160deg, rgba(120, 255, 90, .12), transparent 42%),
-      linear-gradient(180deg, #101c10, #060b06 78%);
+      linear-gradient(160deg, oklch(0.892 0.236 calc(var(--h) + 10) / 0.12), transparent 42%),
+      linear-gradient(180deg, oklch(0.211 0.029 calc(var(--h) + 14)), #060b06 78%);
   }
-  .cf-ph-mark, .cf-ph-foot { font-family: 'Share Tech Mono', monospace; font-size: clamp(7px, 1.3vmin, 10px); letter-spacing: .3em; opacity: .5; }
+  .cf-ph-mark, .cf-ph-foot { font-family: var(--font-mono); font-size: clamp(7px, 1.3vmin, 10px); letter-spacing: .3em; opacity: .5; }
   /* A local row's placeholder leans yellow, the launcher's "yours" colour, so
      the ⬇ bucket reads as a different shelf even before its footer is legible. */
   .cf-ph.local {
@@ -657,7 +657,7 @@
      would light one letter and jump to another. */
   .sav-band {
     flex: 1 1 0; min-height: 0; display: grid; place-items: center; line-height: 1;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(7px, 1.3vmin, 11px);
+    font-family: var(--font-mono); font-size: clamp(7px, 1.3vmin, 11px);
     letter-spacing: .06em; opacity: .5; pointer-events: none;
     transition: color .12s ease, opacity .12s ease, transform .12s ease;
   }
@@ -687,7 +687,7 @@
     /* min-width:0 or the flex row refuses to shrink it and the ellipsis never
        kicks in — a long title would just push the bubble off-screen. */
     min-width: 0;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.7vmin, 12px);
+    font-family: var(--font-mono); font-size: clamp(9px, 1.7vmin, 12px);
     letter-spacing: .1em; opacity: .7;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -697,7 +697,7 @@
   .sav-name .ja { font-weight: 500; opacity: .85; }
   .sav-meta {
     display: flex; justify-content: center; gap: 2.4vmin; margin-top: .6vmin;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.7vmin, 12px);
+    font-family: var(--font-mono); font-size: clamp(9px, 1.7vmin, 12px);
     letter-spacing: .14em; opacity: .65;
   }
   .sav-counter { color: var(--yellow, #F6FF4A); opacity: .9; }
@@ -705,7 +705,7 @@
   .sav-foot {
     display: flex; align-items: center; gap: 18px; padding-top: 1.4vmin;
     flex: 0 0 auto;
-    font-family: 'Share Tech Mono', monospace; font-size: clamp(9px, 1.6vmin, 11px);
+    font-family: var(--font-mono); font-size: clamp(9px, 1.6vmin, 11px);
     letter-spacing: .12em; text-transform: uppercase; opacity: .7;
   }
   .sav-foot b {
