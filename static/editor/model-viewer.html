@@ -4,8 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Model Viewer</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <!-- House type and color (shared with the launcher): self-hosted fonts, then the tokens. -->
+    <link rel="stylesheet" href="/fonts/launcher.css">
+    <link rel="stylesheet" href="/house-style.css">
     <style>
         @font-face {
             font-family: 'Orbitron';
@@ -17,18 +18,18 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { margin: 0; padding: 0; background: #000; }
-        body { color: #fff; font-family: 'Orbitron', system-ui, -apple-system, sans-serif; overflow: hidden; }
+        body { color: var(--ink-hi); font-family: var(--font-display); overflow: hidden; }
         button, select { font-family: inherit; }
         .hidden { display: none !important; }
-        .mono { font-family: 'Share Tech Mono', monospace; }
+        .mono { font-family: var(--font-mono); }
 
         @keyframes fadeIn { from { opacity: 0; } }
 
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(140,255,110,.28); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: oklch(0.902 0.212 calc(var(--h) + 10) / 0.28); border-radius: 3px; }
 
-        #app { position: fixed; inset: 0; overflow: hidden; background: #000; color: #fff; }
+        #app { position: fixed; inset: 0; overflow: hidden; background: #000; color: var(--ink-hi); }
         #bg { position: absolute; inset: 0; background: var(--pagebg); transition: background .3s; }
         #col { position: absolute; inset: 0; display: flex; flex-direction: column; }
 
@@ -36,7 +37,7 @@
         #statusbar {
             flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
             padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 6px;
-            font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .18em; color: var(--mono);
+            font-family: var(--font-mono); font-size: 10px; letter-spacing: .18em; color: var(--mono);
         }
         .status-left { display: flex; align-items: center; gap: 7px; }
         .status-right { display: flex; align-items: center; gap: 12px; }
@@ -49,7 +50,7 @@
         .seg { display: flex; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
         .seg button {
             border: none; cursor: pointer; padding: 4px 8px;
-            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em;
+            font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em;
             background: transparent; color: var(--mono);
         }
         .seg button.on { background: var(--sel); color: #111; }
@@ -65,7 +66,7 @@
             flex: 1; text-align: center; font-size: 17px; font-weight: 800; letter-spacing: .32em;
             color: var(--ink); text-shadow: 0 0 14px var(--tglow); padding-left: 12px;
         }
-        #banner-sub { font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .14em; color: var(--rsub); padding-right: 34px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
+        #banner-sub { font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .14em; color: var(--rsub); padding-right: 34px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
 
         /* ===== SLOT CHIPS ===== */
         #slot-bar {
@@ -75,14 +76,14 @@
         }
         .chip {
             height: 30px; padding: 0 13px; border-radius: 15px; cursor: pointer; white-space: nowrap;
-            text-transform: uppercase; letter-spacing: .08em; font-family: 'Orbitron', sans-serif;
+            text-transform: uppercase; letter-spacing: .08em; font-family: var(--font-display);
             font-size: 10px; font-weight: 800; transition: all .15s;
             border: 2px solid var(--redge); color: var(--rink); background: var(--btnbg); box-shadow: none;
             display: inline-flex; align-items: center; gap: 8px;
         }
         .chip .sw { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.5); }
         .chip.active { border-color: var(--sel); color: var(--sel); background: var(--btnactive); box-shadow: 0 0 16px var(--selglow); }
-        .chip.small { height: 26px; padding: 0 10px; font-size: 9px; font-family: 'Share Tech Mono', monospace; letter-spacing: .12em; font-weight: 400; }
+        .chip.small { height: 26px; padding: 0 10px; font-size: var(--t-micro-fixed); font-family: var(--font-mono); letter-spacing: .12em; font-weight: 400; }
         .chip.on { border-color: var(--sel); color: var(--sel); }
 
         /* ===== STAGE ===== */
@@ -93,7 +94,7 @@
         #stage canvas { position: absolute; left: 0; top: 0; display: block; }
         #stage-info, #frame-info {
             position: absolute; bottom: 8px; font-size: 10px; color: var(--rsub);
-            font-family: 'Share Tech Mono', monospace; pointer-events: none; letter-spacing: .1em;
+            font-family: var(--font-mono); pointer-events: none; letter-spacing: .1em;
         }
         #stage-info { left: 12px; }
         #frame-info { right: 12px; }
@@ -101,9 +102,9 @@
         #empty {
             position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
             text-align: center; padding: 20px; pointer-events: none;
-            font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .16em; line-height: 1.9; color: var(--rsub);
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .16em; line-height: 1.9; color: var(--rsub);
         }
-        #empty b { color: var(--ink); font-size: 13px; letter-spacing: .3em; }
+        #empty b { color: var(--ink); font-size: var(--t-body-fixed); letter-spacing: .3em; }
         body.dragover #stage { outline: 2px dashed var(--sel); outline-offset: -8px; }
 
         /* ===== OPTIONS + PARTS ===== */
@@ -115,21 +116,21 @@
         #options { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; }
         #options select {
             background: rgba(0,0,0,.5); color: var(--bink); border: 1px solid var(--redge); border-radius: 8px;
-            padding: 5px 9px; font-size: 9px; letter-spacing: .1em; font-family: 'Share Tech Mono', monospace; cursor: pointer; height: 26px;
+            padding: 5px 9px; font-size: var(--t-micro-fixed); letter-spacing: .1em; font-family: var(--font-mono); cursor: pointer; height: 26px;
         }
-        #options select option { background: #04180a; color: var(--rink); }
+        #options select option { background: var(--surface); color: var(--rink); }
         body.theme-nintendo #options select option { background: #10182a; }
         #parts {
             flex: 0 1 auto; min-height: 0;
             overflow-y: auto; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--redge) transparent;
-            font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .06em; line-height: 1.8; color: var(--rink);
+            font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .06em; line-height: 1.8; color: var(--rink);
         }
         #parts table { border-collapse: collapse; margin: 0 auto; }
         #parts td { padding: 0 8px; white-space: nowrap; }
         #parts td.dim { color: var(--rsub); }
         #parts tr.placeholder td { color: var(--rsub); font-style: italic; }
         #parts .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; margin-right: 6px; border: 1px solid rgba(0,0,0,.5); }
-        #notice { text-align: center; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .12em; color: var(--rsub); }
+        #notice { text-align: center; font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em; color: var(--rsub); }
         #notice b { color: var(--sel); font-weight: 400; }
 
         /* ===== FX OVERLAYS ===== */
@@ -144,7 +145,7 @@
         }
         #flash {
             position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 300;
-            font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em;
+            font-family: var(--font-mono); font-size: 10px; letter-spacing: .16em;
             color: var(--sel); background: rgba(0,0,0,.75); border: 1px solid var(--edge);
             border-radius: 8px; padding: 8px 16px; white-space: nowrap;
         }

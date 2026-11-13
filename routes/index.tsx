@@ -28,6 +28,8 @@ export default define.page(function Home() {
           crossorigin="anonymous"
         />
         <link key="fonts" rel="stylesheet" href="/fonts/launcher.css" />
+        {/* The shared type and color tokens; dashboard.css reads them. */}
+        <link key="house-style" rel="stylesheet" href="/house-style.css" />
         <link key="dashboard-css" rel="stylesheet" href="/dashboard.css" />
         <link
           key="manifest"
