@@ -551,6 +551,30 @@ const BOSS_NAMES = [
 //   (without its reset when a ship is lost). Each zako keeps its own pulse —
 //   the browser's is the scene's — so their volleys keep the same rhythm and
 //   are not in step.
+// - A type-3 big shot is not a bullet: the shooter spawns the record its
+//   bigShotChild names (dezaBigShot, the browser's spawnBigShot) as a zako of
+//   its own, where it stands, on the hardware's cadence — the reload counts
+//   down every Saturn frame and refills on the frame it reads 0, on the field
+//   or off, so the period is interval + 1 frames. The record is the disc's
+//   (lib/ps2/assets.ts ships the records a big shot spawns, and re-points the
+//   key); the stand-in bullet is only for a recipe that lacks it. Master
+//   Arena's stage-0 shot is a 10-hp zako that falls the length of the field,
+//   so a shooter's stream is up to ~75 of them, each one a hit test against
+//   every shot of the player's every step; the hardware has room for 150 and
+//   the console's interpreter does not. At most DEZA_MAX_LIVE_SHOTS (48, the
+//   cap the browser used before it took the hardware's pool) are live at
+//   once, and a spawn over it is refused like one over the pool.
+// - A volley or a spawn is dropped when the pool is full, as the hardware
+//   drops one when its 150 enemy slots are taken (the allocator 0x06068A40
+//   over slots 99..248; the survey counted at most 149 live objects of every
+//   kind): the scene's enemies and the shots in flight together may not pass
+//   150, and a volley wider than the room fires only what fits. The port keeps
+//   every shot until it leaves the field and had no bound of its own, and
+//   Master Arena's stage-0 shooter (interval 3: one every 8 steps) stood the
+//   field up in pillars of several hundred bullets. Each step then cost more
+//   than the console has, FixedStep (5 steps at most a tick, the backlog
+//   dropped) ran the game in slow motion, and a slower game kept every shot
+//   longer.
 // - A volley is the geometry table's spread about the ship's heading, or
 //   straight down unaimed; 11 jitters, 12 spirals, 10-12 burst. The bullet is
 //   the record's own art (its bulletData, as normalizeRecipe hands it over) at
@@ -575,6 +599,8 @@ var DEZA_SPIRAL_DELTAS = [192, 208, 224, 240, 0, 16, 32, 48, 64, 80, 96, 112, 12
 var DEZA_ANGLE_UNIT = Math.PI * 2 / 256;
 var DEZA_ZAKO_BULLET_SPEED = 1.35;
 var DEZA_POINT_BLANK = 40;
+var DEZA_OBJECT_POOL = 150;
+var DEZA_MAX_LIVE_SHOTS = 48;
 var DEZA_ENTRY_ADVANCE = 0x1;
 var DEZA_ENTRY_NO_COS = 0x20;
 var DEZA_ENTRY_NO_SIN = 0x40;
@@ -639,6 +665,7 @@ function dezaZakoArm(e, data) {
     ground: !!b.ground,
     speed: Number.isFinite(b.speed) ? b.speed : 0,
     fire: fire,
+    bigChild: typeof dz.bigShotChild === "string" ? dz.bigShotChild : null,
     reload: fire ? dezaReload(fire) : -1,
     burst: 0,
     acc: 0,
@@ -675,10 +702,16 @@ function dezaEntryFrame(d) {
   if (d.ground) d.vy = -d.vy;
   d.active = d.amp > 0;
 }
+function dezaRoom(gs) {
+  var live = (gs.enemies ? gs.enemies.length : 0) + (gs.projectiles ? gs.projectiles.length : 0);
+  return DEZA_OBJECT_POOL - live;
+}
 function dezaVolley(ctx, e, d, geom) {
   var proj = e.projectileData;
   var gs = dezaScene();
   if (!proj || !gs) return;
+  var room = dezaRoom(gs);
+  if (room <= 0) return;
   var fire = d.fire;
   var x = e.x + e.width / 2;
   var y = e.y + e.height / 2;
@@ -706,7 +739,7 @@ function dezaVolley(ctx, e, d, geom) {
       return base + s * DEZA_ANGLE_UNIT;
     });
   }
-  for (var i = 0; i < angles.length; i++) {
+  for (var i = 0; i < angles.length && i < room; i++) {
     gs.projectiles.push(createProjectile({
       x: x,
       y: y,
@@ -722,6 +755,29 @@ function dezaVolley(ctx, e, d, geom) {
     }));
   }
   ctx.sound.playSfx("se_shoot");
+}
+// A type-3 shot, the browser's (game.bundle.js: spawnBigShot): the record the
+// shooter's bigShotChild names, spawned as a zako of its own where the
+// shooter stands, centred on it, with its own script, hp and art. A full pool
+// refuses it. Answers false only when the recipe has no such record, so the
+// caller can fall back to the stand-in bullet.
+function dezaBigShot(ctx, e, d) {
+  var gs = dezaScene();
+  var recipe = ctx.state.recipe;
+  var data = d.bigChild && recipe && recipe.enemyData ? recipe.enemyData[d.bigChild] : null;
+  if (!data || !gs) return false;
+  if (dezaRoom(gs) <= 0) return true;
+  var live = 0;
+  for (var i = 0; i < gs.enemies.length; i++) {
+    if (gs.enemies[i].dezaShot) live++;
+  }
+  if (live >= DEZA_MAX_LIVE_SHOTS) return true;
+  var shot = createEnemy(ctx, data);
+  shot.dezaShot = true;
+  shot.x = e.x + e.width / 2 - shot.width / 2;
+  shot.y = e.y + e.height / 2 - shot.height / 2;
+  gs.enemies.push(shot);
+  return true;
 }
 function dezaFireFrame(ctx, e, d) {
   d.acc += 28 + (dezaRank(ctx) >> 1);
@@ -744,10 +800,14 @@ function dezaFireFrame(ctx, e, d) {
       firedMidBurst = true;
     }
   } else if (big) {
-    if (d.reload <= 0 && onScreen) {
+    // Not on the fire pulse: the reload counts down every Saturn frame, and on
+    // the frame it reads 0 the shot goes out if the shooter is on the field —
+    // and the reload refills either way, so a shooter off the field never
+    // banks one.
+    if (d.reload <= 0) {
+      if (onScreen && !dezaBigShot(ctx, e, d)) dezaVolley(ctx, e, d, 1);
       d.reload = dezaReload(fire);
-      dezaVolley(ctx, e, d, 1);
-    } else if (d.reload > 0) d.reload -= 1;
+    } else d.reload -= 1;
     return;
   } else if (pulse && d.reload <= 0 && onScreen) {
     d.reload = dezaReload(fire);

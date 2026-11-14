@@ -371,3 +371,94 @@ Deno.test("each stage's boss is the level's, or the base game's when it has none
   };
   assertEquals(stageBosses(gappy, base).map((b) => b.stage), [0, 3]);
 });
+
+// A type-3 big shot is another enemy record, which its shooter spawns where it
+// stands (`dezaemon.bigShotChild`, spelled as an enemyData key). No wave grid
+// names it, and the disc re-keys the types a grid does name.
+
+function shooter(name: string, child: string): Record<string, unknown> {
+  return { ...enemy(name), dezaemon: { bigShotChild: child, kept: name } };
+}
+
+const childOf = (rec: Record<string, unknown>) =>
+  (rec.dezaemon as { bigShotChild?: string }).bigShotChild;
+
+Deno.test("a shooter's big-shot record ships with it, though no grid names it", () => {
+  const record: LevelRecord = {
+    enemylist: [["A0", "00"]],
+    enemyData: {
+      enemyA: shooter("a", "enemyBL"),
+      enemyBL: shooter("bl", "enemyQ"), // spawns one of its own in turn
+      enemyQ: enemy("q"),
+      enemyZ: enemy("z"), // named by nothing: still left behind
+    },
+  };
+  const disc = discStage(record);
+  assertEquals(Object.keys(disc.enemyData).sort(), [
+    "enemyA",
+    "enemyBL",
+    "enemyQ",
+  ]);
+  assertEquals(childOf(disc.enemyData.enemyA), "enemyBL");
+  assertEquals(childOf(disc.enemyData.enemyBL), "enemyQ");
+  assert(disc.note.includes("2 more their big shots spawn"), disc.note);
+  // The art goes on the sheet with them.
+  const out = stageRecipes({ ...record, enemyData: disc.enemyData });
+  assertEquals(names(out.enemies), ["a", "bl", "q"]);
+});
+
+Deno.test("a re-coded type is not handed the letter of a record a shooter spawns", () => {
+  // The save's enemyA is a spawn-only record; the grid's XY would take the
+  // first free letter, which must not be A: the shooter's `enemyA` is the
+  // save's, and would otherwise spawn XY.
+  const record: LevelRecord = {
+    enemylist: [["XY0", "S0"]],
+    enemyData: {
+      enemyXY: enemy("xy"),
+      enemyS: shooter("s", "enemyA"),
+      enemyA: enemy("child"),
+    },
+  };
+  const disc = discStage(record);
+  assertEquals(disc.renamed, { XY: "B" });
+  assertEquals(disc.enemyData.enemyA, enemy("child"));
+  assertEquals(disc.enemyData.enemyB, enemy("xy"));
+  assertEquals(childOf(disc.enemyData.enemyS), "enemyA");
+});
+
+Deno.test("a big shot follows its record to the key it was re-coded to", () => {
+  // CM is on the grid, so it ships as `C`; a shooter that spawns it names the
+  // new key, and the shooter itself, re-coded too, keeps working.
+  const record: LevelRecord = {
+    enemylist: [["AB0", "CM0"]],
+    enemyData: {
+      enemyAB: shooter("ab", "enemyCM"),
+      enemyCM: enemy("cm"),
+    },
+  };
+  const disc = discStage(record);
+  assertEquals(disc.renamed, { AB: "A", CM: "B" });
+  assertEquals(disc.enemyData.enemyA.name, "ab");
+  assertEquals(disc.enemyData.enemyB.name, "cm");
+  assertEquals(childOf(disc.enemyData.enemyA), "enemyB");
+  // The save's record is left as it was.
+  assertEquals(childOf(record.enemyData!.enemyAB), "enemyCM");
+});
+
+Deno.test("a big shot whose record the save lacks is dropped, never re-pointed", () => {
+  // `enemyB` is not in the save; after re-coding it IS something else.
+  const record: LevelRecord = {
+    enemylist: [["AB0", "CM0"]],
+    enemyData: {
+      enemyAB: shooter("ab", "enemyB"),
+      enemyCM: enemy("cm"),
+    },
+  };
+  const disc = discStage(record);
+  assertEquals(disc.enemyData.enemyB.name, "cm");
+  assertEquals(childOf(disc.enemyData.enemyA), undefined);
+  assertEquals(
+    (disc.enemyData.enemyA.dezaemon as { kept: string }).kept,
+    "ab",
+  );
+});
