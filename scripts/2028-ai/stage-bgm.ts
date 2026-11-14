@@ -51,8 +51,9 @@ const CUT = (minutes: 1 | 2 | 4) => `https://easierbycode.com/${minutes}.mp3`;
  * `stage_bgm` is every stage's track and `stage_bgm_<N>min` the cut for a
  * stage that runs N minutes or longer. The five stage themes name the first
  * cut too, for what reads a level's music by its boss: the exporters, and a
- * runtime from before the stage tracks. `title_bgm` is the title's, and the
- * hidden boss's theme is the four-minute cut, whatever the stage's length.
+ * runtime from before the stage tracks. `title_bgm` is the title's, the
+ * four-minute cut. The hidden boss's theme is Diamond Eyes, a track of its
+ * own, whatever the stage's length.
  * `boss2_bgm` is the fight with the third boss, from his arrival.
  */
 export const SOUNDTRACK: Readonly<Record<string, string>> = {
@@ -60,13 +61,13 @@ export const SOUNDTRACK: Readonly<Record<string, string>> = {
   boss_barlog_bgm: CUT(1),
   boss_bison_bgm: CUT(1),
   boss_fang_bgm: CUT(1),
-  boss_goki_bgm: CUT(4),
+  boss_goki_bgm: "https://easierbycode.com/diamond-eyes.mp3",
   boss_sagat_bgm: CUT(1),
   boss_vega_bgm: CUT(1),
   stage_bgm: CUT(1),
   stage_bgm_2min: CUT(2),
   stage_bgm_4min: CUT(4),
-  title_bgm: CUT(1),
+  title_bgm: CUT(4),
 };
 
 /** The tone-bank soundtrack the record carried, for --revert. */
