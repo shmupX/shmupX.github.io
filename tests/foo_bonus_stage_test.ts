@@ -228,6 +228,8 @@ Deno.test("the bonus stage plays Diamond Eyes", async () => {
   assertEquals(SOUNDTRACK.stage5_bgm, foo.customAudioURLs.stage5_bgm);
 });
 
+const flatJs = (js: string) => js.replace(/\s+/g, " ");
+
 // deno-lint-ignore no-explicit-any
 type Graft = Record<string, Record<string, any>>;
 
@@ -283,10 +285,17 @@ Deno.test("the cloud foo (foo.codemonkey.games) gets the bonus stage from foo.js
   // A cloud record that has a bonus stage of its own is left alone.
   const own = { enemylist: [["00"]], stages: { stage5: { bonus: true } } };
   assertEquals(graft.graftBonusStages(own, baked, {}).stages, own.stages);
-  // And the boot takes it, then draws its atlas, before the level starts.
-  const flat = js.replace(/\s+/g, " ");
-  assert(flat.includes(
-    'return withOwnBonusStage(levelName, data, self.cache.json.get("recipe")); }).then(function(data) {',
-  ));
-  assert(flat.includes("mergeBonusAtlas(self, data, finishLevelLoad);"));
+  // The boot (the level loader's loadLevel) hands the record to the game
+  // first, and 2028.Ai's hook takes the bonus stage and draws its atlas.
+  const loader = (await read(LOADER)).replace(/\s+/g, " ");
+  for (const src of [loader, flatJs(js)]) {
+    assert(src.includes(
+      'return this.fetchLevel(levelName, o).then((data) => typeof o.amendLevel === "function" ? Promise.resolve(o.amendLevel(this.resolvedLevelName || levelName, data)).then((amended) => amended || data, () => data) : data).then((data) => {',
+    ));
+  }
+  assert(
+    flatJs(js).includes(
+      'amendLevel: (levelKey, data) => withOwnBonusStage(levelKey, data, this.cache.json.get("recipe")).then((amended) => new Promise((resolve) => { mergeBonusAtlas(this, amended, () => resolve(amended)); })),',
+    ),
+  );
 });

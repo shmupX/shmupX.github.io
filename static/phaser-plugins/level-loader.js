@@ -2158,7 +2158,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       // copy (_withoutStockCutins) and lose to rando's.
       const exportedApp = o.exportedApp !== undefined ? !!o.exportedApp : isExportedApp();
 
-      return this.fetchLevel(levelName, o).then((data) => {
+      // A game may amend the record it fetched before anything reads it
+      // (`amendLevel(levelKey, data)`, resolving the record to play): 2028.Ai
+      // gives the cloud foo the bonus stage its baked foo.json has. A hook
+      // that fails leaves the record as it came.
+      return this.fetchLevel(levelName, o).then((data) => typeof o.amendLevel === "function"
+        ? Promise.resolve(o.amendLevel(this.resolvedLevelName || levelName, data)).then((amended) => amended || data, () => data)
+        : data).then((data) => {
         const levelKey = this.resolvedLevelName || levelName;
         if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
         return this.applyCabinet(data).then(() => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
