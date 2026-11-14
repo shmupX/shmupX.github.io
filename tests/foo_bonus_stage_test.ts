@@ -150,6 +150,10 @@ Deno.test("the game plays the bonus stage with no story, its own card, backdrop 
         "if (ownStage && ownStage.backdrop && scene.textures.exists(ownEnd)) fallbackKey = ownEnd;",
       ],
       ["the backdrops load", "loadStageBackdrops(self, baseRecipe);"],
+      [
+        "a late backdrop still goes up",
+        "if (stageData.backdrop && !this.ownBackdrop) awaitStageBackdrop(this, stageId, stageData);",
+      ],
     ]
   ) {
     assert(flat.includes(src), `missing: ${what}`);

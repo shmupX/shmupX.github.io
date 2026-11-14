@@ -12147,6 +12147,27 @@
       });
     }
   }
+  function awaitStageBackdrop(scene, stageId, stageData) {
+    var keys = stageBackdropKeys(stageId);
+    var url = stageData.backdrop && stageData.backdrop.loop;
+    if (typeof url !== "string" || !url) return;
+    var img = new Image();
+    img.onload = function() {
+      try {
+        if (!scene.sys || !scene.sys.isActive() || !scene.stageBg) return;
+        if (!scene.textures.exists(keys.loop)) scene.textures.addImage(keys.loop, img);
+        scene.stageBg.setTexture(keys.loop);
+        scene.ownBackdrop = true;
+        if (scene.stageBgOverlay) {
+          scene.stageBgOverlay.destroy();
+          scene.stageBgOverlay = null;
+        }
+      } catch (e) {
+        console.warn("Failed to put up stage backdrop " + keys.loop + ":", e);
+      }
+    };
+    img.src = url;
+  }
   function resolveStageBgEnd(scene, stageId, fallbackKey) {
     // A stage with a backdrop of its own ends on its own end picture.
     var ownStage = scene.recipe && scene.recipe["stage" + String(stageId)];
@@ -18095,6 +18116,9 @@
         this.stageBgOverlay.setOrigin(0, 0);
         this.stageBgOverlay.setAlpha(0.6);
       }
+      // A stage straight out of the boot (?stage=) can open before its
+      // backdrop's picture has decoded: put it up as soon as it has.
+      if (stageData.backdrop && !this.ownBackdrop) awaitStageBackdrop(this, stageId, stageData);
       this.unitGroup = this.add.group();
       this.bulletGroup = this.add.group();
       this.enemyBulletGroup = this.add.group();
