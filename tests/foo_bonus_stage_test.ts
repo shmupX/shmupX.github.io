@@ -227,3 +227,66 @@ Deno.test("the bonus stage plays Diamond Eyes", async () => {
   );
   assertEquals(SOUNDTRACK.stage5_bgm, foo.customAudioURLs.stage5_bgm);
 });
+
+// deno-lint-ignore no-explicit-any
+type Graft = Record<string, Record<string, any>>;
+
+Deno.test("the cloud foo (foo.codemonkey.games) gets the bonus stage from foo.json", async () => {
+  const js = await read(BUNDLE);
+  const graft = new Function(
+    ["hasBonusStage", "graftBonusStages"].map((n) => functionSource(js, n))
+      .join("") + "\nreturn { hasBonusStage, graftBonusStages };",
+  )() as {
+    hasBonusStage(d: Recipe | null): boolean;
+    graftBonusStages(d: Recipe, baked: Recipe, base: Recipe): Recipe;
+  };
+  const baked = await readJson("static/games/2028-ai/foo.json");
+  // A cloud record saved before the bonus stage: foo's own art and bosses.
+  const cloud: Recipe = {
+    enemylist: [["00"]],
+    enemyData: { enemyA: { texture: ["a"] } },
+    bossData: { boss0: { name: "own" } },
+    customAudioURLs: { title_bgm: "https://easierbycode.com/4.mp3" },
+    atlasImageDataURL: "data:image/png;base64,",
+    atlasFrames: { a: { frame: { x: 0, y: 0, w: 1, h: 1 } } },
+  };
+  assert(!graft.hasBonusStage(cloud));
+  const out = graft.graftBonusStages(cloud, baked, {}) as Graft;
+  assert(graft.hasBonusStage(out));
+  assertEquals(out.stages.stage5, baked.stages.stage5);
+  assertEquals(
+    out.enemyData.enemyA,
+    { texture: ["a"] },
+    "its own enemies stay",
+  );
+  assertEquals(out.enemyData.enemyAAA, baked.enemyData.enemyAAA);
+  assertEquals(out.bossData.boss0, { name: "own" }, "its own bosses stay");
+  assertEquals(out.bossData.boss5, baked.bossData.boss5);
+  assertEquals(out.customAudioURLs.title_bgm, "https://easierbycode.com/4.mp3");
+  assertEquals(
+    out.customAudioURLs.stage5_bgm,
+    baked.customAudioURLs.stage5_bgm,
+  );
+  assertEquals(out.bonusAtlas.image, baked.atlasImageDataURL);
+  assert(!("a" in out.bonusAtlas.frames));
+  const rona = await readJson("static/games/hellophaser/game.json");
+  for (const name of Object.keys(rona.atlasFrames)) {
+    assert(out.bonusAtlas.frames[name], `no ${name} for the cloud foo`);
+  }
+  // A record with no enemy or boss data of its own keeps the base game's.
+  const bare = graft.graftBonusStages({ enemylist: [["00"]] }, baked, {
+    enemyData: { enemyB: {} },
+    bossData: { boss1: {} },
+  }) as Graft;
+  assert(bare.enemyData.enemyB && bare.enemyData.enemyAAA);
+  assert(bare.bossData.boss1 && bare.bossData.boss5);
+  // A cloud record that has a bonus stage of its own is left alone.
+  const own = { enemylist: [["00"]], stages: { stage5: { bonus: true } } };
+  assertEquals(graft.graftBonusStages(own, baked, {}).stages, own.stages);
+  // And the boot takes it, then draws its atlas, before the level starts.
+  const flat = js.replace(/\s+/g, " ");
+  assert(flat.includes(
+    'return withOwnBonusStage(levelName, data, self.cache.json.get("recipe")); }).then(function(data) {',
+  ));
+  assert(flat.includes("mergeBonusAtlas(self, data, finishLevelLoad);"));
+});
