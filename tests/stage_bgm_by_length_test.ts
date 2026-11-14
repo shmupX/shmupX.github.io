@@ -8,7 +8,7 @@
 // (game.bundle.js, a vendored artifact patched by hand — README) plays each
 // stage the longest one it fills, from the top, and downloads only the cuts
 // some stage of the game will play. title_bgm is the title's, the hidden
-// boss's theme is the four-minute cut, and boss<N>_bgm is the fight with
+// boss has a theme of his own, and boss<N>_bgm is the fight with
 // stage N's boss, which takes over from the stage's music as he arrives.
 //
 // The helpers are run out of the real bundle; the database script
@@ -200,8 +200,11 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(SOUNDTRACK.stage_bgm_4min, "https://easierbycode.com/4.mp3");
   // The title plays the four-minute cut.
   assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm_4min);
-  // The hidden boss has the long cut, whatever the stage's length.
-  assertEquals(SOUNDTRACK.boss_goki_bgm, SOUNDTRACK.stage_bgm_4min);
+  // The hidden boss has Diamond Eyes, whatever the stage's length.
+  assertEquals(
+    SOUNDTRACK.boss_goki_bgm,
+    "https://easierbycode.com/diamond-eyes.mp3",
+  );
   // The third boss, and only he, has a track of his own.
   assertEquals(SOUNDTRACK.boss2_bgm, "https://easierbycode.com/boss.mp3");
   assertEquals(
@@ -277,15 +280,15 @@ Deno.test("sameBgmTrack: one key, or two keys the level gave one source", async 
   // Stock themes have no source in the map: two of them are two tracks.
   assertEquals(same("boss_vega_bgm", "boss_goki_bgm"), false);
   assert(same("stage_bgm", "stage_bgm"));
-  // 2028.Ai's hidden boss: his theme is the four-minute cut, so it takes
-  // over from the first cut and plays on over a four-minute stage's.
+  // 2028.Ai's hidden boss: his theme, Diamond Eyes, is no stage's cut, so it
+  // takes over from whichever cut the stage plays.
   const foo = new Function(
     "gameState",
     functionSource(js, "sameBgmTrack") + "\nreturn sameBgmTrack;",
   )({ bgmSourceURLs: SOUNDTRACK }) as (a: string, b: string) => boolean;
   assertEquals(foo("stage_bgm", "boss_goki_bgm"), false);
   assertEquals(foo("stage_bgm_2min", "boss_goki_bgm"), false);
-  assert(foo("stage_bgm_4min", "boss_goki_bgm"));
+  assertEquals(foo("stage_bgm_4min", "boss_goki_bgm"), false);
   assertEquals(same("", ""), false);
   assertEquals(same("boss_bison_bgm", ""), false);
 });

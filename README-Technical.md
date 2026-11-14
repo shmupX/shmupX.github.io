@@ -3606,7 +3606,8 @@ for one of four minutes or longer. The runtime picks between them per stage
 and starts the cut over with each stage (the bundle's hand edits, above); foo's
 own five stages run about a minute, so they all play the first and the
 two-minute cut is not downloaded. The hidden boss's theme (`boss_goki_bgm`) is
-the four-minute cut, whatever the stage's length, and the third boss has a
+Diamond Eyes (`https://easierbycode.com/diamond-eyes.mp3`, 4:13), whatever the
+stage's length, and the third boss has a
 track of his own from the moment he arrives (`boss2_bgm`,
 `https://easierbycode.com/boss.mp3`, 1:29: an MP4 with a 720x720 video stream
 beside its audio, of which the runtime decodes only the audio). `title_bgm` is
