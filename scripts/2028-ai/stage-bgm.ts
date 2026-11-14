@@ -57,7 +57,8 @@ const CUT = (minutes: 1 | 2 | 4) => `https://easierbycode.com/${minutes}.mp3`;
  * `boss2_bgm` is the fight with the third boss, from his arrival, and
  * `stage4_bgm` the secret stage's own track, the two-minute cut, whatever its
  * length (the stage after the fourth, reached by finishing every boss with
- * the CA bomb and no continue).
+ * the CA bomb and no continue). `stage5_bgm` is the bonus stage's, RonaGun's
+ * stage after the secret one, on Diamond Eyes as well.
  */
 export const SOUNDTRACK: Readonly<Record<string, string>> = {
   boss2_bgm: "https://easierbycode.com/boss.mp3",
@@ -68,6 +69,7 @@ export const SOUNDTRACK: Readonly<Record<string, string>> = {
   boss_sagat_bgm: CUT(1),
   boss_vega_bgm: CUT(1),
   stage4_bgm: CUT(2),
+  stage5_bgm: "https://easierbycode.com/diamond-eyes.mp3",
   stage_bgm: CUT(1),
   stage_bgm_2min: CUT(2),
   stage_bgm_4min: CUT(4),
