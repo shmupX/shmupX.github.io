@@ -198,7 +198,8 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(SOUNDTRACK.stage_bgm, "https://easierbycode.com/1.mp3");
   assertEquals(SOUNDTRACK.stage_bgm_2min, "https://easierbycode.com/2.mp3");
   assertEquals(SOUNDTRACK.stage_bgm_4min, "https://easierbycode.com/4.mp3");
-  assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm);
+  // The title plays the four-minute cut.
+  assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm_4min);
   // The hidden boss has the long cut, whatever the stage's length.
   assertEquals(SOUNDTRACK.boss_goki_bgm, SOUNDTRACK.stage_bgm_4min);
   // The third boss, and only he, has a track of his own.

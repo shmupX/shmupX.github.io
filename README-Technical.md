@@ -3610,8 +3610,9 @@ the four-minute cut, whatever the stage's length, and the third boss has a
 track of his own from the moment he arrives (`boss2_bgm`,
 `https://easierbycode.com/boss.mp3`, 1:29: an MP4 with a 720x720 video stream
 beside its audio, of which the runtime decodes only the audio). `title_bgm` is
-the first cut too, where the title played the transcription's opening tape, and the five
-stage themes name it as well for what reads a level's music by its boss (the
+the four-minute cut too, where the title played the transcription's opening
+tape, and the five stage themes name the first cut for what reads a level's
+music by its boss (the
 exporters, a runtime from before the stage tracks). The files are AAC in an MP4 container under an
 `.mp3` name, which Chrome, Safari, Firefox and Edge decode; a browser that
 cannot plays the stock themes.
