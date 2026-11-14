@@ -207,7 +207,10 @@ they are written out in full.
     (`sameBgmTrack`). A boss of the stage list can have a track of his own
     too: `boss<N>_bgm`, numbered as `bossData` numbers him, takes over from
     the stage's music as he arrives (`playBossFightBgm`, from `bossAdd`), and
-    a level that names none keeps the stage's music through the fight. A
+    a level that names none keeps the stage's music through the fight. One
+    stage can have a track of its own as well: `stage<N>_bgm`, numbered the
+    same way, wins over the length cuts for that stage alone (`stageBgmKey`),
+    and is downloaded like any key that is no cut. A
     stage's length (`stageRunSeconds`) is its wave list at
     80 ticks a row of the 120 Hz step, or an import's last row on its scroll,
     plus half a minute where the stage has a boss, so 2028.Ai's own stages
@@ -216,7 +219,7 @@ they are written out in full.
     and `_queueAudioOverrides` still names a skipped track in the level's
     source map. That is in the plugin and the inlined copy alike. `title_bgm`
     is the title's music where the level has no title tape (`playTitleBgm`).
-    2028.Ai uses all four: see
+    2028.Ai uses all five: see
     [the soundtrack converter](#a-soundtrack-off-the-tone-bank).
     `tests/stage_bgm_by_length_test.ts` runs the helpers out of the bundle.
   - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
@@ -3610,7 +3613,9 @@ Diamond Eyes (`https://easierbycode.com/diamond-eyes.mp3`, 4:13), whatever the
 stage's length, and the third boss has a
 track of his own from the moment he arrives (`boss2_bgm`,
 `https://easierbycode.com/boss.mp3`, 1:29: an MP4 with a 720x720 video stream
-beside its audio, of which the runtime decodes only the audio). `title_bgm` is
+beside its audio, of which the runtime decodes only the audio). The secret
+stage, the fifth (reached by finishing every boss with the CA bomb and no
+continue), plays the two-minute cut as its own track (`stage4_bgm`). `title_bgm` is
 the four-minute cut too, where the title played the transcription's opening
 tape, and the five stage themes name the first cut for what reads a level's
 music by its boss (the
