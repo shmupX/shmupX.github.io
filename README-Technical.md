@@ -195,6 +195,30 @@ they are written out in full.
     roads in (`mergeAtlas` and `mergeEditorAtlas`), since a `?level=` visit goes
     straight into the stage. `tests/stage_backgrounds_test.ts` checks the two
     copies carry it.
+  - **A stage's music by how long the stage runs.** A level's
+    `customAudioURLs` may name its stage music by length instead of by boss:
+    `stage_bgm` for every stage and `stage_bgm_<N>min` for a stage that runs
+    N minutes or longer. `playBossBgm` plays the longest one the stage fills
+    (`stageBgmKey`, `stageBgmTrack`), from the top at every stage start, where
+    a theme two stages share still pauses at the clear and resumes; a level
+    that names none plays its stage themes (`boss_<name>_bgm`) as before. The
+    hidden boss swaps to his own theme (`boss_goki_bgm`) from either, unless
+    his is the very track already playing, which then plays on
+    (`sameBgmTrack`). A boss of the stage list can have a track of his own
+    too: `boss<N>_bgm`, numbered as `bossData` numbers him, takes over from
+    the stage's music as he arrives (`playBossFightBgm`, from `bossAdd`), and
+    a level that names none keeps the stage's music through the fight. A
+    stage's length (`stageRunSeconds`) is its wave list at
+    80 ticks a row of the 120 Hz step, or an import's last row on its scroll,
+    plus half a minute where the stage has a boss, so 2028.Ai's own stages
+    measure 50 to 61 seconds. The loader downloads only the cuts some stage of
+    the game picks: the game hands it `audio.wants` (`stagePlaysAudioKey`),
+    and `_queueAudioOverrides` still names a skipped track in the level's
+    source map. That is in the plugin and the inlined copy alike. `title_bgm`
+    is the title's music where the level has no title tape (`playTitleBgm`).
+    2028.Ai uses all four: see
+    [the soundtrack converter](#a-soundtrack-off-the-tone-bank).
+    `tests/stage_bgm_by_length_test.ts` runs the helpers out of the bundle.
   - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
     process restarting, which Android does under memory pressure — clears
     _every_ 2D canvas: Chromium fires `contextlost` on each, then
@@ -245,6 +269,42 @@ they are written out in full.
     succession, which no canvas can fix.
     `tests/gpu_reset_canvas_test.ts` runs both copies of the recipe against a
     fake canvas and pins every builder.
+    The replay was still not enough on a phone: Image Seal (a Dezaemon shelf
+    cart PLAYed from the editor) kept scoring with no ship, enemies, shots or
+    scenery, while the score popups (cut from `game_ui`, an `<img>`) and the
+    SP button's rim and ground (a canvas painted from shapes alone) came
+    through. What a canvas had drawn from an image did not come back; image
+    textures, which Phaser re-uploads from the image itself on restore, did.
+    So a canvas texture that is finished is now handed to Phaser as an image:
+    `bakeCanvasTexture(textures, key)` (in the loader, so in both copies)
+    encodes the canvas to a PNG, loads it with `loadImage` (which keeps the
+    blob URL) and swaps the texture's source to it with Phaser's
+    `TextureSource.updateSource`, which keeps every `Frame` and the GL texture
+    it uploads into. `_stackAtlas`, `applyCustomCutin`,
+    `mergeAtlasIntoGameAsset`, the scenery strips, the SP faces and the zako
+    bullet call it. It changes nothing where it cannot (no `toBlob`, a Phaser
+    without `updateSource`, a texture re-stacked or removed while the PNG was
+    made), and until the PNG lands the canvas and its recipe stand in.
+    Canvases the game types again itself (the HUD line, the lens, `Text`)
+    stay canvases. `tests/gpu_reset_baked_texture_test.ts` pins the helper and
+    its callers. On a Pixel 9 it did not bring Image Seal back: the art was
+    missing from the first frame, not after a reset, and the game played
+    normally on a MacBook.
+  - `stackedAtlasCanvas`, `packStackedFrames` and `atlasSideLimit` (in the
+    loader, so in both copies): the size a stacked atlas may reach. Stacking
+    puts a level's atlas under the 2048 x 2128 game_asset, and the editor's
+    atlas for an imported cart repacks the stock frames with the cart's at
+    2048 wide, so a shelf cart's sheet runs thousands of pixels taller. A
+    texture over the GPU's limit uploads as nothing, and on the phone that
+    was every frame of game_asset and the scenery and title art cut from it.
+    `_stackAtlas` and `mergeAtlasIntoGameAsset` keep the old layout while it
+    is within `atlasSideLimit` (4096, or the renderer's `getMaxTextureSize()`
+    if lower) and otherwise copy each distinct frame rect into a sheet
+    shelf-packed within it, dropping local frames the level took over by
+    name. Frames too big to fit even then are stacked as before. The cloud
+    browser this was written in has no WebGL (the game runs on Phaser's
+    canvas renderer there), so only a phone can show it works.
+    `tests/atlas_side_limit_test.ts` pins it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
@@ -984,6 +1044,7 @@ deno task eshop:check     # validate data/eshop.json against the built manifest
 deno task eshop:covers    # cover a published eShop game that went out without one (dry run; --write uploads)
 deno task eshop:publish   # export a level as a Dezaemon 2 cart and publish it to the eShop, replacing that id (--name NAME lists it as; --dry-run writes nothing)
 deno task bgm:tone        # transcribe an mp3 (path or URL) onto the Dezaemon 2 tone bank: a level's dezaemonBgm, one piece across the stages
+deno task 2028-ai:stage-bgm # swap 2028.Ai's cloud record from its tone-bank soundtrack to its recorded one (dry run; --apply writes, --revert puts the tone bank back)
 deno task extension:zip   # pack the Sprite Picker extension into static/extension/ for the download page (part of build)
 deno task level:normalize # bring a cloud level's 2019 names (normalTama0, cagage) up to today's (dry run; --write patches)
 deno task level:alias     # other names a cloud game answers to (2019 -> 2019-PS2); dry run, --write sets
@@ -3536,6 +3597,41 @@ dropped, the two voice entries kept) — the root copy, before the split;
 `rtdb:split` carries it into `shmupX/levels/foo` — and dezaFoo republished from
 it with `deno task eshop:publish foo --name dezaFoo --author "EASIER BY CODE"`.
 
+**foo's own music is a recording again** (2026-11-12), and dezaFoo keeps the
+transcription. The record names three cuts of one track in its
+`customAudioURLs`, by the length of the stage they are for: `stage_bgm`
+(`https://easierbycode.com/1.mp3`, 1:42), `stage_bgm_2min` (`2.mp3`, 2:30) for
+a stage that runs two minutes or longer and `stage_bgm_4min` (`4.mp3`, 4:25)
+for one of four minutes or longer. The runtime picks between them per stage
+and starts the cut over with each stage (the bundle's hand edits, above); foo's
+own five stages run about a minute, so they all play the first and the
+two-minute cut is not downloaded. The hidden boss's theme (`boss_goki_bgm`) is
+the four-minute cut, whatever the stage's length, and the third boss has a
+track of his own from the moment he arrives (`boss2_bgm`,
+`https://easierbycode.com/boss.mp3`, 1:29: an MP4 with a 720x720 video stream
+beside its audio, of which the runtime decodes only the audio). `title_bgm` is
+the first cut too, where the title played the transcription's opening tape, and the five
+stage themes name it as well for what reads a level's music by its boss (the
+exporters, a runtime from before the stage tracks). The files are AAC in an MP4 container under an
+`.mp3` name, which Chrome, Safari, Firefox and Edge decode; a browser that
+cannot plays the stock themes.
+
+`static/games/2028-ai/foo.json`, which a plain visit bakes, carries those
+entries in place of the Sol Invicto mp3 it still named, so
+`deno task 2028-ai:bgm` now downloads 10 MB for the deploy where it downloaded
+41. The cloud record is changed by
+[`scripts/2028-ai/stage-bgm.ts`](scripts/2028-ai/stage-bgm.ts)
+(`deno task 2028-ai:stage-bgm`, a dry run unless `--apply`): it lays the same
+entries over the record's `customAudioURLs` and removes `dezaemonBgm`, since a
+level that carries a tone-bank soundtrack plays it and never its recording.
+Run it once the runtime that reads the stage tracks is deployed: an older one
+would download all three cuts and play the first under the themes alone. The
+transcription is kept as it was in `scripts/2028-ai/bgm/foo-tone-bank.json`
+and `--revert` puts it back, which a new Saturn cart of foo needs first:
+`build:sav` writes a cart's music from `dezaemonBgm`.
+`tests/stage_bgm_by_length_test.ts` runs the script against a stand-in
+database.
+
 ## The music player and the watch remote
 
 The launcher carries a music player of its own: AZLegendGolden's cassette deck,
@@ -4404,7 +4500,7 @@ localStorage and the emulator service worker all start empty. So the packaged
 `%LOCALAPPDATA%\shmupX`), and none of it runs in a checkout or on the deploy:
 
 - **`offline/`** — a download-once store (`lib/offline-store.ts`). The binary
-  leaves out the arcade romsets and 2028-ai's 41MB custom BGM
+  leaves out the arcade romsets and 2028-ai's 10MB custom BGM
   (`lib/streamed-payloads.ts`, which `build-desktop.ts` reads for its
   `--exclude`s); the first request for one fetches it from the deploy, and every
   later one is served from disk, online or not. The arcade player joins them
@@ -6609,6 +6705,56 @@ a level open.
   rows of the texture rather than nine, and the build refuses a stack taller
   than a phone's 4096 (`TEXTURE_LIMIT`).
 
+## RonaGun (hellophaser) as a cloud game
+
+`hellophaser` is RonaGun, the Phaser 3 shooter at
+[easierbycode.com/hellophaser/v4](https://easierbycode.com/hellophaser/v4/)
+(Lincoln against the virus, the sentinels and the Seductress), rebuilt as a
+cloud game by `scripts/hellophaser/build-level.ts`. The record it builds is
+committed as `static/games/hellophaser/game.json`:
+
+```sh
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --out static/games/hellophaser/game.json
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --serve    # play it locally, nothing written
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --apply    # write shmupX/levels/hellophaser (--force replaces it)
+deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --revert
+```
+
+The source is a Parcel bundle, so its numbers are ported from the modules in
+it into `scripts/hellophaser/source.ts`, and its art is copied byte for byte
+into `scripts/hellophaser/art/`. It is one endless scene. Three lanes each keep
+one enemy falling at 1, 2 and 3 px a frame, and timers swap each lane's sprite
+for the next. Five sentinels cross from the left at 50 px/s, and the Seductress
+arrives at 77 s. It becomes one stage that sends each lane's sprite down once
+per crossing, from a seeded random column, flies the sentinels across on their
+rows, and ends on the Seductress as its boss.
+
+- **Music.** `customAudioURLs.boss_bison_bgm` is the source's title song,
+  streamed from the source's own site (CORS open). The runtime plays stage 0's
+  music under that key from the first wave through the boss, as the source
+  loops it through the whole scene.
+- **Particle trails.** A record can now carry `trail` on `playerData`, an
+  `enemyData` record or a `bossData` record. The runtime's `attachTrail`
+  (game.bundle.js) hangs a Phaser particle emitter on the sprite, as
+  `emitter.startFollow` does in the source. It takes `texture` (atlas frames),
+  `speed`, `lifespan` and `angle` (a number or `[min, max]`), `scale` (a number
+  or `{start, end}`), `blendMode` (default ADD), and optional `frequency`,
+  `offsetX` and `offsetY`. It stops emitting while the sprite is hidden, and
+  fades out and is removed when the sprite goes. Low mode draws none. Lincoln
+  wears the source's blue thruster and the Asteroid its red trail.
+  `validateGameJson` requires a `trail` to name a texture.
+- **What differs from the source.** The SmilEye power-up and its boost, each
+  enemy's own explosion sheet, and the Seductress's morph after her defeat are
+  not ported. The runtime's blasts and stage clear stand in. The Seductress
+  fires nothing in the source, but a shmupX boss runs a stock routine, so hers
+  shoots the fairy bullet the source loads and never uses. The source's
+  starfield emitter is baked into a scrolling 256x256 tile.
+
+`tests/hellophaser_test.ts` pins the record (every sprite spawned, the
+scripts, the music, the trails, the boss), checks that the committed
+game.json matches what the converter builds, and checks that attachTrail is
+wired into the player, the zako and the boss.
+
 ## Evil Invaders as a cloud game
 
 
@@ -6947,9 +7093,24 @@ of a subdomain is routed by its label (`lib/level-subdomain.ts`, wired in
 
 - `2019-ps2.codemonkey.games/` → `/games/2028-ai?level=2019-PS2` — a level that
   exists opens straight into the game, the way `?level=` does.
+- `elfin.codemonkey.games/` → `/editor/?game=2028-ai&play=elfin` — no level has
+  the name, but the Dezaemon **shelf** has a game of that slug, so the editor's
+  `?play=` hand-off (the one the launcher's coverflow sends) runs the cart
+  straight away. The shelf is the community library, RTDB `dezaemon/index/<slug>`
+  (the title lowercased, runs of anything but `a-z0-9` made one hyphen); it is
+  read as one shallow listing of that node, cached for a minute beside the level
+  keys. It is asked **after** the levels and the aliases — a level, or an alias,
+  keeps a name the shelf also has — and before NEW GAME. Carts that live only in
+  one browser (eShop installs, a visitor's own exports) are not in the database,
+  so no hostname can name them. If only the shelf listing cannot be read, it is
+  an empty shelf, and the name falls through to NEW GAME.
 - `my-first-level.codemonkey.games/` → `/editor/?new=my-first-level` — a name no
-  level has yet opens the editor on **CHOOSE YOUR CHARACTER**, and the game made
-  from it is called `my-first-level`.
+  level and no shelf game has yet opens the editor on **CHOOSE YOUR CHARACTER**,
+  and the game made from it is called `my-first-level`.
+
+The visitor's own query rides along, minus what the label decided (`level`;
+`new`; `game` and `play`): `elfin.codemonkey.games/?turbo=1` is
+`/editor/?game=2028-ai&play=elfin&turbo=1`.
 
 Only the root is redirected; every other path on a subdomain serves exactly as
 the apex does, which is what lets the redirect stay relative (the game and its
@@ -6960,7 +7121,12 @@ and none of shmupX's is a NEW GAME here, not cmg's game. Hostnames are
 case-insensitive and RTDB keys are not, so the label is matched exactly, then by
 case (`2019-ps2` finds `2019-PS2`; a tie between two keys that differ only in
 case resolves to the same one every time). A key the DNS cannot spell — a space,
-a dot, an underscore — is not reachable this way. If the database cannot be read
+a dot, an underscore — is reached by its **slug**: every run of such characters
+becomes one hyphen (`levelSlug`), so `master-arena-mod.codemonkey.games` opens
+the game stored as `Master Arena Mod`. The game gets the stored key, never the
+slug, and the slug is the level's own name, so it outranks an alias (and
+`level:alias` refuses an alias a level's slug already owns). If the database
+cannot be read
 at all, the label goes to the game rather than the editor: a shared link to a
 real level is the common case, and the loader's own "no such level" screen beats
 a stranger's editor opening over a name that exists. `www.codemonkey.games` is
@@ -6988,6 +7154,17 @@ game's (the game may be named by an alias too: `level:alias 2019` lists
 shmupX's index only; cmg's root-level `levelAliases` is neither read nor
 written. `planAliases` in `lib/level-subdomain.ts` refuses an alias another
 level holds or a level already owns as its own name.
+
+**Arcade boards.** A few labels open a MAME board instead of a level:
+`sfex2.codemonkey.games/` → cmg's arcade player with `?rom=sfex2` (Street
+Fighter EX2). They live in `ARCADE_SUBDOMAINS` in `lib/level-subdomain.ts`
+(label → romset), are asked before any level, alias or shelf game, and need no
+listing. The redirect goes to cmg's own copy of the player
+(`ARCADE_PLAYER_URL`), not this origin's `/arcade/`: that path is only mirrored
+by `static/emu-sw.js` in a browser that has installed the Arcade core, so a
+cold visit to a subdomain would 404 there. `level:alias` refuses these labels.
+Adding a board is one line in that map, and the board must be one cmg serves
+(`/arcade/<romset>.zip`).
 
 **A cart imported long ago is a snapshot of that day's importer.** `Ramsie`
 was saved in August 2026 by an importer that did not yet pull the cart's own

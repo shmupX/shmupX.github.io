@@ -9,12 +9,22 @@ import { assert, assertAlmostEquals, assertEquals } from "@std/assert";
 import {
   bigShotRecord,
   bigShotTargets,
+  firstPlacements,
+  groundAndExits,
+  isPlaced,
+  isSavedReading,
   keptClock,
+  loadReading,
   placementId,
+  READING_FORMAT,
   readSaturn,
+  readWeb,
   roster,
   type RushRecord,
+  saturnFrame,
   type SaturnSurveyFile,
+  type SavedReading,
+  saveReading,
   surveyReport,
   webArt,
   webItems,
@@ -762,7 +772,13 @@ Deno.test("a run with every record on time and no bullets passes, and the markdo
     r.markdown,
   );
   assert(r.markdown.includes("| Enemy bullets seen | 0 | 0 |"), r.markdown);
-  assert(r.markdown.includes("| --- | --- | --- | --- | --- | --- |\n\n## The ship"), r.markdown);
+  // No kind to list: the table's header is followed by the next section.
+  assert(
+    r.markdown.includes(
+      "| --- | --- | --- | --- | --- | --- |\n\n## Ground starts and exits",
+    ),
+    r.markdown,
+  );
   // A record the Saturn spawned only in rewound-away play says so on its row.
   const replayed = surveyReport({
     saturn: { ...saturn, births: [...saturn.births, satBirth(6000, 101, 83, 132, 350, { hp: 25600 })] },
@@ -806,4 +822,386 @@ Deno.test("the markdown carries the verdict, the record table, the kinds, the sh
     births: WEB.births.map((b) => b.id === 11 ? { ...b, name: "big" } : b),
   };
   assertEquals(webItems(mixed).pairs, 0);
+});
+
+// --- big shots as objects, spawn-only records, saved readings ----------------
+
+// The roster since 2026-10-27: the record a big shot names is carried even
+// when no cell places it (`placements: 0`), so the runtime can build the
+// shot as an object of that record. D fires record 13, R record 1 — which
+// B's cells place as well, and whose art the atlas keeps under record 0's
+// frames (identical cells are stored once).
+const SPAWN_RUSH: RushRecord = {
+  name: "Test",
+  enemyData: {
+    ...RUSH.enemyData,
+    enemyB: {
+      ...enemy(1, 129, { enabled: true, mode: 0, interval: 59, geometry: 1 }),
+      texture: ["deza0_00_0.gif", "deza0_00_1.gif"],
+    },
+    enemyI: {
+      ...enemy(13, 141, { enabled: true, mode: 0, interval: 119, geometry: 0 }),
+      hp: "infinity",
+      texture: ["deza0_13_0.gif", "deza0_13_1.gif"],
+      dezaemon: {
+        stage: 0,
+        record: 13,
+        placementId: 141,
+        placements: 0,
+        behavior: {
+          hp: 12800,
+          ground: false,
+          fire: { enabled: true, mode: 0 },
+        },
+      },
+    },
+  },
+};
+
+Deno.test("a record no cell places is carried to be spawned: its key is a big shot's alone", () => {
+  const placed = roster(SPAWN_RUSH);
+  assertEquals(placed.get(141)!.spawnOnly, true);
+  assertEquals(placed.get(141)!.webHp, null); // "infinity" is no number
+  assertEquals(placed.get(129)!.spawnOnly, false);
+  assertEquals(placed.get(129)!.frames, ["deza0_00_0.gif", "deza0_00_1.gif"]);
+  assertEquals(isPlaced(placed, 141), false);
+  assertEquals(isPlaced(placed, 129), true);
+  assertEquals(isPlaced(placed, 999), false);
+  const targets = bigShotTargets(placed);
+  assertEquals(targets.get(141)!.ambiguous, false);
+  assertEquals(targets.get(129)!.ambiguous, true);
+  // The Saturn's two births under key 141 stand nowhere near a live D: with
+  // the record in the roster they are still D's shots, not a placement.
+  const sat = readSaturn(SATURN, placed, targets);
+  assert(!sat.firsts.has(141));
+  assertEquals(
+    sat.bullets.filter((b) => b.what === "big shot (record 13)").length,
+    2,
+  );
+  // And the record's own row says where it is counted.
+  const r = surveyReport({ saturn: SATURN, web: WEB, rush: SPAWN_RUSH });
+  const row = r.rows.find((x) => x.entry.pid === 141)!;
+  assertEquals(row.status, "unseen");
+  assert(row.note.includes("no cell places it: D's big shots"), row.note);
+  assert(!r.failures.some((f) => f.startsWith("I:")), r.failures.join("\n"));
+});
+
+Deno.test("a big shot the web builds as an object is its shooter's shot, drawn as the record's own cells", () => {
+  const web: WebSurveyFile = {
+    ...WEB,
+    births: [
+      webBirth(1400, "enemy", 2, {
+        name: "deza0_04",
+        key: "D",
+        deza: 132,
+        frame: "deza0_02_0.gif",
+      }),
+      // D's shots: objects of record 13 wearing key 141, marked with D's key.
+      webBirth(1500, "enemy", 20, {
+        name: "deza0_13",
+        key: "I",
+        deza: 141,
+        shotOf: 132,
+        frame: "deza0_13_0.gif",
+      }),
+      webBirth(1600, "enemy", 21, {
+        name: "deza0_13",
+        key: "I",
+        deza: 141,
+        shotOf: 132,
+        frame: "deza0_13_1.gif",
+      }),
+      webBirth(1800, "enemy", 3, {
+        name: "deza0_01",
+        key: "B",
+        deza: 129,
+        frame: "deza0_00_0.gif",
+      }),
+      webBirth(2000, "enemy", 13, {
+        name: "deza0_38",
+        key: "R",
+        deza: 182,
+        frame: "deza0_38_0.gif",
+      }),
+      // R's shot is record 1, whose frames the atlas keeps as record 0's.
+      webBirth(2100, "enemy", 22, {
+        name: "deza0_01",
+        key: "B",
+        deza: 129,
+        shotOf: 182,
+        frame: "deza0_00_0.gif",
+      }),
+    ],
+  };
+  const placed = roster(SPAWN_RUSH);
+  const w = readWeb(web, placed);
+  // B is first seen where B was placed, not where R fired.
+  assertEquals(w.firsts.get(129)!.t, 1.8);
+  assertEquals(w.spawns.get(129), 1);
+  assert(!w.firsts.has(141));
+  assertEquals(
+    w.bullets.map((b) => [b.what, b.art, b.shooter]),
+    [
+      ["big shot (record 13)", "record 13 cells", 132],
+      ["big shot (record 13)", "record 13 cells", 132],
+      ["big shot (record 1)", "record 1 cells", 182],
+    ],
+  );
+  // A frame that is not the record's own keeps its own name.
+  const odd = readWeb({
+    ...web,
+    births: [
+      webBirth(1500, "enemy", 20, {
+        deza: 141,
+        shotOf: 132,
+        frame: "deza0_40_0.gif",
+      }),
+    ],
+  }, placed);
+  assertEquals(odd.bullets[0].art, "record 40 cells");
+  // A survey from before the mark is read by the key: one no cell places is
+  // a shot, with no shooter named; a placed key is a placement.
+  const old = readWeb({
+    ...web,
+    births: [
+      webBirth(1500, "enemy", 20, { deza: 141, frame: "deza0_13_0.gif" }),
+      webBirth(2100, "enemy", 22, { deza: 129, frame: "deza0_00_0.gif" }),
+    ],
+  }, placed);
+  assertEquals(old.bullets.map((b) => [b.what, b.shooter]), [[
+    "big shot (record 13)",
+    null,
+  ]]);
+  assert(old.firsts.has(129));
+  // Against the Saturn, the two sides now name the same kind.
+  const r = surveyReport({ saturn: SATURN, web, rush: SPAWN_RUSH });
+  const kind = r.kinds.find((k) => k.what === "big shot (record 13)")!;
+  assertEquals([kind.art, kind.saturn, kind.web], ["record 13 cells", 2, 2]);
+  assert(
+    !r.failures.some((f) => f.includes("big shot (record 13)")),
+    r.failures.join("\n"),
+  );
+});
+
+Deno.test("a Saturn reading saved from one run judges a later web run the same way", () => {
+  const live = surveyReport({ saturn: SATURN, web: WEB, rush: RUSH });
+  const saved = saveReading(live.saturn, {
+    from: "the cart surveyed 2026-10-26 (test/panes/saturn.survey.json)",
+    level: "Test",
+    stage: 0,
+  });
+  assertEquals(saved.format, READING_FORMAT);
+  assert(isSavedReading(saved));
+  assert(!isSavedReading(SATURN));
+  assert(!isSavedReading(null));
+  // It survives a file.
+  const back = JSON.parse(JSON.stringify(saved)) as SavedReading;
+  const reading = loadReading(back);
+  assertEquals(reading.saved, saved.from);
+  assertEquals(
+    reading.firsts.get(128)!.scroll,
+    live.saturn.firsts.get(128)!.scroll,
+  );
+  assertEquals(reading.bullets.length, live.saturn.bullets.length);
+  assertEquals(reading.outside.size, live.saturn.outside.size);
+  // Bullets are kept as counts by kind and shooter.
+  assertEquals(
+    saved.bullets.reduce((n, k) => n + k.births, 0),
+    live.saturn.bullets.length,
+  );
+  const again = surveyReport({ saturn: back, web: WEB, rush: RUSH });
+  assertEquals(again.ok, live.ok);
+  assertEquals(again.failures, live.failures);
+  assertEquals(again.notJudged, live.notJudged);
+  assertEquals(
+    again.rows.map((r) => [r.entry.letter, r.status, r.delta, r.residual]),
+    live.rows.map((r) => [r.entry.letter, r.status, r.delta, r.residual]),
+  );
+  assertEquals(
+    again.kinds.map((k) => [k.what, k.art, k.saturn, k.web, k.note]),
+    live.kinds.map((k) => [k.what, k.art, k.saturn, k.web, k.note]),
+  );
+  // The report says which it was built from.
+  assert(again.markdown.includes("SAVED READING of the Saturn"));
+  assert(again.markdown.includes("| Source | cart (saved reading) | import |"));
+  assert(!live.markdown.includes("SAVED READING"));
+  assert(live.markdown.includes("`panes/saturn.survey.json`"));
+});
+
+Deno.test("the checked-in Ramsie reading is run 1's Saturn side", async () => {
+  const saved = JSON.parse(
+    await Deno.readTextFile(
+      new URL("../docs/parity-ramsie-saturn.reading.json", import.meta.url),
+    ),
+  ) as SavedReading;
+  assert(isSavedReading(saved));
+  const r = loadReading(saved);
+  // docs/parity-ramsie-survey.md: 18 records seen, 72 enemy bullets, the
+  // ground turret (record 52, key 208) first logged at scroll 787.
+  assertEquals(r.firsts.size, 18);
+  assertEquals(r.bullets.length, 72);
+  assertEquals(r.firsts.get(208)!.scroll, 787);
+  assertEquals(r.firsts.get(130)!.scroll, 340);
+  assertEquals([r.scrollFrom, r.scrollTo, r.seconds], [39, 2686, 60.1]);
+  assertEquals(
+    r.bullets.filter((b) => b.what === "type 0").length,
+    16,
+  );
+  for (const [pid, f] of r.firsts) {
+    assert(pid >= 128 && pid < 256, `key ${pid}`);
+    assert(typeof f.scroll === "number" && f.t > 0, `key ${pid}`);
+  }
+});
+
+Deno.test("a horizontal game's frame is its own window of the engine's axes", () => {
+  assertEquals(saturnFrame(false), { x0: 0, x1: 320, y0: 0, y1: 224 });
+  assertEquals(saturnFrame(true), { x0: 48, x1: 272, y0: -96, y1: 224 });
+  // An object parked at scroll coordinate -40 has exited a vertical game's
+  // frame; in a horizontal game that is on the screen, and its life runs on.
+  const samples: SaturnSample[] = [];
+  for (let i = 0; i <= 10; i++) {
+    samples.push(satSample(1000 + i * 100, 300 + 5 * i, [
+      [100, 67, 160, -40, 12800, 128, 0, 256, 0, 0],
+    ]));
+  }
+  const sat: SaturnSurveyFile = {
+    ...SATURN,
+    kept: [[1000, 2000]],
+    births: [satBirth(1000, 100, 67, 128, 300, { x: 160, y: -40 })],
+    samples,
+    n: samples.length,
+  };
+  const placed = roster(RUSH);
+  const targets = bigShotTargets(placed);
+  const v = readSaturn(sat, placed, targets);
+  const h = readSaturn(sat, placed, targets, { horizontal: true });
+  assertAlmostEquals(v.lives.get(128)![0], 0, 1e-9);
+  assertAlmostEquals(h.lives.get(128)![0], 1, 1e-9);
+});
+
+// --- T21, measured: ground starts and exits ----------------------------------
+
+Deno.test("a ground record's first position is set against where its own row stood", () => {
+  // W (record 52, band 5) is placed on row 46 — map px 736 — in column 14;
+  // row 60 places it again, later. The walker reaches row 46 at scroll 464.
+  const rush: RushRecord = {
+    ...RUSH,
+    enemylist: [
+      ["00", "A0", "00"],
+      [...Array(14).fill("00"), "W0"],
+      ["W0", "00"],
+    ],
+    waveRows: [20, 46, 60],
+  };
+  assertEquals(firstPlacements(rush).get("W"), { row: 46, col: 14 });
+  assertEquals(firstPlacements(rush).get("A"), { row: 20, col: 1 });
+  assertEquals(firstPlacements(rush, 1).size, 0);
+  // Another stage's cells live under stages.
+  assertEquals(
+    firstPlacements({
+      stages: { stage1: { enemylist: [["B1"]], waveRows: [7] } },
+    }, 1)
+      .get("B"),
+    { row: 7, col: 0 },
+  );
+  // The Saturn first logged W at scroll 525, y 283 (the fixture's numbers;
+  // Ramsie's are scroll 787): its row then stood at 224 - (736 - 525) = 13.
+  const web: WebSurveyFile = {
+    ...WEB,
+    field: "saturn",
+    births: [
+      ...WEB.births,
+      webBirth(4800, "enemy", 30, {
+        name: "deza0_52",
+        key: "W",
+        deza: 208,
+        y: -40,
+        frame: "deza0_52_0.gif",
+      }),
+    ],
+  };
+  const r = surveyReport({ saturn: SATURN, web, rush });
+  assertEquals(r.ground.length, 1);
+  const g = r.ground[0];
+  assertEquals([g.entry.letter, g.band, g.row, g.gate], ["W", 5, 46, 464]);
+  assertEquals(g.saturn, { scroll: 525, at: 283, rowAt: 13 });
+  // The web's birth at t 4800 is at scroll 300: the row is 212 px above the
+  // top (-212), the object 40 px above it.
+  assertEquals(g.web, { scroll: 300, at: -40, rowAt: -212 });
+  // W then stood still below the frame: that is where the Saturn parked it.
+  assertEquals(r.saturn.parks, [{ pid: 208, x: 240, y: 283 }]);
+  assertEquals(r.exits, [
+    { band: 5, edge: "exit edge", count: 1, min: 283, max: 283 },
+  ]);
+  const md = r.markdown;
+  assert(md.includes("## Ground starts and exits"), md);
+  assert(
+    md.includes(
+      "| W | 52 | 5 (32x64) | 46 | 464 | 525 / 283 / 13 / +270 | 300 / -40 / -212 / +172 |",
+    ),
+    md,
+  );
+  assert(md.includes("| 5 (32x64) | exit edge | 1 | 283.0 |"), md);
+  // Off a Saturn field the web's pixels are not the engine's: scroll only.
+  const tall = surveyReport({
+    saturn: SATURN,
+    web: { ...web, field: null },
+    rush,
+  });
+  assertEquals(tall.ground[0].web, { scroll: 300, at: null, rowAt: -212 });
+  // On a horizontal cart's field coordinate 0 is drawn 96 px down, and the
+  // walker's gate is 320 + 48 ahead.
+  const h = groundAndExits({
+    rush,
+    stage: 0,
+    placed: roster(rush),
+    saturn: r.saturn,
+    web: r.web,
+    field: "saturn-h",
+    horizontal: true,
+  });
+  assertEquals(h.ground[0].gate, 368);
+  assertEquals(h.ground[0].web!.at, -136);
+  // There the frame is lateral 48..272, scroll -96..224: y 283 is still
+  // past the exit edge.
+  assertEquals(h.exits[0].edge, "exit edge");
+});
+
+Deno.test("exits are grouped by art band and by the edge the object left over", () => {
+  const placed = roster(RUSH);
+  const base = surveyReport({ saturn: SATURN, web: WEB, rush: RUSH });
+  const saturn = {
+    ...base.saturn,
+    parks: [
+      { pid: 128, x: 100, y: 262.5 }, // band 0, under the exit edge
+      { pid: 129, x: 90, y: 264 },
+      { pid: 182, x: -20, y: 100 }, // band 3, off the low side
+      { pid: 132, x: 331.5, y: 40 }, // band 0, off the high side
+      { pid: 184, x: 160, y: -50 }, // band 3, back over the entry edge
+      { pid: 208, x: null, y: 315 }, // a transcribed reading: y alone
+      { pid: 128, x: 160, y: 100 }, // on the frame: no exit
+      { pid: 128, x: null, y: null },
+    ],
+  };
+  const { exits } = groundAndExits({
+    rush: RUSH,
+    stage: 0,
+    placed,
+    saturn,
+    web: base.web,
+    field: null,
+    horizontal: false,
+  });
+  assertEquals(exits, [
+    { band: 0, edge: "exit edge", count: 2, min: 262.5, max: 264 },
+    { band: 0, edge: "lateral high", count: 1, min: 331.5, max: 331.5 },
+    { band: 3, edge: "entry edge", count: 1, min: -50, max: -50 },
+    { band: 3, edge: "lateral low", count: 1, min: -20, max: -20 },
+    { band: 5, edge: "exit edge", count: 1, min: 315, max: 315 },
+  ]);
+  // A saved reading carries them; one saved before they were kept has none.
+  const saved = saveReading(saturn, { from: "test" });
+  assertEquals(loadReading(saved).parks.length, 8);
+  const { parks: _parks, ...older } = saved;
+  assertEquals(loadReading(older as SavedReading).parks, []);
 });

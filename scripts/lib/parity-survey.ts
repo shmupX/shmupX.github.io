@@ -164,6 +164,8 @@ export interface WebObj {
   name?: string | null;
   key?: string | null;
   deza?: number | null;
+  /** For a big shot built as an object: the key of the enemy that fired it. */
+  shotOf?: number | null;
   x: number;
   y: number;
   hp?: number;
@@ -201,6 +203,8 @@ export interface WebBirth {
   name?: string | null;
   key?: string | null;
   deza?: number | null;
+  /** For a big shot built as an object: the key of the enemy that fired it. */
+  shotOf?: number | null;
   x: number;
   y: number;
   hp?: number;
@@ -263,11 +267,18 @@ export function webSurvey(config: WebSurveyConfig): string {
         x: Math.round(o.x * 10) / 10, y: Math.round(o.y * 10) / 10, hp: data(o, "hp"), frame: frameName(o),
         sx: Math.round(o.scaleX * 100) / 100, sy: Math.round(o.scaleY * 100) / 100 };
       if (rec.deza === undefined) rec.deza = null;
+      // A type-3 "big shot" is an object of the record it is built from,
+      // wearing that record's key (spawnBigShot); the runtime remembers who
+      // fired it, which is what tells it from a placement of the same record.
+      var shotOf = data(o, "dezaBigShotOf");
+      if (shotOf !== undefined && shotOf !== null) rec.shotOf = shotOf;
       objs.push(rec); foes.push(rec);
       if (!seen[id]) {
         seen[id] = 1;
-        S.births.push({ t: now - S.t0, wall: now, kind: rec.kind, id: id, name: rec.name, key: rec.key, deza: rec.deza,
-          x: rec.x, y: rec.y, hp: rec.hp, frame: rec.frame, proj: texOf(data(o, "projData")), scroll: scroll, step: step });
+        var birth = { t: now - S.t0, wall: now, kind: rec.kind, id: id, name: rec.name, key: rec.key, deza: rec.deza,
+          x: rec.x, y: rec.y, hp: rec.hp, frame: rec.frame, proj: texOf(data(o, "projData")), scroll: scroll, step: step };
+        if (rec.shotOf !== undefined) birth.shotOf = rec.shotOf;
+        S.births.push(birth);
       }
     }
     var eb = sc.enemyBullets || [];

@@ -81,7 +81,12 @@ async function sandbox(): Promise<Sandbox> {
     "applyDezaScale",
   ].map((n) => functionSource(js, n)).join("\n");
   return new Function(
-    vars.join("\n") + "\n" + fns +
+    // The runtime's own 256x480 screen; tests/deza_field_mode_test.ts pins
+    // the same lines unscaled on the Saturn field (?field=saturn).
+    // DEZA_FIELD_SCROLL0 is where that field's scroll coordinate 0 is drawn:
+    // 0 on every screen but a horizontal cart's field.
+    "var DEZA_FIELD = false, DEZA_FIELD_SCROLL0 = 0;\n" + vars.join("\n") +
+      "\n" + fns +
       "\nreturn { channelTrigger, dezaBand, makeChannel, armChannels, stepChannel, applyDezaScale };",
   )() as Sandbox;
 }

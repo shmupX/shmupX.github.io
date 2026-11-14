@@ -16,6 +16,7 @@ import {
   MAX_STAGES,
   PLAYER_SHOT_DAMAGE_BY_LEVEL,
   SINGLE_LETTER_ENEMIES,
+  unitsToHp,
 } from "../src/map-to-game.js";
 import { PLAYER_FRAMES } from "../src/player-art.js";
 import { TROOPER_FRAMES, TROOPER_PLAYER } from "../src/player2-art.js";
@@ -367,10 +368,11 @@ Deno.test("boss part hp is sized onto the runtime's hit scale", () => {
   const fps = gameJson.bossData.boss0.dezaemon.boss.patterns[0].firePoints;
   // One divisor for the whole unit space, so every ratio the author wrote
   // survives: a turret stays its traced fraction of its own core.
-  assertStrictEquals(fps[0].spawn.hp, Math.ceil(2496000 / (20 * 256)));
+  // Unrounded since 2026-11-09 (unitsToHp): 2496000 / 5120 is 487.5.
+  assertStrictEquals(fps[0].spawn.hp, 2496000 / (20 * 256));
   assertStrictEquals(
     gameJson.bossData.boss0.hp,
-    Math.ceil(4608000 / (20 * 256)),
+    4608000 / (20 * 256),
   );
   assertStrictEquals(fps[0].spawn.hp / gameJson.bossData.boss0.hp < 0.55, true);
   // A mobile part is a zako — 51200 is ladder step 3, which every other zako
@@ -979,6 +981,67 @@ Deno.test("LIFE units convert through the engine's traced shot damage", () => {
     HP_UNITS.map((u) => Math.max(1, Math.ceil(u / (20 * 256)))),
     [1, 3, 5, 10, 20, 40, 50, 100],
   );
+  // The hp itself is the unrounded ratio; the flat shot's count above is what
+  // falls out of it.
+  assertEquals(
+    HP_UNITS.map((u) => unitsToHp(u, 20)),
+    [0.05, 2.5, 5, 10, 20, 40, 50, 100],
+  );
+});
+
+Deno.test("an imported enemy dies in ceil(units / attack) hits of every traced weapon level", () => {
+  // The importer used to round hp up to whole divisor steps while the
+  // runtime's Dezaemon weapons subtract units / divisor, a fraction. That
+  // added a hit wherever the two rounded differently: VULCAN B at OPTION 0
+  // (6656) took 3 shots on a 12800-unit enemy the Saturn kills in 2, and at
+  // OPTION 2-4 a 256-unit enemy took 2. This replays the runtime's own
+  // arithmetic — hp -= attack / (shotDamage * 256), dead at <= 1e-9
+  // (DEZA_HP_EPS in game.bundle.js) — over the eight LIFE steps, each level of
+  // every one-hit table, and both divisors a cart can carry.
+  const HP_UNITS = [256, 12800, 25600, 51200, 102400, 204800, 256000, 512000];
+  const TABLES = {
+    "VULCAN A": [7680, 6656, 5632, 4608, 3584],
+    "VULCAN B": [6656, 5632, 4608, 3584, 2560],
+    "MISSILE": [15360, 13312, 11264, 9216, 7168],
+    "BOUND": [8960, 7680, 6656, 5888, 5376],
+    "H-MISSILE": [13312, 11264, 9216, 7168, 5120],
+    "S-MISSILE": [19712, 17664, 15616, 13568, 11520],
+    // per-frame tables bill the same subtraction once a frame
+    "G-MISSILE": [256, 224, 192, 160, 128],
+    "RF-LASER": [1024, 1056, 1088, 1120, 1152],
+  };
+  for (const shotDamage of [20, 45]) {
+    const decoded = emptyDecoded();
+    decoded.settings = { ...decodeSettingsStub(), shotDamage };
+    decoded.enemies = HP_UNITS.map((hp, i) => ({
+      index: i,
+      sizeClass: 0,
+      behavior: { hp, score: 100, fire: { enabled: false } },
+    }));
+    const { gameJson } = mapSaveToGame(decoded);
+    const hps = Object.values(gameJson.enemyData).map((r) => r.hp);
+    assertEquals(hps, HP_UNITS.map((u) => u / (shotDamage * 256)));
+    for (const [name, table] of Object.entries(TABLES)) {
+      for (const [level, attack] of table.entries()) {
+        for (const [i, units] of HP_UNITS.entries()) {
+          let hp = hps[i];
+          let hits = 0;
+          while (hp > 1e-9) {
+            hp -= attack / (shotDamage * 256);
+            hits++;
+          }
+          assertStrictEquals(
+            hits,
+            Math.ceil(units / attack),
+            `${name} L${level} on ${units} at divisor ${shotDamage * 256}`,
+          );
+        }
+      }
+    }
+  }
+  // Ramsie's D (25600): four VULCAN B bullets at OPTION 0, two H-MISSILEs.
+  assertStrictEquals(Math.ceil(25600 / 6656), 4);
+  assertStrictEquals(Math.ceil(25600 / 13312), 2);
 });
 
 Deno.test("a boss takes the zako's divisor, not a discounted one", () => {
@@ -1033,7 +1096,7 @@ Deno.test("a boss takes the zako's divisor, not a discounted one", () => {
   heavier.bosses = decoded.bosses;
   assertStrictEquals(
     mapSaveToGame(heavier).gameJson.bossData.boss0.hp,
-    Math.ceil(4608000 / (45 * 256)),
+    4608000 / (45 * 256),
   );
 });
 

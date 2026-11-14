@@ -1,10 +1,12 @@
 :root {
-  --green: #9CFF6B;
-  --green-glow: #7CFF4F;
-  --green-deep: #0e6a2b;
-  --yellow: #F6FF4A;
-  --yellow-hot: #FFEE5A;
-  --tile-edge: rgba(140, 255, 110, .55);
+  /* Legacy names, kept so existing rules and the OSD read the house tokens
+     (static/house-style.css). New rules use the tokens directly. */
+  --green: var(--accent);
+  --green-glow: var(--accent-glow);
+  --green-deep: var(--accent-deep);
+  --yellow: var(--select);
+  --yellow-hot: var(--select-hot);
+  --tile-edge: var(--line-hi);
   --breathe-mult: 1; /* OSD "Breathe speed" tweak scales the breathe animations */
 }
 
@@ -13,9 +15,9 @@
 html, body, #app-root {
   height: 100%;
   margin: 0;
-  background: #000;
+  background: var(--bg);
   color: var(--green);
-  font-family: 'Orbitron', sans-serif;
+  font-family: var(--font-display);
   overflow: hidden;
   user-select: none;
   -webkit-font-smoothing: antialiased;
@@ -23,8 +25,8 @@ html, body, #app-root {
 
 body {
   background:
-    radial-gradient(ellipse 80% 60% at 38% 55%, rgba(20, 90, 40, .45), transparent 70%),
-    radial-gradient(ellipse 60% 70% at 50% 50%, rgba(8, 40, 18, .85), #000 80%);
+    radial-gradient(ellipse 80% 60% at 38% 55%, oklch(0.413 0.105 calc(var(--h) + 19) / 0.45), transparent 70%),
+    radial-gradient(ellipse 60% 70% at 50% 50%, oklch(0.247 0.056 calc(var(--h) + 20) / 0.85), #000 80%);
   background-color: #000;
 }
 
@@ -56,7 +58,7 @@ body.no-cursor.pad-on * { cursor: none !important; }
 @keyframes meshSpin { to { transform: rotate(360deg); } }
 
 /* Scan + vignette */
-.scan { position: fixed; inset: 0; pointer-events: none; z-index: 50; background: repeating-linear-gradient(180deg, rgba(0, 255, 120, .035) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+.scan { position: fixed; inset: 0; pointer-events: none; z-index: 50; background: repeating-linear-gradient(180deg, oklch(0.874 0.241 calc(var(--h) + 20) / 0.035) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
 body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 51; background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, .88) 100%); }
 .noise { position: fixed; inset: 0; pointer-events: none; z-index: 49; opacity: .05; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0.7  0 0 0 0 1  0 0 0 0 0.5  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); }
@@ -67,10 +69,10 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .topbar {
   position: absolute; left: 5vmin; top: 3vmin; right: 5vmin;
   display: flex; justify-content: space-between; align-items: center;
-  font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 1.4vmin, 15px); color: rgba(180, 255, 140, .7);
+  font-family: var(--font-mono); font-size: var(--t-small); color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.7);
   letter-spacing: .2em; text-transform: uppercase; z-index: 3;
 }
-.topbar .brand { display: flex; align-items: center; gap: .7em; color: rgba(220, 255, 180, .85); }
+.topbar .brand { display: flex; align-items: center; gap: .7em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.85); }
 .topbar .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green-glow); box-shadow: 0 0 10px var(--green-glow); animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .topbar .right { display: flex; gap: 2em; }
@@ -96,20 +98,20 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   animation: breathe calc(5.2s / var(--breathe-mult, 1)) ease-in-out infinite;
 }
 @keyframes breathe {
-  0%, 100% { filter: drop-shadow(0 0 28px rgba(120, 255, 80, .45)) drop-shadow(0 0 80px rgba(60, 220, 90, .35)); transform: scale(1); }
-  50% { filter: drop-shadow(0 0 60px rgba(180, 255, 120, .85)) drop-shadow(0 0 140px rgba(80, 255, 120, .55)); transform: scale(1.035); }
+  0%, 100% { filter: drop-shadow(0 0 28px oklch(0.891 0.242 calc(var(--h) + 9) / 0.45)) drop-shadow(0 0 80px oklch(0.787 0.216 calc(var(--h) + 16) / 0.35)); transform: scale(1); }
+  50% { filter: drop-shadow(0 0 60px oklch(0.923 0.183 calc(var(--h) + 3) / 0.85)) drop-shadow(0 0 140px oklch(0.883 0.228 calc(var(--h) + 17) / 0.55)); transform: scale(1.035); }
 }
 .orb .core {
   position: absolute; inset: 14%; border-radius: 50%;
-  background: radial-gradient(circle at 38% 38%, #f9ffd0 0%, #d6ff7a 13%, #7CFF4F 35%, #2ea14b 60%, #093a16 86%, #000 100%);
-  box-shadow: inset -10px -20px 60px rgba(0, 0, 0, .55), inset 20px 30px 80px rgba(255, 255, 200, .35), 0 0 60px rgba(110, 255, 90, .5);
+  background: radial-gradient(circle at 38% 38%, #f9ffd0 0%, oklch(0.944 0.166 calc(var(--h) - 6)) 13%, oklch(0.892 0.241 calc(var(--h) + 9)) 35%, oklch(0.626 0.160 calc(var(--h) + 18)) 60%, var(--surface-hi) 86%, #000 100%);
+  box-shadow: inset -10px -20px 60px rgba(0, 0, 0, .55), inset 20px 30px 80px rgba(255, 255, 200, .35), 0 0 60px oklch(0.888 0.240 calc(var(--h) + 11) / 0.5);
   animation: coreShift 8s ease-in-out infinite;
 }
 @keyframes coreShift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(1%, -1%) scale(1.02); } }
-.orb .ring { position: absolute; inset: -6%; border: 1px solid rgba(160, 255, 120, .4); border-radius: 50%; box-shadow: inset 0 0 30px rgba(120, 255, 90, .18), 0 0 30px rgba(120, 255, 90, .18); }
+.orb .ring { position: absolute; inset: -6%; border: 1px solid oklch(0.912 0.193 calc(var(--h) + 7) / 0.4); border-radius: 50%; box-shadow: inset 0 0 30px oklch(0.892 0.236 calc(var(--h) + 10) / 0.18), 0 0 30px oklch(0.892 0.236 calc(var(--h) + 10) / 0.18); }
 .orb .ring.a { animation: rA 14s linear infinite; }
-.orb .ring.b { inset: -15%; border-color: rgba(120, 255, 80, .22); animation: rB 20s linear infinite reverse; }
-.orb .ring.c { inset: -25%; border-color: rgba(120, 255, 80, .12); animation: rC 28s linear infinite; }
+.orb .ring.b { inset: -15%; border-color: oklch(0.891 0.242 calc(var(--h) + 9) / 0.22); animation: rB 20s linear infinite reverse; }
+.orb .ring.c { inset: -25%; border-color: oklch(0.891 0.242 calc(var(--h) + 9) / 0.12); animation: rC 28s linear infinite; }
 @keyframes rA { 0% { transform: rotateX(72deg) rotateZ(0); } 100% { transform: rotateX(72deg) rotateZ(360deg); } }
 @keyframes rB { 0% { transform: rotateX(58deg) rotateY(20deg) rotateZ(0); } 100% { transform: rotateX(58deg) rotateY(20deg) rotateZ(360deg); } }
 @keyframes rC { 0% { transform: rotateX(35deg) rotateY(-15deg) rotateZ(0); } 100% { transform: rotateX(35deg) rotateY(-15deg) rotateZ(360deg); } }
@@ -121,7 +123,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 @keyframes glyphFloat { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-2%) rotate(3deg); } }
 .orb::before, .orb::after {
   content: ""; position: absolute; inset: -25%; pointer-events: none; filter: blur(20px);
-  background: radial-gradient(ellipse 60% 30% at 50% 40%, rgba(120, 255, 90, .2), transparent 70%);
+  background: radial-gradient(ellipse 60% 30% at 50% 40%, oklch(0.892 0.236 calc(var(--h) + 10) / 0.2), transparent 70%);
   animation: wisp 9s ease-in-out infinite;
 }
 .orb::after { animation-delay: -4s; transform: rotate(45deg); }
@@ -144,54 +146,54 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 }
 .node::before {
   content: ""; position: absolute; inset: 18%; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #fff 0%, #d4ff8a 18%, var(--green) 45%, #1c5b2a 75%, #061b0c 100%);
-  box-shadow: 0 0 22px rgba(140, 255, 90, .55), inset -3px -6px 14px rgba(0, 0, 0, .5);
+  background: radial-gradient(circle at 35% 30%, var(--ink-hi) 0%, oklch(0.945 0.152 calc(var(--h) - 4)) 18%, var(--green) 45%, oklch(0.418 0.102 calc(var(--h) + 18)) 75%, var(--surface) 100%);
+  box-shadow: 0 0 22px oklch(0.900 0.226 calc(var(--h) + 8) / 0.55), inset -3px -6px 14px rgba(0, 0, 0, .5);
   transition: background .25s ease, box-shadow .25s ease;
 }
 .node::after {
   content: ""; position: absolute; inset: 0; border-radius: 50%;
-  border: 1.5px solid rgba(140, 255, 110, .55);
-  box-shadow: inset 0 0 14px rgba(140, 255, 110, .22), 0 0 18px rgba(120, 255, 90, .25);
+  border: 1.5px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.55);
+  box-shadow: inset 0 0 14px oklch(0.902 0.212 calc(var(--h) + 10) / 0.22), 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.25);
   transition: border-color .25s ease, box-shadow .25s ease;
 }
 .item.sel .node::before {
   background: radial-gradient(circle at 35% 30%, #fffacc 0%, #fff36a 20%, var(--yellow) 50%, #8c7a00 80%, #2b2400 100%);
-  box-shadow: 0 0 28px rgba(255, 240, 90, .75), inset -3px -6px 14px rgba(0, 0, 0, .5);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--select-hot) 75%, transparent), inset -3px -6px 14px rgba(0, 0, 0, .5);
 }
-.item.sel .node::after { border-color: rgba(255, 240, 90, .85); box-shadow: inset 0 0 16px rgba(255, 240, 90, .35), 0 0 26px rgba(255, 240, 90, .4); }
+.item.sel .node::after { border-color: color-mix(in srgb, var(--select-hot) 85%, transparent); box-shadow: inset 0 0 16px color-mix(in srgb, var(--select-hot) 35%, transparent), 0 0 26px color-mix(in srgb, var(--select-hot) 40%, transparent); }
 
 .bar {
   position: relative; flex: 1; height: 100%;
   display: flex; align-items: center; padding: 0 5vmin 0 4vmin;
-  color: #dfffc4;
-  font-weight: 700; font-size: clamp(20px, 3.4vmin, 38px); letter-spacing: .2em;
-  background: linear-gradient(180deg, rgba(70, 180, 90, .08), rgba(20, 60, 30, .55) 35%, rgba(20, 60, 30, .55) 65%, rgba(70, 180, 90, .08));
+  color: var(--ink);
+  font-weight: 700; font-size: var(--t-title); letter-spacing: .2em;
+  background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.08), color-mix(in srgb, var(--surface-hi) 55%, transparent) 35%, color-mix(in srgb, var(--surface-hi) 55%, transparent) 65%, oklch(0.686 0.163 calc(var(--h) + 17) / 0.08));
   border: 1px solid var(--tile-edge); border-left: none;
   clip-path: polygon(0 0, calc(100% - 4vmin) 0, 100% 50%, calc(100% - 4vmin) 100%, 0 100%);
-  box-shadow: inset 0 0 0 1px rgba(140, 255, 110, .08), inset 0 2px 0 rgba(180, 255, 140, .18), inset 0 -2px 0 rgba(180, 255, 140, .08), 0 0 24px rgba(50, 200, 80, .2);
+  box-shadow: inset 0 0 0 1px oklch(0.902 0.212 calc(var(--h) + 10) / 0.08), inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.18), inset 0 -2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.08), 0 0 24px oklch(0.731 0.203 calc(var(--h) + 16) / 0.2);
   transition: background .25s ease, color .25s ease, box-shadow .25s ease;
 }
 .bar::before {
   content: ""; position: absolute; left: 0; right: 6%; top: 50%; height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(160, 255, 110, .4), transparent);
+  background: linear-gradient(90deg, transparent, oklch(0.911 0.202 calc(var(--h) + 6) / 0.4), transparent);
 }
-.bar .num { margin-left: auto; font-family: 'Share Tech Mono', monospace; font-size: .55em; color: rgba(220, 255, 180, .55); letter-spacing: .08em; }
+.bar .num { margin-left: auto; font-family: var(--font-mono); font-size: .55em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); letter-spacing: .08em; }
 
 .item.sel .bar {
   color: #0a0a06;
   background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 25%, #d8e640 60%, #a4b00b 100%);
   border-color: #fff36a;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 180, .5), inset 0 2px 0 rgba(255, 255, 220, .7), inset 0 -2px 0 rgba(150, 140, 0, .4), 0 0 40px rgba(255, 240, 90, .5), 0 0 80px rgba(255, 240, 90, .2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 180, .5), inset 0 2px 0 rgba(255, 255, 220, .7), inset 0 -2px 0 rgba(150, 140, 0, .4), 0 0 40px color-mix(in srgb, var(--select-hot) 50%, transparent), 0 0 80px color-mix(in srgb, var(--select-hot) 20%, transparent);
 }
 .item.sel .bar .num { color: rgba(60, 50, 0, .7); }
 .item:hover:not(.sel) .bar {
-  background: linear-gradient(180deg, rgba(120, 230, 140, .18), rgba(40, 110, 55, .7) 35%, rgba(40, 110, 55, .7) 65%, rgba(120, 230, 140, .18));
-  color: #f7ffe6;
-  box-shadow: inset 0 2px 0 rgba(190, 255, 150, .32), 0 0 32px rgba(80, 220, 100, .35);
+  background: linear-gradient(180deg, oklch(0.838 0.161 calc(var(--h) + 18) / 0.18), oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 35%, oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 65%, oklch(0.838 0.161 calc(var(--h) + 18) / 0.18));
+  color: oklch(0.987 0.034 calc(var(--h) - 9));
+  box-shadow: inset 0 2px 0 oklch(0.933 0.150 calc(var(--h) + 4) / 0.32), 0 0 32px oklch(0.793 0.202 calc(var(--h) + 16) / 0.35);
 }
 .item .tag {
-  position: absolute; left: 0; top: -1.4em; font-family: 'Share Tech Mono'; font-size: clamp(10px, 1.2vmin, 13px);
-  color: rgba(180, 255, 140, .5); letter-spacing: .2em; text-transform: uppercase;
+  position: absolute; left: 0; top: -1.4em; font-family: var(--font-mono); font-size: clamp(10px, 1.2vmin, 13px);
+  color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.5); letter-spacing: .2em; text-transform: uppercase;
 }
 
 /* === Footer === */
@@ -200,11 +202,11 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    touch lands on .games-panel and the footer's onpointerup never fires (PR #27's
    handler is correct but unreachable). Stays below .game-iframe (99, outside
    .stage) so the footers remain hidden while a game is playing. */
-.footer { position: absolute; right: 5vmin; bottom: 4vmin; z-index: 6; display: flex; align-items: center; gap: 1vmin; font-family: 'Share Tech Mono'; letter-spacing: .2em; color: #dfffc4; text-transform: uppercase; font-size: clamp(12px, 1.5vmin, 16px); }
+.footer { position: absolute; right: 5vmin; bottom: 4vmin; z-index: 6; display: flex; align-items: center; gap: 1vmin; font-family: var(--font-mono); letter-spacing: .2em; color: var(--ink); text-transform: uppercase; font-size: clamp(12px, 1.5vmin, 16px); }
 .footer.left { left: 5vmin; right: auto; }
 /* Update hint sits left of the A action, centred, without a transform (so the
    .footer.tap:active scale stays intact). */
-.footer.upd { left: 50%; right: auto; margin-left: -7vmin; color: #5effc8; }
+.footer.upd { left: 50%; right: auto; margin-left: -7vmin; color: oklch(0.901 0.156 calc(var(--h) + 37)); }
 .footer.tap { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
 .footer.tap:active { transform: scale(.96); }
 .footer.tap:active .btn-hint { filter: brightness(1.2); }
@@ -249,40 +251,40 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   width: 19vmin; height: 19vmin; max-width: 220px; max-height: 220px; min-width: 140px; min-height: 140px;
   border-radius: 50%; position: relative;
   background:
-    radial-gradient(circle at 50% 50%, #000 0%, #061a0b 22%, transparent 23%),
-    conic-gradient(from 0deg, rgba(120, 255, 90, .55), rgba(60, 180, 80, .25), rgba(120, 255, 90, .55) 60%, rgba(60, 180, 80, .25), rgba(120, 255, 90, .55));
-  box-shadow: 0 0 35px rgba(120, 255, 90, .45), inset 0 0 40px rgba(0, 0, 0, .65);
+    radial-gradient(circle at 50% 50%, #000 0%, var(--surface) 22%, transparent 23%),
+    conic-gradient(from 0deg, oklch(0.892 0.236 calc(var(--h) + 10) / 0.55), oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.892 0.236 calc(var(--h) + 10) / 0.55) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.892 0.236 calc(var(--h) + 10) / 0.55));
+  box-shadow: 0 0 35px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 0 40px rgba(0, 0, 0, .65);
   animation: spin 9s linear infinite;
 }
-.disc::before { content: ""; position: absolute; inset: 38%; border-radius: 50%; background: radial-gradient(circle, #fffec5, var(--yellow) 30%, #6e7b00 70%, #1a1d00 100%); box-shadow: 0 0 25px rgba(255, 240, 90, .6); }
+.disc::before { content: ""; position: absolute; inset: 38%; border-radius: 50%; background: radial-gradient(circle, #fffec5, var(--yellow) 30%, #6e7b00 70%, #1a1d00 100%); box-shadow: 0 0 25px color-mix(in srgb, var(--select-hot) 60%, transparent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .meta {
-  width: 100%; border: 1px solid rgba(140, 255, 110, .45);
-  background: linear-gradient(180deg, rgba(40, 110, 55, .5), rgba(15, 50, 25, .7));
-  padding: 1.4vmin 1.8vmin; font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.4vmin, 15px); line-height: 1.6;
-  color: #e7ffce; letter-spacing: .05em;
+  width: 100%; border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.45);
+  background: linear-gradient(180deg, oklch(0.480 0.111 calc(var(--h) + 18) / 0.5), oklch(0.284 0.061 calc(var(--h) + 20) / 0.7));
+  padding: 1.4vmin 1.8vmin; font-family: var(--font-mono); font-size: var(--t-small); line-height: 1.6;
+  color: oklch(0.970 0.069 calc(var(--h) - 1)); letter-spacing: .05em;
 }
-.meta .k { color: rgba(180, 255, 140, .55); margin-right: .5em; }
-.meta b { color: #fff; letter-spacing: .08em; }
+.meta .k { color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.55); margin-right: .5em; }
+.meta b { color: var(--ink-hi); letter-spacing: .08em; }
 
 .games-right { display: flex; flex-direction: column; gap: 1.6vmin; height: 100%; min-width: 0; min-height: 0; }
 .games-header { display: flex; align-items: center; gap: 1.6vmin; height: 8.5vmin; max-height: 88px; min-height: 64px; }
 .title-bar {
   flex: 1; height: 100%; min-width: 0;
-  background: linear-gradient(180deg, rgba(70, 180, 90, .18), rgba(20, 60, 30, .7) 50%, rgba(20, 60, 30, .7) 50%, rgba(70, 180, 90, .05));
+  background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.18), color-mix(in srgb, var(--surface-hi) 70%, transparent) 50%, color-mix(in srgb, var(--surface-hi) 70%, transparent) 50%, oklch(0.686 0.163 calc(var(--h) + 17) / 0.05));
   border: 1px solid var(--tile-edge);
   clip-path: polygon(0 0, calc(100% - 3vmin) 0, 100% 50%, calc(100% - 3vmin) 100%, 0 100%, 3vmin 50%);
   display: flex; align-items: center; justify-content: center;
-  color: #dfffc4; font-weight: 800; font-size: clamp(13px, 3.6vmin, 42px); letter-spacing: .22em;
+  color: var(--ink); font-weight: 800; font-size: clamp(13px, 3.6vmin, 42px); letter-spacing: .22em;
   white-space: nowrap; overflow: hidden;
-  text-shadow: 0 0 18px rgba(120, 255, 90, .55);
-  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .2), 0 0 30px rgba(50, 200, 80, .22);
+  text-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.55);
+  box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.2), 0 0 30px oklch(0.731 0.203 calc(var(--h) + 16) / 0.22);
   padding: 0 4vmin;
   /* .dim rides in and out on every Up/Down between the strip and the list. */
   transition: color .25s ease, border-color .25s ease;
 }
-.counter { font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.5vmin, 16px); letter-spacing: .14em; color: rgba(220, 255, 180, .7); text-transform: uppercase; min-width: 5em; text-align: right; flex-shrink: 0; }
+.counter { font-family: var(--font-mono); font-size: clamp(11px, 1.5vmin, 16px); letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); text-transform: uppercase; min-width: 5em; text-align: right; flex-shrink: 0; }
 /* The eShop's release-status filter: chips between the title and the counter.
    ◀ ▶ cycles them, a tap picks one; the lit chip is the filter in force. A
    long row scrolls sideways on a phone rather than pushing the counter out. */
@@ -292,22 +294,22 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    launcher): out of the way, still in the row so nothing else moves. */
 .eshop-filters.tucked { opacity: 0; transform: translateX(1.5vmin); pointer-events: none; }
 .eshop-filter {
-  font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.4vmin, 15px); letter-spacing: .16em;
+  font-family: var(--font-mono); font-size: clamp(10px, 1.4vmin, 15px); letter-spacing: .16em;
   padding: .5em 1em; border-radius: 3px; white-space: nowrap; cursor: pointer; flex-shrink: 0;
-  border: 1px solid rgba(180, 255, 140, .3); color: rgba(220, 255, 180, .7); background: rgba(0, 0, 0, .25);
+  border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.3); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); background: rgba(0, 0, 0, .25);
   transition: color .15s ease, background .15s ease, border-color .15s ease;
 }
-.eshop-filter:hover { border-color: rgba(180, 255, 140, .6); color: #dfffc4; }
+.eshop-filter:hover { border-color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.6); color: var(--ink); }
 .eshop-filter.on { color: #1a1400; background: #ffe06a; border-color: #ffe06a; }
 .eshop-filter:focus-visible { outline: 2px solid #ffe06a; outline-offset: 2px; }
 /* Settings › AVATAR: the free-entry field at the end of the row. */
 .avatar-input {
   flex-shrink: 0; width: 3.2em; height: 2.2em; margin-right: 1.5vmin;
-  font: inherit; font-size: clamp(16px, 2.6vmin, 30px); text-align: center; line-height: 1;
-  color: #dfffc4; background: rgba(0, 0, 0, .35); border: 1px solid rgba(180, 255, 140, .35); border-radius: 4px;
+  font: inherit; font-size: var(--t-head); text-align: center; line-height: 1;
+  color: var(--ink); background: rgba(0, 0, 0, .35); border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.35); border-radius: 4px;
 }
 .avatar-input:focus { outline: none; border-color: #ffe06a; box-shadow: 0 0 12px rgba(255, 224, 106, .4); }
-.game-row.sel .avatar-input { color: #1a1400; background: rgba(255, 255, 255, .35); border-color: rgba(20, 20, 0, .45); }
+.game-row.sel .avatar-input { color: #1a1400; background: color-mix(in srgb, var(--ink-hi) 35%, transparent); border-color: rgba(20, 20, 0, .45); }
 /* Settings › BUILD SERVER: the pairing code as something a camera can read,
    in the row beside the letters. On a white ground whatever the theme — a
    phone's scanner wants the contrast that way round — and sized to stay
@@ -315,7 +317,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .pair-qr {
   flex-shrink: 0; width: clamp(56px, 9vmin, 104px); height: clamp(56px, 9vmin, 104px);
   margin-right: 1.5vmin; padding: 3px; box-sizing: border-box;
-  background: #fff; border-radius: 3px; line-height: 0;
+  background: var(--ink-hi); border-radius: 3px; line-height: 0;
 }
 .pair-qr svg { display: block; width: 100%; height: 100%; }
 /* The catalog header carries a third element (the Add button), so the title
@@ -340,18 +342,18 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   width: 7.4vmin; height: 7.4vmin; max-width: 72px; max-height: 72px; min-width: 54px; min-height: 54px;
   flex-shrink: 0; position: relative; border-radius: 50%;
   background:
-    radial-gradient(circle at 50% 50%, #061a0b 25%, transparent 26%),
-    conic-gradient(from 30deg, rgba(140, 255, 90, .7), rgba(60, 180, 80, .25), rgba(140, 255, 90, .7) 60%, rgba(60, 180, 80, .25), rgba(140, 255, 90, .7));
-  box-shadow: 0 0 18px rgba(120, 255, 90, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+    radial-gradient(circle at 50% 50%, var(--surface) 25%, transparent 26%),
+    conic-gradient(from 30deg, oklch(0.900 0.226 calc(var(--h) + 8) / 0.7), oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7));
+  box-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 14px rgba(0, 0, 0, .55);
   display: flex; align-items: center; justify-content: center;
 }
 .game-icon .glass {
-  position: absolute; inset: 14%; border-radius: 50%; background: #0a1a0e;
+  position: absolute; inset: 14%; border-radius: 50%; background: var(--surface);
   display: flex; align-items: center; justify-content: center; overflow: hidden;
-  box-shadow: inset 0 0 12px rgba(120, 255, 90, .4), 0 0 0 2px rgba(140, 255, 110, .75);
+  box-shadow: inset 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.4), 0 0 0 2px oklch(0.902 0.212 calc(var(--h) + 10) / 0.75);
 }
-.game-icon .glass img { width: 88%; height: 88%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
-.game-icon .glass .ph { color: #bdf48c; font-weight: 800; font-size: clamp(16px, 2.2vmin, 22px); text-shadow: 0 0 10px rgba(120, 255, 90, .7); letter-spacing: .05em; }
+.game-icon .glass img { width: 88%; height: 88%; object-fit: contain; filter: drop-shadow(0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.55)); }
+.game-icon .glass .ph { color: oklch(0.906 0.145 calc(var(--h) + 2)); font-weight: 800; font-size: clamp(16px, 2.2vmin, 22px); text-shadow: 0 0 10px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7); letter-spacing: .05em; }
 
 /* Submenu / category tiles (Demos, CMG Network, PlayStation, …): a small folder
    holding a couple of game discs — signalling "a collection of games" rather
@@ -363,7 +365,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .submenu-icon {
   width: 7.4vmin; height: 7.4vmin; max-width: 72px; max-height: 72px; min-width: 54px; min-height: 54px;
   flex-shrink: 0; position: relative;
-  filter: drop-shadow(0 0 16px rgba(120, 255, 90, .5));
+  filter: drop-shadow(0 0 16px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5));
 }
 /* The square box every percentage below is measured against. It exists as its
    own element so a theme that reshapes the tile — theme-nintendo turns it into
@@ -374,7 +376,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .submenu-art .folder {
   position: absolute; left: 7%; right: 7%; top: 32%; bottom: 7%; z-index: 1;
   border-radius: 14%; border: 1px solid var(--tile-edge);
-  background: linear-gradient(165deg, #0c4420, #061a0b);
+  background: linear-gradient(165deg, oklch(0.342 0.084 calc(var(--h) + 21)), var(--surface));
   box-shadow: inset 0 0 10px rgba(0, 0, 0, .55);
 }
 /* No folder tab: at this geometry the back disc's circle covers all four of its
@@ -383,46 +385,46 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    rising out of the folder body already read as "a collection of games". */
 .submenu-art .sub-disc {
   position: absolute; width: 44%; height: 44%; border-radius: 50%; z-index: 2;
-  border: 1px solid rgba(140, 255, 110, .7);
-  box-shadow: 0 0 6px rgba(120, 255, 90, .5), inset 0 0 6px rgba(0, 0, 0, .55);
+  border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.7);
+  box-shadow: 0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 6px rgba(0, 0, 0, .55);
   background:
-    radial-gradient(circle at 50% 50%, #061a0b 24%, transparent 25%),
-    conic-gradient(from 30deg, rgba(140, 255, 90, .85), rgba(60, 180, 80, .3), rgba(140, 255, 90, .85) 60%, rgba(60, 180, 80, .3), rgba(140, 255, 90, .85));
+    radial-gradient(circle at 50% 50%, var(--surface) 24%, transparent 25%),
+    conic-gradient(from 30deg, oklch(0.900 0.226 calc(var(--h) + 8) / 0.85), oklch(0.681 0.176 calc(var(--h) + 16) / 0.3), oklch(0.900 0.226 calc(var(--h) + 8) / 0.85) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.3), oklch(0.900 0.226 calc(var(--h) + 8) / 0.85));
 }
 .submenu-art .sub-disc-back { left: 11%; top: 7%; }
 .submenu-art .sub-disc-front { right: 9%; top: 17%; }
 .submenu-art::after { /* folder front flap — tucks the discs into the folder */
   content: ''; position: absolute; left: 7%; right: 7%; bottom: 7%; height: 40%; z-index: 3;
-  border-radius: 0 0 14% 14%; border: 1px solid var(--tile-edge); border-top: 1.5px solid rgba(170, 255, 130, .85);
-  background: linear-gradient(180deg, #1b6e34, #0a3318);
-  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .22);
+  border-radius: 0 0 14% 14%; border: 1px solid var(--tile-edge); border-top: 1.5px solid oklch(0.919 0.179 calc(var(--h) + 7) / 0.85);
+  background: linear-gradient(180deg, oklch(0.475 0.119 calc(var(--h) + 19)), oklch(0.285 0.066 calc(var(--h) + 21)));
+  box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.22);
 }
-.game-row.sel .submenu-icon { filter: drop-shadow(0 0 22px rgba(255, 240, 90, .7)); }
-.game-row.sel .submenu-art .sub-disc { border-color: rgba(255, 240, 90, .9); box-shadow: 0 0 8px rgba(255, 240, 90, .5), inset 0 0 6px rgba(0, 0, 0, .5); }
+.game-row.sel .submenu-icon { filter: drop-shadow(0 0 22px color-mix(in srgb, var(--select-hot) 70%, transparent)); }
+.game-row.sel .submenu-art .sub-disc { border-color: color-mix(in srgb, var(--select-hot) 90%, transparent); box-shadow: 0 0 8px color-mix(in srgb, var(--select-hot) 50%, transparent), inset 0 0 6px rgba(0, 0, 0, .5); }
 .game-row.sel .submenu-art .folder,
-.game-row.sel .submenu-art::after { border-color: rgba(255, 240, 90, .85); }
+.game-row.sel .submenu-art::after { border-color: color-mix(in srgb, var(--select-hot) 85%, transparent); }
 .game-row.sel .submenu-art::after { border-top-color: #fff36a; }
 
 .game-bar {
   flex: 1; height: 100%;
-  background: linear-gradient(180deg, rgba(70, 180, 90, .08), rgba(20, 60, 30, .55) 50%, rgba(20, 60, 30, .55) 50%, rgba(70, 180, 90, .05));
+  background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.08), color-mix(in srgb, var(--surface-hi) 55%, transparent) 50%, color-mix(in srgb, var(--surface-hi) 55%, transparent) 50%, oklch(0.686 0.163 calc(var(--h) + 17) / 0.05));
   border: 1px solid var(--tile-edge);
   clip-path: polygon(0 0, calc(100% - 3vmin) 0, 100% 50%, calc(100% - 3vmin) 100%, 0 100%);
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 4vmin 0 3vmin; color: #dfffc4; font-weight: 600;
+  padding: 0 4vmin 0 3vmin; color: var(--ink); font-weight: 600;
   font-size: clamp(15px, 2.1vmin, 22px); letter-spacing: .14em;
-  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .16), 0 0 18px rgba(50, 200, 80, .15);
+  box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.16), 0 0 18px oklch(0.731 0.203 calc(var(--h) + 16) / 0.15);
   transition: background .25s ease, color .25s ease, box-shadow .25s ease;
   min-width: 0;
 }
-.game-bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 0 10px rgba(80, 220, 100, .3); }
+.game-bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 0 10px oklch(0.793 0.202 calc(var(--h) + 16) / 0.3); }
 /* The subtitle yields first when the bar is too narrow (huge shrink factor +
    min-width:0 so it can go below its text width). Without it the nowrap sub
    holds its full width and the name — the thing you are actually picking —
    collapses to a single letter and an ellipsis. */
-.game-bar .sub { font-family: 'Share Tech Mono'; font-weight: 400; font-size: .7em; color: rgba(220, 255, 180, .55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.game-row.sel .game-icon { box-shadow: 0 0 28px rgba(255, 240, 90, .7), inset 0 0 14px rgba(0, 0, 0, .55); }
-.game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px rgba(255, 240, 90, .5), 0 0 0 2px rgba(255, 240, 90, .9); }
+.game-bar .sub { font-family: var(--font-mono); font-weight: 400; font-size: .7em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.game-row.sel .game-icon { box-shadow: 0 0 28px color-mix(in srgb, var(--select-hot) 70%, transparent), inset 0 0 14px rgba(0, 0, 0, .55); }
+.game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px color-mix(in srgb, var(--select-hot) 50%, transparent), 0 0 0 2px color-mix(in srgb, var(--select-hot) 90%, transparent); }
 /* ── Shelf badge ──────────────────────────────────────────────────────────
    A row that owns a .sav shelf (ShmupX) wears a little stack of cartridge
    spines at its right edge — "there are more games in here" at a glance.
@@ -455,7 +457,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 /* An open seat is the actionable case, so it gets the warmer colour and the
    pulse; a full run is information, not an invitation. */
 .live-chip.open {
-  color: #06240f; background: #7dff9a;
+  color: oklch(0.231 0.054 calc(var(--h) + 20)); background: oklch(0.902 0.180 calc(var(--h) + 19));
   animation: live-pulse 1.8s ease-in-out infinite;
 }
 @keyframes live-pulse {
@@ -476,13 +478,13 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .row-fav {
   flex-shrink: 0; margin-left: 1vmin; padding: 0 0.6vmin;
   font: inherit; font-size: 0.95em; line-height: 1.4;
-  color: rgba(255, 255, 255, 0.55); background: none;
+  color: color-mix(in srgb, var(--ink-hi) 55%, transparent); background: none;
   border: 0; cursor: pointer;
 }
-.row-fav.on { color: #F6FF4A; }
+.row-fav.on { color: var(--select); }
 .game-row.sel .row-fav { color: rgba(6, 23, 43, 0.6); }
 .game-row.sel .row-fav.on { color: #06172b; }
-.row-fav:hover { color: #F6FF4A; }
+.row-fav:hover { color: var(--select); }
 
 .shelf-badge {
   display: flex; align-items: center; gap: 1vmin; flex-shrink: 0;
@@ -490,57 +492,57 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
      must accept clicks of its own to open the shelf instead of launching */
   pointer-events: auto;
   padding: .6vmin 1.1vmin; border-radius: .8vmin; cursor: pointer;
-  border: 1px solid rgba(140, 255, 110, .45);
-  background: linear-gradient(180deg, rgba(10, 40, 18, .92), rgba(6, 26, 11, .92));
-  box-shadow: 0 0 10px rgba(50, 200, 80, .25);
+  border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.45);
+  background: linear-gradient(180deg, oklch(0.247 0.054 calc(var(--h) + 19) / 0.92), color-mix(in srgb, var(--surface) 92%, transparent));
+  box-shadow: 0 0 10px oklch(0.731 0.203 calc(var(--h) + 16) / 0.25);
 }
 .shelf-spines { display: flex; align-items: flex-end; gap: .35vmin; height: 3.2vmin; min-height: 22px; }
 .shelf-spines i {
   display: block; width: .9vmin; min-width: 6px; border-radius: .2vmin;
-  background: linear-gradient(180deg, rgba(140, 255, 110, .9), rgba(40, 140, 60, .8));
-  box-shadow: 0 0 6px rgba(120, 255, 90, .5);
+  background: linear-gradient(180deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.9), oklch(0.565 0.148 calc(var(--h) + 17) / 0.8));
+  box-shadow: 0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5);
 }
 .shelf-spines i:nth-child(1) { height: 70%; }
 .shelf-spines i:nth-child(2) { height: 100%; }
 .shelf-spines i:nth-child(3) { height: 84%; transform: rotate(9deg); transform-origin: bottom center; }
 .shelf-copy { display: none; flex-direction: column; line-height: 1.2; text-align: left; }
-.shelf-copy b { font-size: clamp(9px, 1.3vmin, 12px); letter-spacing: .22em; color: #dfffc4; }
+.shelf-copy b { font-size: clamp(9px, 1.3vmin, 12px); letter-spacing: .22em; color: var(--ink); }
 .shelf-copy em {
   font-style: normal; font-size: clamp(8px, 1.1vmin, 11px); letter-spacing: .12em;
-  color: rgba(190, 255, 150, .75); text-transform: uppercase; white-space: nowrap;
+  color: oklch(0.933 0.150 calc(var(--h) + 4) / 0.75); text-transform: uppercase; white-space: nowrap;
 }
 .shelf-key {
   display: flex; align-items: center; justify-content: center;
   width: 2.6vmin; height: 2.6vmin; min-width: 18px; min-height: 18px; border-radius: 50%;
-  border: 1px solid rgba(255, 240, 90, .8); color: #ffef6a; font-weight: 800;
+  border: 1px solid color-mix(in srgb, var(--select-hot) 80%, transparent); color: var(--select-hot); font-weight: 800;
   font-size: clamp(9px, 1.3vmin, 12px);
-  box-shadow: 0 0 8px rgba(255, 240, 90, .35), inset 0 0 6px rgba(255, 240, 90, .15);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--select-hot) 35%, transparent), inset 0 0 6px color-mix(in srgb, var(--select-hot) 15%, transparent);
 }
 .shelf-badge.lit {
-  border-color: rgba(255, 240, 90, .75);
+  border-color: color-mix(in srgb, var(--select-hot) 75%, transparent);
   animation: shelfPulse 1.6s ease-in-out infinite;
 }
 .shelf-badge.lit .shelf-copy { display: flex; }
 .shelf-badge.lit .shelf-spines i {
   background: linear-gradient(180deg, #ffef8a, #b09a20);
-  box-shadow: 0 0 8px rgba(255, 240, 90, .6);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--select-hot) 60%, transparent);
 }
 @keyframes shelfPulse {
-  0%, 100% { box-shadow: 0 0 10px rgba(255, 240, 90, .25); }
-  50% { box-shadow: 0 0 22px rgba(255, 240, 90, .55); }
+  0%, 100% { box-shadow: 0 0 10px color-mix(in srgb, var(--select-hot) 25%, transparent); }
+  50% { box-shadow: 0 0 22px color-mix(in srgb, var(--select-hot) 55%, transparent); }
 }
-.shelf-badge:hover { border-color: rgba(255, 240, 90, .9); }
+.shelf-badge:hover { border-color: color-mix(in srgb, var(--select-hot) 90%, transparent); }
 .shelf-badge:hover .shelf-copy { display: flex; }
 
 .game-row.sel .game-bar {
-  color: #0e0e02;
+  color: var(--select-ink);
   background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 28%, #d8e640 65%, #a4b00b 100%);
   border-color: #fff36a;
-  box-shadow: inset 0 2px 0 rgba(255, 255, 220, .7), 0 0 36px rgba(255, 240, 90, .5);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 220, .7), 0 0 36px color-mix(in srgb, var(--select-hot) 50%, transparent);
 }
 .game-row.sel .game-bar .sub { color: rgba(40, 30, 0, .65); }
 .game-row:hover:not(.sel) .game-bar {
-  background: linear-gradient(180deg, rgba(120, 230, 140, .16), rgba(40, 110, 55, .7) 50%, rgba(40, 110, 55, .7) 50%, rgba(120, 230, 140, .16));
+  background: linear-gradient(180deg, oklch(0.838 0.161 calc(var(--h) + 18) / 0.16), oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 50%, oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 50%, oklch(0.838 0.161 calc(var(--h) + 18) / 0.16));
 }
 
 /* Uninstall (✕) control on graduated CMG Network installs in the Games list.
@@ -577,13 +579,13 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .strip-block { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 1vmin; min-width: 0; }
 .strip-head {
   display: flex; align-items: baseline; gap: 2em;
-  font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 1.4vmin, 15px);
-  letter-spacing: .26em; text-transform: uppercase; color: rgba(220, 255, 180, .6);
+  font-family: var(--font-mono); font-size: var(--t-small);
+  letter-spacing: .26em; text-transform: uppercase; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.6);
   padding: 0 .4vmin;
 }
 .strip-head .strip-label { transition: color .2s ease, text-shadow .2s ease; }
-.strip-head .strip-label.on { color: #fff36a; text-shadow: 0 0 14px rgba(255, 240, 90, .5); }
-.strip-head .strip-core { color: rgba(220, 255, 180, .42); letter-spacing: .22em; }
+.strip-head .strip-label.on { color: #fff36a; text-shadow: 0 0 14px color-mix(in srgb, var(--select-hot) 50%, transparent); }
+.strip-head .strip-core { color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.42); letter-spacing: .22em; }
 /* Pushes the emulator credits to the right end of the header line. Carried by a
    class rather than :first-of-type — the label span is the first <span> here, so
    a type-positional selector matches nothing. */
@@ -595,9 +597,9 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   scrollbar-width: none; -ms-overflow-style: none;
   padding: 1.6vmin max(1.6vmin, 24px) 1vmin;
   touch-action: pan-x; cursor: grab;
-  border: 1px solid rgba(140, 255, 110, .3);
-  background: linear-gradient(180deg, rgba(70, 180, 90, .1), rgba(12, 40, 20, .55));
-  box-shadow: inset 0 2px 0 rgba(180, 255, 140, .12);
+  border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.3);
+  background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.1), oklch(0.249 0.051 calc(var(--h) + 20) / 0.55));
+  box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.12);
   transition: border-color .25s ease, box-shadow .25s ease, padding .3s ease, gap .3s ease;
   mask-image: linear-gradient(90deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%);
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%);
@@ -605,8 +607,8 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .cmg-strip::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .cmg-strip:active { cursor: grabbing; }
 .cmg-strip.on {
-  border-color: rgba(255, 240, 90, .5);
-  box-shadow: inset 0 2px 0 rgba(255, 255, 220, .18), 0 0 30px rgba(255, 240, 90, .16);
+  border-color: color-mix(in srgb, var(--select-hot) 50%, transparent);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 220, .18), 0 0 30px color-mix(in srgb, var(--select-hot) 16%, transparent);
 }
 /* Collapsed rail: once the cursor drops into the list the strip shrinks to small
    icons and drops its label line, handing the vertical space back to the game
@@ -627,25 +629,25 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .strip-disc {
   width: 100%; aspect-ratio: 1 / 1; position: relative; border-radius: 50%;
   background:
-    radial-gradient(circle at 50% 50%, #061a0b 25%, transparent 26%),
-    conic-gradient(from 30deg, rgba(140, 255, 90, .7), rgba(60, 180, 80, .25), rgba(140, 255, 90, .7) 60%, rgba(60, 180, 80, .25), rgba(140, 255, 90, .7));
-  box-shadow: 0 0 18px rgba(120, 255, 90, .5), inset 0 0 14px rgba(0, 0, 0, .55);
+    radial-gradient(circle at 50% 50%, var(--surface) 25%, transparent 26%),
+    conic-gradient(from 30deg, oklch(0.900 0.226 calc(var(--h) + 8) / 0.7), oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7));
+  box-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 14px rgba(0, 0, 0, .55);
   display: flex; align-items: center; justify-content: center;
   transition: transform .22s cubic-bezier(.2, .8, .2, 1.08), box-shadow .22s ease;
 }
 .strip-disc .glass {
-  position: absolute; inset: 11%; border-radius: 50%; background: #0a1a0e;
+  position: absolute; inset: 11%; border-radius: 50%; background: var(--surface);
   display: flex; align-items: center; justify-content: center; overflow: hidden;
-  box-shadow: inset 0 0 12px rgba(120, 255, 90, .4), 0 0 0 2px rgba(140, 255, 110, .75);
+  box-shadow: inset 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.4), 0 0 0 2px oklch(0.902 0.212 calc(var(--h) + 10) / 0.75);
 }
-.strip-disc .glass img { width: 82%; height: 82%; object-fit: contain; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
+.strip-disc .glass img { width: 82%; height: 82%; object-fit: contain; filter: drop-shadow(0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.55)); }
 /* The Games tile's globe (an inline Lucide icon, see Dashboard.svelte): a
    stroke in the mark's green, a step smaller than a bitmap since it has no
    fill to carry the glow and reads better with air around it. */
-.strip-disc .glass svg.glyph { width: 64%; height: 64%; color: #bdf48c; filter: drop-shadow(0 0 6px rgba(120, 255, 90, .55)); }
+.strip-disc .glass svg.glyph { width: 64%; height: 64%; color: oklch(0.906 0.145 calc(var(--h) + 2)); filter: drop-shadow(0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.55)); }
 .strip-disc .mark {
   font-weight: 800; font-size: clamp(18px, 2.9vmin, 32px); letter-spacing: .04em;
-  color: #bdf48c; text-shadow: 0 0 10px rgba(120, 255, 90, .7);
+  color: oklch(0.906 0.145 calc(var(--h) + 2)); text-shadow: 0 0 10px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7);
   transition: font-size .3s ease, color .2s ease;
 }
 /* A four-letter mark (MAME) has to shrink or it breaks the glass. */
@@ -660,53 +662,53 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    max-height is the collapse axis (every tile, driven by the rail state); the
    opacity is the selection axis. Both animate, so the rail's height eases. */
 .strip-name {
-  font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.3vmin, 14px);
+  font-family: var(--font-mono); font-size: clamp(10px, 1.3vmin, 14px);
   letter-spacing: .16em; text-transform: uppercase; white-space: nowrap;
-  color: #fff36a; text-shadow: 0 0 12px rgba(255, 240, 90, .6);
+  color: #fff36a; text-shadow: 0 0 12px color-mix(in srgb, var(--select-hot) 60%, transparent);
   opacity: 0; max-height: 3vmin; overflow: hidden;
   transition: opacity .2s ease, max-height .3s ease; width: max-content;
 }
 .cmg-strip:not(.on) .strip-name { max-height: 0; }
 .strip-tile.sel .strip-disc {
   transform: scale(1.06);
-  box-shadow: 0 0 34px rgba(255, 240, 90, .75), inset 0 0 14px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--select-hot) 75%, transparent), inset 0 0 14px rgba(0, 0, 0, .55);
 }
 .strip-tile.sel .strip-disc .glass {
-  background: radial-gradient(circle at 50% 30%, #123a17, #0a1a0e 70%);
-  box-shadow: inset 0 0 14px rgba(255, 240, 90, .5), 0 0 0 2px rgba(255, 240, 90, .9);
+  background: radial-gradient(circle at 50% 30%, var(--surface-hi), var(--surface) 70%);
+  box-shadow: inset 0 0 14px color-mix(in srgb, var(--select-hot) 50%, transparent), 0 0 0 2px color-mix(in srgb, var(--select-hot) 90%, transparent);
 }
-.strip-tile.sel .strip-disc .mark { color: #fff8b0; text-shadow: 0 0 16px rgba(255, 240, 90, .85); }
+.strip-tile.sel .strip-disc .mark { color: #fff8b0; text-shadow: 0 0 16px color-mix(in srgb, var(--select-hot) 85%, transparent); }
 .strip-tile.sel .strip-name { opacity: 1; }
 /* Middle tier — the selected section with the cursor down in the list. Half the
    glow of .sel and none of its scale, gradient or label: enough yellow to find
    your shelf on the collapsed rail, not enough to compete with the row cursor. */
 .strip-tile.active:not(.sel) .strip-disc {
-  box-shadow: 0 0 18px rgba(255, 240, 90, .45), inset 0 0 14px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--select-hot) 45%, transparent), inset 0 0 14px rgba(0, 0, 0, .55);
 }
 .strip-tile.active:not(.sel) .strip-disc .glass {
-  box-shadow: inset 0 0 12px rgba(255, 240, 90, .3), 0 0 0 2px rgba(255, 240, 90, .65);
+  box-shadow: inset 0 0 12px color-mix(in srgb, var(--select-hot) 30%, transparent), 0 0 0 2px color-mix(in srgb, var(--select-hot) 65%, transparent);
 }
-.strip-tile.active:not(.sel) .strip-disc .mark { color: #e6ffb0; }
+.strip-tile.active:not(.sel) .strip-disc .mark { color: oklch(0.963 0.104 calc(var(--h) - 7)); }
 .strip-tile:hover:not(.sel) .strip-disc { transform: scale(1.03); }
 
 /* While the cursor is up in the strip the section title steps back, so the two
    halves never both look active. */
-.title-bar.dim { color: rgba(223, 255, 196, .55); border-color: rgba(140, 255, 110, .28); }
+.title-bar.dim { color: color-mix(in srgb, var(--ink) 55%, transparent); border-color: oklch(0.902 0.212 calc(var(--h) + 10) / 0.28); }
 
 /* Section header action: Add Game on the catalog, the section's own BYOD/BYOC
    picker on a console. Same pill as .byod-btn, sized to sit in the header row. */
 .add-btn {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 10px;
-  font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: .18em;
+  font-family: var(--font-display); font-weight: 700; letter-spacing: .18em;
   text-transform: uppercase; font-size: clamp(11px, 1.2vmin, 13px);
-  color: #051208;
-  background: linear-gradient(180deg, rgba(160, 255, 110, .95), rgba(90, 220, 60, .9));
-  border: 1px solid rgba(180, 255, 140, 1);
+  color: oklch(0.166 0.029 calc(var(--h) + 21));
+  background: linear-gradient(180deg, oklch(0.911 0.202 calc(var(--h) + 6) / 0.95), oklch(0.792 0.226 calc(var(--h) + 10) / 0.9));
+  border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6));
   padding: 12px 22px; border-radius: 999px; cursor: pointer; white-space: nowrap;
-  box-shadow: 0 0 24px rgba(120, 255, 90, .45), inset 0 -2px 0 rgba(0, 0, 0, .15);
+  box-shadow: 0 0 24px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 -2px 0 rgba(0, 0, 0, .15);
   transition: transform .15s ease, box-shadow .2s ease;
 }
-.add-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px rgba(120, 255, 90, .7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
+.add-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
 .add-btn:active { transform: translateY(0) scale(.98); }
 .add-btn-icon { font-size: 1.2em; }
 
@@ -714,7 +716,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .strip-top {
   position: absolute; left: 25vmin; right: 2vmin; top: -4.2vmin; height: 3vmin;
   display: flex; align-items: center; justify-content: flex-end; gap: 2em;
-  color: rgba(220, 255, 180, .55); font-family: 'Share Tech Mono'; font-size: clamp(11px, 1.3vmin, 14px); letter-spacing: .22em; text-transform: uppercase;
+  color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); font-family: var(--font-mono); font-size: clamp(11px, 1.3vmin, 14px); letter-spacing: .22em; text-transform: uppercase;
 }
 
 /* Iframe holder when a game is launched */
@@ -755,7 +757,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   background-size: contain;
   opacity: .94;
   transform: translate(-50%, -50%);
-  filter: hue-rotate(-90deg) saturate(.65) brightness(1.68) drop-shadow(0 0 12px rgba(124, 255, 79, .42));
+  filter: hue-rotate(-90deg) saturate(.65) brightness(1.68) drop-shadow(0 0 12px oklch(0.892 0.241 calc(var(--h) + 9) / 0.42));
 }
 .twin-touch-base {
   width: 132px;
@@ -793,9 +795,9 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   position: fixed; top: 0; right: 0; bottom: 0; z-index: 101;
   width: min(380px, 86vw);
   display: flex; flex-direction: column;
-  background: linear-gradient(180deg, rgba(10, 30, 16, .97), rgba(5, 16, 9, .98));
+  background: linear-gradient(180deg, oklch(0.213 0.038 calc(var(--h) + 22) / 0.97), rgba(5, 16, 9, .98));
   border-left: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
-  box-shadow: -18px 0 48px rgba(0, 0, 0, .6), inset 1px 0 0 rgba(140, 255, 110, .08);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, .6), inset 1px 0 0 oklch(0.902 0.212 calc(var(--h) + 10) / 0.08);
   transform: translateX(100%); opacity: 0; pointer-events: none;
   transition: transform .32s cubic-bezier(.22, .61, .36, 1), opacity .32s ease;
   -webkit-backdrop-filter: blur(6px) saturate(140%); backdrop-filter: blur(6px) saturate(140%);
@@ -820,19 +822,19 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 }
 .music-hd {
   display: flex; align-items: center; gap: 10px;
-  padding: 12px 12px 12px 16px; border-bottom: 1px solid rgba(140, 255, 110, .18);
-  color: #eaffd2; font-family: 'Orbitron', sans-serif;
+  padding: 12px 12px 12px 16px; border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.18);
+  color: oklch(0.973 0.063 calc(var(--h) - 2)); font-family: var(--font-display);
 }
-.music-dot { color: var(--green, #8cff6e); font-size: 15px; text-shadow: 0 0 12px rgba(120, 255, 90, .6); }
+.music-dot { color: var(--green, #8cff6e); font-size: 15px; text-shadow: 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.6); }
 .music-title {
   flex: 1; font-weight: 800; letter-spacing: .2em; font-size: 13px; text-transform: uppercase;
-  text-shadow: 0 0 14px rgba(120, 255, 90, .4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 0 14px oklch(0.892 0.236 calc(var(--h) + 10) / 0.4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .music-x {
-  appearance: none; border: 0; background: transparent; color: rgba(220, 255, 180, .6);
+  appearance: none; border: 0; background: transparent; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.6);
   width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 15px; line-height: 1; flex-shrink: 0;
 }
-.music-x:hover { background: rgba(120, 255, 90, .12); color: #eaffd2; }
+.music-x:hover { background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.12); color: oklch(0.973 0.063 calc(var(--h) - 2)); }
 .music-sidebar iframe { flex: 1; width: 100%; border: 0; background: #000; display: block; }
 
 /* XBOX 360 blades Guide — while the Music blade is expanded with a player on,
@@ -865,40 +867,40 @@ body.theme-xbox360.osd-music-blade .music-hd {
   height: 100%; box-sizing: border-box;
 }
 .byod-title {
-  font-family: 'Orbitron', sans-serif; font-weight: 800; letter-spacing: .22em;
+  font-family: var(--font-display); font-weight: 800; letter-spacing: .22em;
   font-size: clamp(14px, 1.6vmin, 18px);
-  color: #c8ff9c; text-shadow: 0 0 12px rgba(120, 255, 90, .35);
+  color: oklch(0.940 0.139 calc(var(--h) + 2)); text-shadow: 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.35);
 }
 .byod-sub {
-  font-family: 'Share Tech Mono', monospace; color: rgba(220, 255, 200, .78);
+  font-family: var(--font-mono); color: color-mix(in srgb, var(--ink) 78%, transparent);
   font-size: clamp(11px, 1.2vmin, 13px); max-width: 36ch;
 }
 .byod-sub code {
-  color: #dfffc4; background: rgba(120, 255, 90, .08);
-  padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(120, 255, 90, .25);
+  color: var(--ink); background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.08);
+  padding: 1px 6px; border-radius: 4px; border: 1px solid oklch(0.892 0.236 calc(var(--h) + 10) / 0.25);
 }
 .byod-input { display: none; }
 .byod-btn {
   display: inline-flex; align-items: center; gap: 10px;
-  font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: .18em;
+  font-family: var(--font-display); font-weight: 700; letter-spacing: .18em;
   text-transform: uppercase; font-size: clamp(11px, 1.2vmin, 13px);
-  color: #051208;
-  background: linear-gradient(180deg, rgba(160, 255, 110, .95), rgba(90, 220, 60, .9));
-  border: 1px solid rgba(180, 255, 140, 1);
+  color: oklch(0.166 0.029 calc(var(--h) + 21));
+  background: linear-gradient(180deg, oklch(0.911 0.202 calc(var(--h) + 6) / 0.95), oklch(0.792 0.226 calc(var(--h) + 10) / 0.9));
+  border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6));
   padding: 12px 22px; border-radius: 999px;
-  box-shadow: 0 0 24px rgba(120, 255, 90, .45), inset 0 -2px 0 rgba(0, 0, 0, .15);
+  box-shadow: 0 0 24px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 -2px 0 rgba(0, 0, 0, .15);
   cursor: pointer;
   transition: transform .12s ease, box-shadow .2s ease;
 }
-.byod-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px rgba(120, 255, 90, .7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
+.byod-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
 .byod-btn:active { transform: translateY(0) scale(.98); }
 .byod-btn-icon { font-size: 1.2em; }
 .byod-hint {
-  font-family: 'Share Tech Mono', monospace; color: rgba(220, 255, 200, .55);
+  font-family: var(--font-mono); color: color-mix(in srgb, var(--ink) 55%, transparent);
   font-size: clamp(10px, 1.05vmin, 12px); line-height: 1.5; max-width: 40ch;
 }
 .byod-err {
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--font-mono);
   color: #ffbcbc;
   background: rgba(255, 90, 90, .08);
   border: 1px solid rgba(255, 120, 120, .4);
@@ -911,34 +913,34 @@ body.theme-xbox360.osd-music-blade .music-hd {
 .add-input {
   margin-top: 4px;
   width: 100%;
-  font-family: 'Share Tech Mono', monospace;
+  font-family: var(--font-mono);
   font-size: clamp(12px, 1.3vmin, 15px);
-  color: #eaffe0;
+  color: oklch(0.976 0.046 calc(var(--h) + 5));
   background: rgba(0, 0, 0, .35);
-  border: 1px solid rgba(120, 255, 90, .35);
+  border: 1px solid oklch(0.892 0.236 calc(var(--h) + 10) / 0.35);
   border-radius: 6px;
   padding: 7px 10px;
   outline: none;
   caret-color: var(--green, #9dff6a);
   transition: border-color .15s ease, box-shadow .15s ease;
 }
-.add-input::placeholder { color: rgba(200, 255, 180, .35); }
+.add-input::placeholder { color: oklch(0.944 0.113 calc(var(--h) + 8) / 0.35); }
 .add-input:focus {
-  border-color: rgba(160, 255, 120, .9);
-  box-shadow: 0 0 14px rgba(120, 255, 90, .35), inset 0 0 8px rgba(120, 255, 90, .12);
+  border-color: oklch(0.912 0.193 calc(var(--h) + 7) / 0.9);
+  box-shadow: 0 0 14px oklch(0.892 0.236 calc(var(--h) + 10) / 0.35), inset 0 0 8px oklch(0.892 0.236 calc(var(--h) + 10) / 0.12);
 }
 .game-row.add-field { cursor: text; }
 .game-row.add-field .game-bar { width: 100%; }
 /* On the focused row the highlight already inverts text to dark; keep the input
    itself readable (dark text on light field) so typed characters stay visible. */
-.game-row.add-field.sel .add-input { color: #0c1a08; background: rgba(255, 255, 255, .82); border-color: rgba(20, 40, 0, .5); }
-.game-row.add-field.sel .add-input::placeholder { color: rgba(20, 40, 0, .45); }
+.game-row.add-field.sel .add-input { color: var(--surface); background: color-mix(in srgb, var(--ink-hi) 82%, transparent); border-color: oklch(0.250 0.070 calc(var(--h) + 2) / 0.5); }
+.game-row.add-field.sel .add-input::placeholder { color: oklch(0.250 0.070 calc(var(--h) + 2) / 0.45); }
 
 /* BYOC / BYOB pinned upload rows. Reuses .game-row; a dashed icon ring + upload
    glyph mark it as "load your own" rather than a launchable title. */
 .byoc-row .game-icon .glass {
-  box-shadow: inset 0 0 12px rgba(120, 255, 90, .3);
-  border: 2px dashed rgba(140, 255, 110, .7);
+  box-shadow: inset 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.3);
+  border: 2px dashed oklch(0.902 0.212 calc(var(--h) + 10) / 0.7);
 }
 .byoc-row .game-icon .glass .ph { font-size: clamp(18px, 2.6vmin, 26px); }
 
@@ -949,69 +951,69 @@ body.theme-xbox360.osd-music-blade .music-hd {
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between; gap: 1em;
   padding: 1.2vmin .6vmin .2vmin;
-  font-family: 'Share Tech Mono', monospace; font-size: clamp(10px, 1.3vmin, 13px);
+  font-family: var(--font-mono); font-size: clamp(10px, 1.3vmin, 13px);
   letter-spacing: .24em; text-transform: uppercase;
-  color: rgba(180, 255, 140, .55);
-  border-bottom: 1px solid rgba(140, 255, 110, .18);
+  color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.55);
+  border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.18);
 }
 .game-row.oe-in { opacity: .55; }
-.game-row.oe-in .game-icon .glass .ph { color: #4fd06a; }
+.game-row.oe-in .game-icon .glass .ph { color: oklch(0.763 0.182 calc(var(--h) + 18)); }
 .sync-row {
   flex-shrink: 0;
   display: grid; grid-template-columns: 1.2fr auto 1.2fr 1.6fr; align-items: center; gap: 1.2em;
   padding: .9vmin 1.2vmin;
-  font-family: 'Share Tech Mono', monospace; font-size: clamp(11px, 1.5vmin, 15px);
-  letter-spacing: .1em; color: rgba(220, 255, 180, .8);
-  border: 1px solid rgba(140, 255, 110, .16); border-radius: .8vmin;
-  background: linear-gradient(180deg, rgba(70, 180, 90, .05), rgba(20, 60, 30, .25));
+  font-family: var(--font-mono); font-size: clamp(11px, 1.5vmin, 15px);
+  letter-spacing: .1em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.8);
+  border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.16); border-radius: .8vmin;
+  background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.05), color-mix(in srgb, var(--surface-hi) 25%, transparent));
 }
-.sync-row .sync-arrow { color: rgba(180, 255, 140, .5); }
-.sync-row .sync-retro { color: #fff; }
-.sync-row .sync-note { text-align: right; font-size: .85em; color: rgba(220, 255, 180, .45); text-transform: uppercase; }
+.sync-row .sync-arrow { color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.5); }
+.sync-row .sync-retro { color: var(--ink-hi); }
+.sync-row .sync-note { text-align: right; font-size: .85em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.45); text-transform: uppercase; }
 
 /* CMG Network (e-shop) — reuses .games-screen/.game-row; adds a network-tinted
    disc plus a per-row store badge (GET / downloading % / INSTALLED) and a thin
    download progress bar pinned to the bottom of the row. */
 .disc.net { animation-duration: 6s; filter: hue-rotate(150deg) saturate(1.15); }
 .net-badge {
-  font-family: 'Share Tech Mono', monospace; font-weight: 700;
+  font-family: var(--font-mono); font-weight: 700;
   font-size: .62em; letter-spacing: .12em; margin-left: 1.5em;
   padding: 2px 11px; border-radius: 999px; white-space: nowrap;
   border: 1px solid currentColor; flex-shrink: 0;
 }
-.net-badge.get { color: #bdf48c; }
+.net-badge.get { color: oklch(0.906 0.145 calc(var(--h) + 2)); }
 .net-badge.dl  { color: #7fd8ff; }
 .net-badge.ok  { color: #ffe06a; }
 .net-badge.err { color: #ff9b9b; }
-.net-badge.upd { color: #5effc8; cursor: pointer; animation: net-upd-pulse 1.4s ease-in-out infinite; }
-.net-badge.upd:hover { background: rgba(94, 255, 200, .18); }
+.net-badge.upd { color: oklch(0.901 0.156 calc(var(--h) + 37)); cursor: pointer; animation: net-upd-pulse 1.4s ease-in-out infinite; }
+.net-badge.upd:hover { background: oklch(0.901 0.156 calc(var(--h) + 37) / 0.18); }
 /* A console section's ! RETRY is a click target too (it re-runs the update). */
 .net-badge.err[role="button"] { cursor: pointer; }
 .net-badge.err[role="button"]:hover { background: rgba(255, 155, 155, .18); }
 @keyframes net-upd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
-.game-row.sel .net-badge { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: rgba(255, 255, 255, .35); }
+.game-row.sel .net-badge { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: color-mix(in srgb, var(--ink-hi) 35%, transparent); }
 .net-prog {
   position: absolute; left: 7.4vmin; right: 0; bottom: -1px; height: 3px;
   background: rgba(0, 0, 0, .45); border-radius: 2px; overflow: hidden;
 }
-.net-prog-fill { height: 100%; width: 0; background: linear-gradient(90deg, #55eeff, #bdf48c); transition: width .2s ease; box-shadow: 0 0 8px rgba(120, 255, 90, .6); }
+.net-prog-fill { height: 100%; width: 0; background: linear-gradient(90deg, #55eeff, oklch(0.906 0.145 calc(var(--h) + 2))); transition: width .2s ease; box-shadow: 0 0 8px oklch(0.892 0.236 calc(var(--h) + 10) / 0.6); }
 
 /* eShop kind chip (WEB / DEZA) — inside the bar after the subtitle, in the
    same mono voice as .net-badge but flat and quieter: it says what the row IS
    where the badge says what state it is in. Yields nothing to the name: the
    sub shrinks first (flex: 0 100 auto above), the chip never does. */
 .eshop-kind {
-  font-family: 'Share Tech Mono', monospace; font-weight: 700;
+  font-family: var(--font-mono); font-weight: 700;
   font-size: .56em; letter-spacing: .18em; margin-left: 1.2em;
   padding: 1px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0;
-  border: 1px solid rgba(180, 255, 140, .35); color: rgba(220, 255, 180, .8);
+  border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.35); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.8);
   background: rgba(0, 0, 0, .25);
 }
 .eshop-kind.deza { color: #ffd07a; border-color: rgba(255, 208, 122, .45); }
 /* A game's release status (its codemonkey.json, or the catalog row): amber,
    so EARLY ACCESS reads as a caution beside the kind chip, not as a kind. */
 .eshop-kind.status { color: #ffb45e; border-color: rgba(255, 180, 94, .5); }
-.game-row.sel .eshop-kind { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: rgba(255, 255, 255, .3); }
+.game-row.sel .eshop-kind { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: color-mix(in srgb, var(--ink-hi) 30%, transparent); }
 /* A row can carry the sub, the chip AND a badge; let the sub give way first
    on a phone rather than pushing the badge out of the bar's chevron. */
 .game-bar .eshop-kind + .net-badge { margin-left: 1em; }
@@ -1025,26 +1027,26 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
    .games-screen for the show/hide transition and nothing else; the colours
    are tokens here so the Nintendo theme can turn the whole screen at once. */
 .library-screen {
-  --lib-edge: rgba(140, 255, 110, .28); --lib-edge-hi: rgba(140, 255, 110, .45); --lib-edge-lo: rgba(140, 255, 110, .16);
-  --lib-ink: #d9ffcb; --lib-sub: rgba(220, 255, 180, .6); --lib-dim: rgba(156, 255, 107, .5); --lib-chip: rgba(156, 255, 107, .8);
-  --lib-card: linear-gradient(180deg, rgba(24, 64, 32, .55), rgba(4, 18, 8, .94) 42%);
-  --lib-art: radial-gradient(ellipse 70% 80% at 50% 60%, rgba(20, 90, 40, .6), rgba(0, 0, 0, .15) 70%), #04140a;
-  --lib-glow: rgba(124, 255, 79, .6); --lib-well: rgba(0, 0, 0, .45); --lib-feat: rgba(20, 70, 30, .5);
-  --lib-sel: #F6FF4A; --lib-sel-edge: rgba(246, 255, 74, .45); --lib-sel-ink: #fffbb0;
+  --lib-edge: oklch(0.902 0.212 calc(var(--h) + 10) / 0.28); --lib-edge-hi: oklch(0.902 0.212 calc(var(--h) + 10) / 0.45); --lib-edge-lo: oklch(0.902 0.212 calc(var(--h) + 10) / 0.16);
+  --lib-ink: var(--ink); --lib-sub: oklch(0.957 0.103 calc(var(--h) - 1) / 0.6); --lib-dim: oklch(0.909 0.206 calc(var(--h) + 7) / 0.5); --lib-chip: oklch(0.909 0.206 calc(var(--h) + 7) / 0.8);
+  --lib-card: linear-gradient(180deg, oklch(0.333 0.071 calc(var(--h) + 18) / 0.55), oklch(0.165 0.030 calc(var(--h) + 23) / 0.94) 42%);
+  --lib-art: radial-gradient(ellipse 70% 80% at 50% 60%, oklch(0.413 0.105 calc(var(--h) + 19) / 0.6), rgba(0, 0, 0, .15) 70%), oklch(0.173 0.032 calc(var(--h) + 26));
+  --lib-glow: oklch(0.892 0.241 calc(var(--h) + 9) / 0.6); --lib-well: rgba(0, 0, 0, .45); --lib-feat: oklch(0.350 0.086 calc(var(--h) + 17) / 0.5);
+  --lib-sel: var(--select); --lib-sel-edge: color-mix(in srgb, var(--select) 45%, transparent); --lib-sel-ink: #fffbb0;
   --lib-ribbon: linear-gradient(90deg, rgba(60, 54, 8, .8), rgba(24, 22, 4, .9));
-  --lib-seg: linear-gradient(90deg, #fffea1, #F6FF4A 28%, #d8e640 65%, #a4b00b); --lib-seg-ink: #0e0e02; --lib-seg-glow: rgba(255, 240, 90, .5);
-  --lib-hint: rgba(214, 255, 196, .85);
+  --lib-seg: linear-gradient(90deg, #fffea1, var(--select) 28%, #d8e640 65%, #a4b00b); --lib-seg-ink: var(--select-ink); --lib-seg-glow: color-mix(in srgb, var(--select-hot) 50%, transparent);
+  --lib-hint: color-mix(in srgb, var(--ink) 85%, transparent);
   align-items: stretch; justify-content: stretch;
 }
 .lib-panel { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding-top: max(8vmin, 44px); }
 .lib-banner {
   flex-shrink: 0; margin-top: 6px; height: 46px; display: flex; align-items: center; position: relative;
-  background: linear-gradient(180deg, rgba(70, 180, 90, .18), rgba(20, 60, 30, .7) 50%, rgba(20, 60, 30, .7) 50%, rgba(70, 180, 90, .05));
-  border-top: 1px solid rgba(140, 255, 110, .35); border-bottom: 1px solid rgba(140, 255, 110, .35);
+  background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.18), color-mix(in srgb, var(--surface-hi) 70%, transparent) 50%, color-mix(in srgb, var(--surface-hi) 70%, transparent) 50%, oklch(0.686 0.163 calc(var(--h) + 17) / 0.05));
+  border-top: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35); border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35);
   clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
 }
-.lib-banner-title { flex: 1; text-align: center; font-size: 18px; font-weight: 800; letter-spacing: .32em; color: var(--lib-ink); text-shadow: 0 0 14px rgba(124, 255, 79, .8); padding-left: 12px; }
-.lib-banner-count { font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .14em; color: rgba(220, 255, 180, .7); padding-right: 34px; white-space: nowrap; }
+.lib-banner-title { flex: 1; text-align: center; font-size: 18px; font-weight: 800; letter-spacing: .32em; color: var(--lib-ink); text-shadow: 0 0 14px oklch(0.892 0.241 calc(var(--h) + 9) / 0.8); padding-left: 12px; }
+.lib-banner-count { font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); padding-right: 34px; white-space: nowrap; }
 /* The bottom padding clears the B / A hints, which float over this screen. */
 .lib-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 16px max(13vmin, 84px); scrollbar-width: thin; scrollbar-color: var(--lib-edge) transparent; }
 .lib-cards { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; justify-content: center; }
@@ -1052,10 +1054,10 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
   width: 340px; max-width: 100%; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
   background: var(--lib-card); border: 1px solid var(--lib-edge); transition: border-color .15s, box-shadow .15s;
 }
-.lib-card.mod { border-color: var(--lib-sel-edge); box-shadow: 0 0 26px rgba(246, 255, 74, .12); }
+.lib-card.mod { border-color: var(--lib-sel-edge); box-shadow: 0 0 26px color-mix(in srgb, var(--select) 12%, transparent); }
 /* The cursor: a pad (or a hover) has this card. */
-.lib-card.sel { border-color: var(--green); box-shadow: 0 0 22px rgba(124, 255, 79, .3); }
-.lib-card.mod.sel { border-color: var(--lib-sel); box-shadow: 0 0 26px rgba(246, 255, 74, .3); }
+.lib-card.sel { border-color: var(--green); box-shadow: 0 0 22px oklch(0.892 0.241 calc(var(--h) + 9) / 0.3); }
+.lib-card.mod.sel { border-color: var(--lib-sel); box-shadow: 0 0 26px color-mix(in srgb, var(--select) 30%, transparent); }
 .lib-card button { font-family: inherit; -webkit-tap-highlight-color: transparent; }
 .lib-card svg { display: block; flex-shrink: 0; }
 
@@ -1063,51 +1065,51 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
 .lib-ribbon {
   display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 14px;
   background: var(--lib-ribbon); border: none; border-bottom: 1px solid var(--lib-sel-edge); color: var(--lib-sel);
-  font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .18em; cursor: pointer; text-align: left;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: .18em; cursor: pointer; text-align: left;
 }
-.lib-card .lib-ribbon { font-family: 'Share Tech Mono', monospace; }
+.lib-card .lib-ribbon { font-family: var(--font-mono); }
 .lib-ribbon svg { width: 14px; height: 14px; }
 .lib-ribbon-k { flex-shrink: 0; }
 .lib-ribbon-parent { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .lib-ribbon-parent img { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
-.lib-ribbon-parent span { font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--lib-sel-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-ribbon-chev { font-size: 15px; line-height: 1; color: rgba(246, 255, 74, .7); }
+.lib-ribbon-parent span { font-family: var(--font-display); font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--lib-sel-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-ribbon-chev { font-size: 15px; line-height: 1; color: color-mix(in srgb, var(--select) 70%, transparent); }
 
 /* Key art: the cart's own title screen, standing where the design's sprite stood. */
 .lib-art { position: relative; height: 150px; overflow: hidden; background: var(--lib-art); }
-.lib-art img { position: absolute; left: 50%; top: 54%; height: 125px; width: auto; transform: translate(-50%, -50%); image-rendering: pixelated; filter: drop-shadow(0 0 6px rgba(124, 255, 79, .55)); }
+.lib-art img { position: absolute; left: 50%; top: 54%; height: 125px; width: auto; transform: translate(-50%, -50%); image-rendering: pixelated; filter: drop-shadow(0 0 6px oklch(0.892 0.241 calc(var(--h) + 9) / 0.55)); }
 .lib-art-ph { position: absolute; left: 50%; top: 54%; transform: translate(-50%, -50%); font-size: 44px; font-weight: 800; letter-spacing: .1em; color: var(--lib-dim); }
-.lib-art-scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(180deg, rgba(0, 255, 120, .05) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
-.lib-source, .lib-tag { position: absolute; top: 10px; padding: 3px 7px; border-radius: 4px; background: rgba(0, 0, 0, .55); font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .18em; }
+.lib-art-scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(180deg, oklch(0.874 0.241 calc(var(--h) + 20) / 0.05) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
+.lib-source, .lib-tag { position: absolute; top: 10px; padding: 3px 7px; border-radius: 4px; background: rgba(0, 0, 0, .55); font-family: var(--font-mono); font-size: 8px; letter-spacing: .18em; }
 .lib-source { left: 12px; color: var(--lib-chip); }
-.lib-tag { right: 12px; border: 1px solid rgba(140, 255, 110, .35); color: rgba(156, 255, 107, .85); }
-.lib-card.mod .lib-tag { border-color: rgba(246, 255, 74, .5); color: var(--lib-sel); }
+.lib-tag { right: 12px; border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35); color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.85); }
+.lib-card.mod .lib-tag { border-color: color-mix(in srgb, var(--select) 50%, transparent); color: var(--lib-sel); }
 
 .lib-head { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px 2px; }
 .lib-title { font-size: 15px; font-weight: 800; letter-spacing: .14em; color: var(--lib-ink); text-shadow: 0 0 12px var(--lib-glow); text-wrap: balance; overflow-wrap: anywhere; }
-.lib-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: .14em; color: var(--lib-sub); }
-.lib-mods { display: flex; align-items: center; gap: 5px; color: rgba(246, 255, 74, .85); }
+.lib-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-mono); font-size: 9px; letter-spacing: .14em; color: var(--lib-sub); }
+.lib-mods { display: flex; align-items: center; gap: 5px; color: color-mix(in srgb, var(--select) 85%, transparent); }
 .lib-mods svg { width: 11px; height: 11px; }
 
 /* VERSION: OG | MOD */
 .lib-version { display: flex; align-items: center; gap: 8px; margin: 12px 14px 0; padding: 6px; border-radius: 10px; background: var(--lib-well); border: 1px solid var(--lib-edge); }
-.lib-version-lbl { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: rgba(214, 255, 196, .8); padding: 0 4px 0 6px; }
+.lib-version-lbl { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: color-mix(in srgb, var(--ink) 80%, transparent); padding: 0 4px 0 6px; }
 .lib-segs { flex: 1; display: flex; gap: 4px; }
 .lib-seg {
   flex: 1; text-align: center; padding: 6px 0; min-height: 40px; border-radius: 7px; cursor: pointer;
   font-size: 9px; font-weight: 700; letter-spacing: .14em;
-  border: 1px solid var(--lib-edge); background: none; color: rgba(220, 255, 180, .55);
+  border: 1px solid var(--lib-edge); background: none; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55);
 }
 .lib-seg.on { border-color: transparent; background: var(--lib-seg); color: var(--lib-seg-ink); font-weight: 800; box-shadow: 0 0 14px var(--lib-seg-glow); }
 .lib-feats { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
 .lib-feat {
   display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 6px;
-  font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em;
-  border: 1px solid var(--lib-edge-lo); color: rgba(220, 255, 180, .42); background: transparent;
+  font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em;
+  border: 1px solid var(--lib-edge-lo); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.42); background: transparent;
 }
 .lib-feat.on { border-color: var(--lib-edge-hi); color: var(--lib-ink); background: var(--lib-feat); }
 .lib-feat-mark { font-size: 9px; line-height: 1; }
-.lib-note { padding: 8px 14px 0; font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: .14em; color: var(--lib-dim); }
+.lib-note { padding: 8px 14px 0; font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em; color: var(--lib-dim); }
 
 .lib-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--lib-hint); }
 .lib-act { display: flex; align-items: center; gap: 8px; background: none; border: none; padding: 0; min-height: 44px; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; }
@@ -1149,7 +1151,7 @@ body.theme-nintendo .lib-art-scan { background: repeating-linear-gradient(180deg
 /* .b-glyph is the 🐵 emoji in the 30vmin box the voxel X used to fill: the
    glyph sizes off font-size, centred, with the same bootIn timing and green
    drop-shadow. */
-.boot .b-glyph { width: 30vmin; height: 30vmin; display: flex; align-items: center; justify-content: center; font-size: 24vmin; line-height: 1; animation: bootIn 1.4s ease forwards; filter: drop-shadow(0 0 30px rgba(120, 255, 80, .8)); }
+.boot .b-glyph { width: 30vmin; height: 30vmin; display: flex; align-items: center; justify-content: center; font-size: 24vmin; line-height: 1; animation: bootIn 1.4s ease forwards; filter: drop-shadow(0 0 30px oklch(0.891 0.242 calc(var(--h) + 9) / 0.8)); }
 @keyframes bootIn { 0% { opacity: 0; transform: scale(.5); } 40% { opacity: 1; transform: scale(1.1); } 70% { transform: scale(1); } 100% { opacity: 0; transform: scale(1.4); } }
 @keyframes bootOut { 0%, 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
 
@@ -1187,8 +1189,8 @@ body.theme-nintendo .lib-art-scan { background: repeating-linear-gradient(180deg
 .pad-debug {
   position: fixed; left: 8px; bottom: 8px; z-index: 300;
   margin: 0; padding: 6px 8px; max-width: 92vw;
-  font: 11px/1.45 "Share Tech Mono", monospace; color: #9cff6b;
-  background: rgba(0, 0, 0, .78); border: 1px solid rgba(120, 255, 80, .5);
+  font: 11px/1.45 "Share Tech Mono", monospace; color: oklch(0.909 0.206 calc(var(--h) + 7));
+  background: rgba(0, 0, 0, .78); border: 1px solid oklch(0.891 0.242 calc(var(--h) + 9) / 0.5);
   white-space: pre-wrap; word-break: break-all; pointer-events: none;
 }
 

@@ -520,12 +520,15 @@ function loadImage(src) {
     const isBlob = typeof Blob !== "undefined" && src instanceof Blob;
     const url = isBlob ? URL.createObjectURL(src) : src;
     const img = new Image();
-    const done = (value) => {
+    // A loaded image keeps its blob URL: a GPU reset can drop its decoded
+    // pixels, and the canvas replay (rememberCanvas) decodes it again from
+    // that URL. Revoked, the replay drew nothing: a shelf cart's atlas (ship,
+    // enemies, shots) came back blank after the tab was backgrounded.
+    img.onload = () => resolve(img);
+    img.onerror = () => {
       if (isBlob) URL.revokeObjectURL(url);
-      resolve(value);
+      resolve(null);
     };
-    img.onload = () => done(img);
-    img.onerror = () => done(null);
     img.src = url;
   });
 }
@@ -603,6 +606,7 @@ const paintedCanvases = [];
 const canvasRepaintHooks = new Set();
 const armedGames = new WeakSet();
 let canvasRepaintTimer = 0;
+let canvasDecoding = false;
 
 function stableCanvas(width, height) {
   const canvas = document.createElement("canvas");
@@ -694,6 +698,26 @@ function repaintLostCanvases(attempt) {
     scheduleCanvasRepaint(attempt + 1);
     return;
   }
+  // drawImage of an image whose decoded pixels went with the GPU process
+  // paints nothing, so every image the logs draw is decoded again first
+  // (decode() re-reads it from its URL, which loadImage keeps alive).
+  if (!canvasDecoding) {
+    const decodes = [];
+    for (const [entry] of lost) {
+      for (const op of entry.ops) {
+        const src = op.call === "drawImage" ? op.args[0] : null;
+        if (src && typeof src.decode === "function" && src.src) decodes.push(src.decode().catch(() => {}));
+      }
+    }
+    if (decodes.length) {
+      canvasDecoding = true;
+      Promise.all(decodes).then(() => {
+        repaintLostCanvases(attempt);
+        canvasDecoding = false;
+      });
+      return;
+    }
+  }
   let repainted = 0;
   lost.forEach(([entry, canvas], i) => {
     const ctx = contexts[i];
@@ -753,6 +777,159 @@ function armCanvasRepaint(game) {
   else if (game.events && typeof game.events.once === "function") game.events.once("ready", arm);
 }
 
+// A texture painted once on a canvas, handed to Phaser as an image instead.
+//
+// The replay above keeps a lost canvas's recipe, and a phone still lost the
+// art: Image Seal (a Dezaemon shelf cart, PLAYed from the editor) went on
+// scoring with no ship, enemies, shots or scenery, while the score popups (cut
+// from game_ui, an <img>) and the SP button's rim and ground (a canvas painted
+// from shapes alone) came through. What a canvas had drawn from an image did
+// not come back; what is an image did, because Phaser re-uploads an image
+// texture from the image itself when WebGL is restored.
+//
+// So a canvas texture that is finished (a stacked atlas, the Dezaemon scenery
+// strips, the SP faces, the zako bullet) is encoded to a PNG once and its
+// texture source swapped to that image (TextureSource.updateSource, which
+// keeps every Frame and the GL texture it uploads into). A GPU reset then has
+// no canvas of theirs to lose, and Phaser restores them the way it restores
+// game_ui. The blob URL is kept, as loadImage keeps it, so the image can be
+// decoded again. Until the PNG is ready the canvas, with its recipe, stands
+// in. Resolves false and changes nothing where it cannot: no toBlob, a Phaser
+// without updateSource, or a texture re-stacked or removed meanwhile.
+function bakeCanvasTexture(textures, key) {
+  let texture = null;
+  let source = null;
+  let canvas = null;
+  try {
+    texture = textures && textures.exists(key) ? textures.get(key) : null;
+    source = texture && texture.source ? texture.source[0] : null;
+    canvas = source ? source.image : null;
+  } catch (_e) {
+    return Promise.resolve(false);
+  }
+  if (
+    !canvas || typeof HTMLCanvasElement === "undefined" || !(canvas instanceof HTMLCanvasElement) ||
+    typeof canvas.toBlob !== "function" || typeof source.updateSource !== "function"
+  ) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      canvas.toBlob((blob) => resolve(blob || null), "image/png");
+    } catch (_e) {
+      resolve(null);
+    }
+  }).then((blob) => (blob ? loadImage(blob) : null)).then((img) => {
+    if (!img) return false;
+    const current = textures.exists(key) ? textures.get(key) : null;
+    if (
+      current !== texture || source.image !== canvas ||
+      img.naturalWidth !== canvas.width || img.naturalHeight !== canvas.height
+    ) {
+      if (typeof img.src === "string" && img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+      return false;
+    }
+    source.updateSource(img);
+    return true;
+  }).catch(() => false);
+}
+
+// The tallest or widest atlas this runtime hands Phaser.
+//
+// A level's atlas is stacked under the local one (_stackAtlas), and the local
+// game_asset alone is 2048 x 2128. The editor's atlas for an imported cart
+// repacks the stock frames with the cart's at 2048 wide, so stacking a shelf
+// cart such as Image Seal makes one sheet a few thousand pixels taller again.
+// A desktop GPU loads a texture up to 16384 on a side, and Image Seal played
+// there. A phone's limit can be lower, and a texture over it uploads as
+// nothing: on a Pixel 9 the ship, enemies, shots, scenery (cut from the same
+// sheet) and title art were all missing from the first frame, while game_ui's
+// HUD, the bomb ring and the OSD text drew. So a stacked atlas taller or wider
+// than this is repacked frame by frame into a sheet that fits
+// (packStackedFrames). 4096 is what every WebGL device loads; a renderer that
+// reports less is believed.
+const ATLAS_SIDE_LIMIT = 4096;
+function atlasSideLimit(scene) {
+  let max = 0;
+  try {
+    const game = scene && scene.sys && scene.sys.game ? scene.sys.game : scene ? scene.game : null;
+    const renderer = game ? game.renderer : null;
+    if (renderer && typeof renderer.getMaxTextureSize === "function") {
+      max = Number(renderer.getMaxTextureSize()) || 0;
+    }
+  } catch (_e) {
+    max = 0;
+  }
+  return max > 0 ? Math.min(max, ATLAS_SIDE_LIMIT) : ATLAS_SIDE_LIMIT;
+}
+// `frameMap` is a stacked atlas's frame map: a frame at y < localH is cut from
+// `localSource`, one at y >= localH from `image` (drawn at localH). Each
+// distinct rect is copied once into a new sheet, shelf-packed tallest first
+// and no wider or taller than `limit`, and every name is pointed at its copy.
+// A local frame the incoming atlas took over by name is left out, which is
+// most of a cart's repacked copy of the stock frames. Null when the frames
+// will not fit in `limit` either: the caller stacks as before.
+function packStackedFrames(localSource, image, localH, frameMap, limit) {
+  const PAD = 1;
+  const rects = new Map();
+  const names = [];
+  for (const name in frameMap) {
+    const f = frameMap[name] && frameMap[name].frame;
+    if (!f || !(f.w > 0) || !(f.h > 0)) continue;
+    const incoming = f.y >= localH;
+    const y = incoming ? f.y - localH : f.y;
+    const key = (incoming ? "I" : "L") + "|" + f.x + "|" + y + "|" + f.w + "|" + f.h;
+    if (!rects.has(key)) {
+      rects.set(key, { src: incoming ? image : localSource, x: f.x, y, w: f.w, h: f.h, dx: 0, dy: 0 });
+    }
+    names.push([name, key]);
+  }
+  const list = Array.from(rects.values()).sort((a, b) => b.h - a.h || b.w - a.w);
+  let cx = 0;
+  let cy = 0;
+  let rowH = 0;
+  let usedW = 0;
+  for (const r of list) {
+    if (r.w > limit || r.h > limit) return null;
+    if (cx + r.w > limit) {
+      cy += rowH + PAD;
+      cx = 0;
+      rowH = 0;
+    }
+    r.dx = cx;
+    r.dy = cy;
+    cx += r.w + PAD;
+    rowH = Math.max(rowH, r.h);
+    usedW = Math.max(usedW, r.dx + r.w);
+  }
+  const usedH = cy + rowH;
+  if (!list.length || usedH > limit) return null;
+  const canvas = stableCanvas(usedW, usedH);
+  const ctx = canvas.getContext("2d");
+  for (const r of list) ctx.drawImage(r.src, r.x, r.y, r.w, r.h, r.dx, r.dy, r.w, r.h);
+  const frames = {};
+  for (const [name, key] of names) {
+    const r = rects.get(key);
+    frames[name] = { frame: { x: r.dx, y: r.dy, w: r.w, h: r.h } };
+  }
+  return { canvas, frames };
+}
+// The canvas and frame map for `image` stacked under `localSource`, the way
+// _stackAtlas has always laid it out, unless that is over atlasSideLimit and
+// the frames repack into a sheet that is not.
+function stackedAtlasCanvas(scene, localSource, image, frameMap) {
+  const localH = localSource.height;
+  const width = Math.max(localSource.width, image.width);
+  const height = localH + image.height;
+  const limit = atlasSideLimit(scene);
+  if (width > limit || height > limit) {
+    const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
+    if (packed) return packed;
+  }
+  const canvas = stableCanvas(width, height);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(localSource, 0, 0);
+  ctx.drawImage(image, 0, localH);
+  return { canvas, frames: frameMap };
+}
 // Is this page an app built around one game? The export's shell says so
 // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
 // (__OFFLINE_LEVEL_NAME__); the hosted game says neither.
@@ -1159,10 +1336,6 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
 
         const localW = localSource.width;
         const localH = localSource.height;
-        const mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
-        const mctx = mergedCanvas.getContext("2d");
-        mctx.drawImage(localSource, 0, 0);
-        mctx.drawImage(image, 0, localH);
 
         const mergedFrameMap = frameMapOf(localAtlas);
         // Incoming frames are offset down by the local atlas height.
@@ -1188,8 +1361,10 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           }
         }
 
+        const merged = stackedAtlasCanvas(scene, localSource, image, mergedFrameMap);
         scene.textures.remove(atlasKey);
-        scene.textures.addAtlas(atlasKey, mergedCanvas, { frames: mergedFrameMap });
+        scene.textures.addAtlas(atlasKey, merged.canvas, { frames: merged.frames });
+        bakeCanvasTexture(scene.textures, atlasKey);
         return true;
       } catch (atlasErr) {
         console.warn("Failed to merge atlas:", atlasErr);
@@ -1237,6 +1412,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const frames = frameMapOf(atlas);
         scene.textures.remove(atlasKey);
         scene.textures.addAtlas(atlasKey, canvas, { frames });
+        bakeCanvasTexture(scene.textures, atlasKey);
         this._stockCutin = stock;
         return true;
       } catch (paintErr) {
@@ -1572,6 +1748,11 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     applyCabinet(levelData) {
       const cabinet = normalizeCabinet(levelData && levelData.cabinet);
       if (!cabinet || typeof document === "undefined") return Promise.resolve(false);
+      // A cabinet is drawn around the 256x480 screen; the Saturn field
+      // (?field=saturn) is a different shape, so it plays without one.
+      if (typeof window !== "undefined" && window.__GAME_FIELD__ && window.__GAME_FIELD__.saturn) {
+        return Promise.resolve(false);
+      }
       const host = document.getElementById("phaser-canvas") || document.body;
       if (cabinet.howto) installCabinetHowto(cabinet.howto);
       const backdrop = cabinet.backdrop
@@ -1719,12 +1900,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     // app leaves custom-bgm/ out of its binary); should that fail, the stock
     // sound in opts.stockPaths goes back under the key rather than silence.
     // Returns the discovered source URLs.
-    _queueAudioOverrides(levelData, opts) {
+    _queueAudioOverrides(levelData, opts, recipe) {
       const scene = this.scene;
       const sourceURLs = {};
       if (!levelData.customAudioURLs || typeof levelData.customAudioURLs !== "object") {
         return sourceURLs;
       }
+      const allKeys = Object.keys(levelData.customAudioURLs);
 
       const manifestKey = opts.manifestKey || DEFAULTS.audio.manifestKey;
       const customBgmDir = opts.customBgmDir || DEFAULTS.audio.customBgmDir;
@@ -1745,6 +1927,10 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const uUrl = levelData.customAudioURLs[uKey];
         if (uUrl && typeof uUrl === "string") {
           sourceURLs[uKey] = uUrl;
+          // A track the game says it will not play (opts.wants: a cut of
+          // 2028.Ai's music for a longer stage than the level has) is
+          // named, for whoever lists the level's music, and not downloaded.
+          if (typeof opts.wants === "function" && !opts.wants(uKey, recipe, allKeys)) continue;
           if (scene.cache.audio.exists(uKey)) {
             scene.cache.audio.remove(uKey);
           }
@@ -1793,13 +1979,13 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
     // Queue every audio source (URL overrides + collected blobs), run the
     // loader once, and resolve with the level's BGM source URL map. Resolves
     // immediately when low mode is on or nothing needs loading.
-    _loadAudio(levelData, opts, lowMode) {
+    _loadAudio(levelData, opts, lowMode, recipe) {
       const scene = this.scene;
       if (lowMode || !opts.enabled) {
         return Promise.resolve(this._queueOnlySourceURLs(levelData));
       }
 
-      const sourceURLs = this._queueAudioOverrides(levelData, opts);
+      const sourceURLs = this._queueAudioOverrides(levelData, opts, recipe);
       // Each entry in sourceURLs queued exactly one loader job above.
       let queuedCount = Object.keys(sourceURLs).length;
 
@@ -1984,7 +2170,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
 
           return Promise.all([
-            this._loadAudio(data, o.audio, o.lowMode),
+            this._loadAudio(data, o.audio, o.lowMode, recipe),
             this.applyStoryImages(data),
           ]).then(([bgmSourceURLs]) => ({
             recipe,

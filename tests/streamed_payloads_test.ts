@@ -103,7 +103,7 @@ Deno.test("the level loader — the plugin and the bundle's inlined copy — str
   }
   const bundle = await read("static/games/2028-ai/game.bundle.js");
   assert(
-    bundle.includes("audio: { stockPaths: RESOURCE_PATHS },"),
+    bundle.includes("audio: { stockPaths: RESOURCE_PATHS, "),
     "the game does not hand the loader its stock sounds",
   );
 });

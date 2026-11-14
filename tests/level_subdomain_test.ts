@@ -1,14 +1,18 @@
 // Level subdomains (lib/level-subdomain.ts, wired in main.ts): the root of
 // `<name>.codemonkey.games` goes to the game with that level, or to the
-// editor's NEW GAME named for the label when no level has the name.
+// Dezaemon shelf game of that slug (the editor's ?play= hand-off), or to the
+// editor's NEW GAME named for the label when neither has the name.
 
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import {
   cloudLevelAliases,
   cloudLevelKeys,
+  cloudShelfSlugs,
   hostnameOf,
   isAliasName,
+  levelSlug,
   matchLevelKey,
+  matchShelfSlug,
   planAliases,
   resetLevelKeysCache,
   subdomainOf,
@@ -23,6 +27,7 @@ const KEYS = [
   "Ramsie",
   "ramsie",
   "Choh Parody Spirit Twin Ex_Sound ver",
+  "Master Arena Mod",
 ];
 
 Deno.test("the label is read off the Host, without port, case or a www", () => {
@@ -51,6 +56,58 @@ Deno.test("a label finds its level exactly, then by case, ties resolved the same
   assertEquals(matchLevelKey("ramsie", KEYS), "ramsie");
   assertEquals(matchLevelKey("RAMSIE", KEYS), "Ramsie");
   assertStrictEquals(matchLevelKey("nobody", KEYS), null);
+});
+
+Deno.test("a key a hostname cannot spell is reached by its slug: master-arena-mod is `Master Arena Mod`", () => {
+  assertEquals(levelSlug("Master Arena Mod"), "master-arena-mod");
+  assertEquals(
+    levelSlug("Choh Parody Spirit Twin Ex_Sound ver"),
+    "choh-parody-spirit-twin-ex-sound-ver",
+  );
+  assertEquals(levelSlug("  --a.b__c--  "), "a-b-c");
+  assertEquals(levelSlug("___"), "");
+  assertEquals(matchLevelKey("master-arena-mod", KEYS), "Master Arena Mod");
+  assertEquals(
+    matchLevelKey("choh-parody-spirit-twin-ex-sound-ver", KEYS),
+    "Choh Parody Spirit Twin Ex_Sound ver",
+  );
+  // The empty slug is no label: a key of only punctuation answers to nothing.
+  assertStrictEquals(matchLevelKey("", ["___"]), null);
+  // A level's own name beats an alias spelled like another level's slug.
+  assertEquals(
+    matchLevelKey("master-arena-mod", KEYS, { "master-arena-mod": "2028" }),
+    "Master Arena Mod",
+  );
+  // Two keys that slug alike resolve the same way every time.
+  assertEquals(
+    matchLevelKey("a-b", ["a_b", "A B", "a b"]),
+    "A B",
+  );
+  // The game gets the stored key, spaces and all, never the slug.
+  assertEquals(
+    subdomainTarget("master-arena-mod", KEYS),
+    "/games/2028-ai?level=Master+Arena+Mod",
+  );
+  assertEquals(
+    subdomainRedirect(
+      new Request("http://x/?god=1", {
+        headers: { host: "master-arena-mod.codemonkey.games" },
+      }),
+      KEYS,
+    )!.headers.get("location"),
+    "/games/2028-ai?level=Master+Arena+Mod&god=1",
+  );
+  // Still a NEW GAME when no level has the name, slug or not.
+  assertEquals(
+    subdomainTarget("master-arena", KEYS),
+    "/editor/?new=master-arena",
+  );
+});
+
+Deno.test("an alias cannot shadow a level's slug", () => {
+  const plan = planAliases("2028", ["master-arena-mod"], KEYS, {});
+  assertEquals(plan.set, {});
+  assertEquals(plan.errors.length, 1);
 });
 
 Deno.test("a known level goes to the game, an unknown one to NEW GAME under its name, no listing to the game", () => {
@@ -91,7 +148,10 @@ Deno.test("the visitor's own query rides along — all of it but the level the l
     }),
     KEYS,
   )!;
-  assertEquals(r.headers.get("location"), "/games/2028-ai?level=2019-PS2&god=1");
+  assertEquals(
+    r.headers.get("location"),
+    "/games/2028-ai?level=2019-PS2&god=1",
+  );
 });
 
 Deno.test("only a subdomain's root is redirected, on GET and HEAD, honouring X-Forwarded-Host", () => {
@@ -258,6 +318,134 @@ Deno.test("the alias index is one read, cached, and keeps only well-formed names
   resetLevelKeysCache();
 });
 
+// ---- the Dezaemon shelf ----------------------------------------------------------
+
+const SHELF = ["elfin", "2028", "excel-beat", "a28"];
+
+Deno.test("a shelf game's subdomain runs the cart, the way the launcher's coverflow does", () => {
+  assertEquals(matchShelfSlug("elfin", SHELF), "elfin");
+  assertStrictEquals(matchShelfSlug("Elfin", SHELF), null);
+  assertStrictEquals(matchShelfSlug("nobody", SHELF), null);
+  assertStrictEquals(matchShelfSlug("elfin", []), null);
+  assertEquals(
+    subdomainTarget("elfin", KEYS, {}, "", SHELF),
+    "/editor/?game=2028-ai&play=elfin",
+  );
+  // No shelf handed over (or an unreadable one): still NEW GAME, as before.
+  assertEquals(subdomainTarget("elfin", KEYS), "/editor/?new=elfin");
+  assertEquals(
+    subdomainTarget("excel-beat", KEYS, {}, "", SHELF),
+    "/editor/?game=2028-ai&play=excel-beat",
+  );
+  assertEquals(
+    subdomainTarget("my-first-level", KEYS, {}, "", SHELF),
+    "/editor/?new=my-first-level",
+  );
+});
+
+Deno.test("a level, or an alias, keeps a name the shelf also has; no listing ignores the shelf", () => {
+  // "2028" is both a level key and a shelf slug: the level wins.
+  assertEquals(
+    subdomainTarget("2028", KEYS, {}, "", SHELF),
+    "/games/2028-ai?level=2028",
+  );
+  assertEquals(
+    subdomainTarget("elfin", KEYS, { elfin: "2019-PS2" }, "", SHELF),
+    "/games/2028-ai?level=2019-PS2",
+  );
+  assertEquals(
+    subdomainTarget("elfin", null, {}, "", SHELF),
+    "/games/2028-ai?level=elfin",
+  );
+});
+
+Deno.test("a shelf subdomain carries the visitor's query but not the game or cart they typed", () => {
+  // elfin.codemonkey.games/?turbo=1 — the report that found the bug.
+  assertEquals(
+    subdomainTarget("elfin", KEYS, {}, "?turbo=1", SHELF),
+    "/editor/?game=2028-ai&play=elfin&turbo=1",
+  );
+  assertEquals(
+    subdomainTarget("elfin", KEYS, {}, "?play=other&game=x&bfg=1", SHELF),
+    "/editor/?game=2028-ai&play=elfin&bfg=1",
+  );
+  const r = subdomainRedirect(
+    new Request("http://x/?turbo=1", {
+      headers: { host: "elfin.codemonkey.games" },
+    }),
+    KEYS,
+    {},
+    undefined,
+    SHELF,
+  )!;
+  assertEquals(r.status, 302);
+  assertEquals(
+    r.headers.get("location"),
+    "/editor/?game=2028-ai&play=elfin&turbo=1",
+  );
+  // Without the shelf it was NEW GAME — the bug.
+  assertEquals(
+    subdomainRedirect(
+      new Request("http://x/?turbo=1", {
+        headers: { host: "elfin.codemonkey.games" },
+      }),
+      KEYS,
+    )!.headers.get("location"),
+    "/editor/?new=elfin&turbo=1",
+  );
+});
+
+Deno.test("the shelf listing is one shallow read of the library index, cached, and survives an outage once warm", async () => {
+  resetLevelKeysCache();
+  const calls: string[] = [];
+  let clock = 1_000;
+  let fail = false;
+  const fetcher = ((input: string | URL | Request) => {
+    calls.push(String(input));
+    if (fail) return Promise.resolve(new Response("boom", { status: 500 }));
+    return Promise.resolve(
+      new Response(JSON.stringify({ elfin: true, "excel-beat": true })),
+    );
+  }) as typeof fetch;
+  const now = () => clock;
+  assertEquals(await cloudShelfSlugs("https://db.test", fetcher, now), [
+    "elfin",
+    "excel-beat",
+  ]);
+  // The library is a shared store at the database root, not under shmupX/.
+  assertEquals(calls, ["https://db.test/dezaemon/index.json?shallow=true"]);
+  clock += 30_000;
+  await cloudShelfSlugs("https://db.test", fetcher, now);
+  assertEquals(calls.length, 1, "served from the cache inside a minute");
+  clock += 31_000;
+  fail = true;
+  assertEquals(await cloudShelfSlugs("https://db.test", fetcher, now), [
+    "elfin",
+    "excel-beat",
+  ]);
+  assertEquals(
+    calls.length,
+    2,
+    "re-read after a minute, stale copy kept on failure",
+  );
+  resetLevelKeysCache();
+  assertStrictEquals(
+    await cloudShelfSlugs("https://db.test", fetcher, now),
+    null,
+  );
+  // An empty library is an empty list, not a failure.
+  resetLevelKeysCache();
+  assertEquals(
+    await cloudShelfSlugs(
+      "https://db.test",
+      (() => Promise.resolve(new Response("null"))) as typeof fetch,
+      now,
+    ),
+    [],
+  );
+  resetLevelKeysCache();
+});
+
 Deno.test("planAliases adds labels no level owns and refuses the rest", () => {
   assertEquals(isAliasName("2019"), true);
   assertEquals(isAliasName("www"), false);
@@ -349,4 +537,31 @@ Deno.test("the bundle's inlined loader looks aliases up the way the plugin does"
     assertEquals(plugin.includes(line), true, "the plugin lacks: " + line);
     assertEquals(bundle.includes(line), true, "the bundle lacks: " + line);
   }
+});
+
+Deno.test("an arcade subdomain boots its board in cmg's arcade player, before any level, alias or shelf game", () => {
+  const sfex2 = "https://cmg.easierbycode.deno.net/arcade/play.html?rom=sfex2";
+  assertEquals(subdomainTarget("sfex2", KEYS), sfex2);
+  assertEquals(subdomainTarget("sfex2", null), sfex2);
+  assertEquals(
+    subdomainTarget("sfex2", [...KEYS, "sfex2"], { sfex2: "2019-PS2" }, "", [
+      "sfex2",
+    ]),
+    sfex2,
+  );
+  assertEquals(
+    subdomainTarget("sfex2", KEYS, {}, "?rom=other&args=-nosound"),
+    sfex2 + "&args=-nosound",
+  );
+  assertEquals(
+    subdomainRedirect(
+      new Request("http://x/", { headers: { host: "sfex2.codemonkey.games" } }),
+      KEYS,
+    )!.headers.get("location"),
+    sfex2,
+  );
+  assertEquals(
+    planAliases("2019-PS2", ["sfex2"], KEYS, {}).errors,
+    ['"sfex2" opens an arcade board (ARCADE_SUBDOMAINS)'],
+  );
 });

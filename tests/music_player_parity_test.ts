@@ -305,7 +305,9 @@ Deno.test("a song whose loop holds no note plays once and then rests — the run
 // title). Each falls back to the stock music when its tape does not sound.
 Deno.test("the runtime plays the set list's title, game over and stage clear tapes", () => {
   const title = js.slice(js.indexOf("\n  var PhaserTitleScene = class"), js.indexOf("\n  var PhaserAdvScene = class"));
-  assert(/if \(!gameState\.lowModeFlg\) \{\n\s+startDezaemonBgm\(this, "title"\);/.test(title), "title: any level with a title tape");
+  // A level with no title tape plays the title track its custom audio names
+  // (playTitleBgm, tests/stage_bgm_by_length_test.ts).
+  assert(/if \(!gameState\.lowModeFlg\) \{\n\s+if \(!startDezaemonBgm\(this, "title"\)\) playTitleBgm\(this\);/.test(title), "title: any level with a title tape");
   const clear = js.slice(js.indexOf("\n    stageClear() {"), js.indexOf("\n    stageClear() {") + 900);
   assert(clear.includes('startDezaemonBgm(this, "clear")'), "stage clear starts the clear tape");
   assert(clear.includes("!dezaBgmSequence(this.recipe.dezaemonBgm)"), "a one-piece soundtrack keeps its pause");

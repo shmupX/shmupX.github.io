@@ -1,0 +1,356 @@
+{
+  "format": "shmupx-parity-reading/1",
+  "side": "saturn",
+  "level": "Ramsie",
+  "stage": 0,
+  "from": "run 1, the cart surveyed 2026-10-26 (ramsie-sav-full), transcribed from the tables of docs/parity-ramsie-survey.md: seconds to 0.1, a record's lives as their mean, no spawn counts, and positions only where README-Parity.md quotes one",
+  "source": "cart",
+  "samples": 600,
+  "seconds": 60.1,
+  "wallSeconds": 218,
+  "scrollFrom": 39,
+  "scrollTo": 2686,
+  "rate": { "median": 44.3, "min": 42.5, "max": 45 },
+  "maxObjs": 152,
+  "maxLive": 91,
+  "records": [
+    {
+      "pid": 128,
+      "first": {
+        "t": 36.6,
+        "scroll": 1632,
+        "x": null,
+        "y": null,
+        "art": "sprite 67"
+      },
+      "spawns": null,
+      "art": ["sprite 67"],
+      "lives": [6.3]
+    },
+    {
+      "pid": 129,
+      "first": {
+        "t": 36.6,
+        "scroll": 1632,
+        "x": null,
+        "y": null,
+        "art": "sprite 71"
+      },
+      "spawns": null,
+      "art": ["sprite 71"],
+      "lives": [2.7]
+    },
+    {
+      "pid": 130,
+      "first": {
+        "t": 6.8,
+        "scroll": 340,
+        "x": null,
+        "y": null,
+        "art": "sprite 75"
+      },
+      "spawns": null,
+      "art": ["sprite 75"],
+      "lives": [1.5]
+    },
+    {
+      "pid": 132,
+      "first": {
+        "t": 43.8,
+        "scroll": 1955,
+        "x": null,
+        "y": null,
+        "art": "sprite 83"
+      },
+      "spawns": null,
+      "art": ["sprite 83"],
+      "lives": [1.1]
+    },
+    {
+      "pid": 134,
+      "first": {
+        "t": 26.6,
+        "scroll": 1203,
+        "x": null,
+        "y": null,
+        "art": "sprite 91"
+      },
+      "spawns": null,
+      "art": ["sprite 91"],
+      "lives": [0.8]
+    },
+    {
+      "pid": 135,
+      "first": {
+        "t": 21.8,
+        "scroll": 995,
+        "x": null,
+        "y": null,
+        "art": "sprite 95"
+      },
+      "spawns": null,
+      "art": ["sprite 95"],
+      "lives": [33.1]
+    },
+    {
+      "pid": 162,
+      "first": {
+        "t": 43.1,
+        "scroll": 1923,
+        "x": null,
+        "y": null,
+        "art": "sprite 171"
+      },
+      "spawns": null,
+      "art": ["sprite 171"],
+      "lives": [15.8]
+    },
+    {
+      "pid": 163,
+      "first": {
+        "t": 24,
+        "scroll": 1091,
+        "x": null,
+        "y": null,
+        "art": "sprite 175"
+      },
+      "spawns": null,
+      "art": ["sprite 175"],
+      "lives": [5.7]
+    },
+    {
+      "pid": 164,
+      "first": {
+        "t": 24,
+        "scroll": 1091,
+        "x": null,
+        "y": null,
+        "art": "sprite 179"
+      },
+      "spawns": null,
+      "art": ["sprite 179"],
+      "lives": [4.4]
+    },
+    {
+      "pid": 176,
+      "first": {
+        "t": 16.7,
+        "scroll": 769,
+        "x": null,
+        "y": null,
+        "art": "sprite 195"
+      },
+      "spawns": null,
+      "art": ["sprite 195"],
+      "lives": [2.7]
+    },
+    {
+      "pid": 182,
+      "first": {
+        "t": 17.4,
+        "scroll": 801,
+        "x": null,
+        "y": null,
+        "art": "sprite 219"
+      },
+      "spawns": null,
+      "art": ["sprite 219"],
+      "lives": [4.2]
+    },
+    {
+      "pid": 183,
+      "first": {
+        "t": 49.1,
+        "scroll": 2193,
+        "x": null,
+        "y": null,
+        "art": "sprite 223"
+      },
+      "spawns": null,
+      "art": ["sprite 223"],
+      "lives": [2.8]
+    },
+    {
+      "pid": 192,
+      "first": {
+        "t": 54.4,
+        "scroll": 2433,
+        "x": 284,
+        "y": null,
+        "art": "sprite 259"
+      },
+      "spawns": null,
+      "art": ["sprite 259"],
+      "lives": [1.3]
+    },
+    {
+      "pid": 193,
+      "first": {
+        "t": 54.4,
+        "scroll": 2433,
+        "x": 35,
+        "y": null,
+        "art": "sprite 261"
+      },
+      "spawns": null,
+      "art": ["sprite 261"],
+      "lives": [1.6]
+    },
+    {
+      "pid": 208,
+      "first": {
+        "t": 17.1,
+        "scroll": 787,
+        "x": null,
+        "y": 283,
+        "art": "sprite 267"
+      },
+      "spawns": null,
+      "art": ["sprite 267"],
+      "lives": [0.8]
+    },
+    {
+      "pid": 209,
+      "first": {
+        "t": 9.8,
+        "scroll": 468,
+        "x": null,
+        "y": null,
+        "art": "sprite 269"
+      },
+      "spawns": null,
+      "art": ["sprite 269"],
+      "lives": [4]
+    },
+    {
+      "pid": 210,
+      "first": {
+        "t": 49.1,
+        "scroll": 2193,
+        "x": null,
+        "y": null,
+        "art": "sprite 271"
+      },
+      "spawns": null,
+      "art": ["sprite 271"],
+      "lives": [3.5]
+    },
+    {
+      "pid": 224,
+      "first": {
+        "t": 25.4,
+        "scroll": 1152,
+        "x": null,
+        "y": null,
+        "art": "sprite 275"
+      },
+      "spawns": null,
+      "art": ["sprite 275"],
+      "lives": [2.2]
+    }
+  ],
+  "bullets": [
+    { "what": "type 0", "art": "dezaBullet0", "shooter": 209, "births": 5 },
+    { "what": "type 0", "art": "dezaBullet0", "shooter": 129, "births": 4 },
+    { "what": "type 0", "art": "dezaBullet0", "shooter": 210, "births": 3 },
+    { "what": "type 0", "art": "dezaBullet0", "shooter": 176, "births": 3 },
+    { "what": "type 0", "art": "dezaBullet0", "shooter": 162, "births": 1 },
+    {
+      "what": "big shot (record 5)",
+      "art": "record 5 cells",
+      "shooter": null,
+      "births": 30
+    },
+    {
+      "what": "big shot (record 13)",
+      "art": "record 13 cells",
+      "shooter": null,
+      "births": 9
+    },
+    {
+      "what": "big shot (record 1)",
+      "art": "record 1 cells",
+      "shooter": null,
+      "births": 8
+    },
+    {
+      "what": "big shot (record 3)",
+      "art": "record 3 cells",
+      "shooter": null,
+      "births": 8
+    },
+    {
+      "what": "big shot (record 24)",
+      "art": "record 24 cells",
+      "shooter": null,
+      "births": 1
+    }
+  ],
+  "ship": [
+    {
+      "art": "sprite 15",
+      "slots": "4-33",
+      "attacks": [6656],
+      "births": 11,
+      "firstT": 1.4,
+      "lastT": 33.8
+    },
+    {
+      "art": "sprite 21",
+      "slots": "68, 69",
+      "attacks": [13312],
+      "births": 4,
+      "firstT": 1.4,
+      "lastT": 33.8
+    },
+    {
+      "art": "sprite 25",
+      "slots": "68",
+      "attacks": [15360],
+      "births": 1,
+      "firstT": 31.5,
+      "lastT": 31.5
+    },
+    {
+      "art": "sprite 26",
+      "slots": "64, 65, 66, 67, 69",
+      "attacks": [256],
+      "births": 5,
+      "firstT": 31.6,
+      "lastT": 31.7
+    },
+    {
+      "art": "sprite 18",
+      "slots": "4-33",
+      "attacks": [320],
+      "births": 8,
+      "firstT": 31.7,
+      "lastT": 32
+    },
+    {
+      "art": "sprite 19",
+      "slots": "4-33",
+      "attacks": [448, 0],
+      "births": 4,
+      "firstT": 34.5,
+      "lastT": 34.7
+    },
+    {
+      "art": "sprite 27",
+      "slots": "4-33",
+      "attacks": [8960],
+      "births": 12,
+      "firstT": 40.1,
+      "lastT": 42.8
+    }
+  ],
+  "parks": [
+    { "pid": 208, "x": null, "y": 315 }
+  ],
+  "outside": [],
+  "carried": 30,
+  "added": 4,
+  "notes": [
+    "at the rewinds 30 logged birth(s) were objects carried over and 4 spawn(s) the sampler missed were added from the samples"
+  ]
+}

@@ -433,12 +433,15 @@
       const isBlob = typeof Blob !== "undefined" && src instanceof Blob;
       const url = isBlob ? URL.createObjectURL(src) : src;
       const img = new Image();
-      const done = (value) => {
+      // A loaded image keeps its blob URL: a GPU reset can drop its decoded
+      // pixels, and the canvas replay (rememberCanvas) decodes it again from
+      // that URL. Revoked, the replay drew nothing: a shelf cart's atlas (ship,
+      // enemies, shots) came back blank after the tab was backgrounded.
+      img.onload = () => resolve(img);
+      img.onerror = () => {
         if (isBlob) URL.revokeObjectURL(url);
-        resolve(value);
+        resolve(null);
       };
-      img.onload = () => done(img);
-      img.onerror = () => done(null);
       img.src = url;
     });
   }
@@ -505,6 +508,7 @@
   const canvasRepaintHooks = new Set();
   const armedGames = new WeakSet();
   let canvasRepaintTimer = 0;
+  let canvasDecoding = false;
 
   function stableCanvas(width, height) {
     const canvas = document.createElement("canvas");
@@ -596,6 +600,26 @@
       scheduleCanvasRepaint(attempt + 1);
       return;
     }
+    // drawImage of an image whose decoded pixels went with the GPU process
+    // paints nothing, so every image the logs draw is decoded again first
+    // (decode() re-reads it from its URL, which loadImage keeps alive).
+    if (!canvasDecoding) {
+      const decodes = [];
+      for (const [entry] of lost) {
+        for (const op of entry.ops) {
+          const src = op.call === "drawImage" ? op.args[0] : null;
+          if (src && typeof src.decode === "function" && src.src) decodes.push(src.decode().catch(() => {}));
+        }
+      }
+      if (decodes.length) {
+        canvasDecoding = true;
+        Promise.all(decodes).then(() => {
+          repaintLostCanvases(attempt);
+          canvasDecoding = false;
+        });
+        return;
+      }
+    }
     let repainted = 0;
     lost.forEach(([entry, canvas], i) => {
       const ctx = contexts[i];
@@ -653,6 +677,159 @@
     };
     if (game.renderer) arm();
     else if (game.events && typeof game.events.once === "function") game.events.once("ready", arm);
+  }
+  // A texture painted once on a canvas, handed to Phaser as an image instead.
+  //
+  // The replay above keeps a lost canvas's recipe, and a phone still lost the
+  // art: Image Seal (a Dezaemon shelf cart, PLAYed from the editor) went on
+  // scoring with no ship, enemies, shots or scenery, while the score popups (cut
+  // from game_ui, an <img>) and the SP button's rim and ground (a canvas painted
+  // from shapes alone) came through. What a canvas had drawn from an image did
+  // not come back; what is an image did, because Phaser re-uploads an image
+  // texture from the image itself when WebGL is restored.
+  //
+  // So a canvas texture that is finished (a stacked atlas, the Dezaemon scenery
+  // strips, the SP faces, the zako bullet) is encoded to a PNG once and its
+  // texture source swapped to that image (TextureSource.updateSource, which
+  // keeps every Frame and the GL texture it uploads into). A GPU reset then has
+  // no canvas of theirs to lose, and Phaser restores them the way it restores
+  // game_ui. The blob URL is kept, as loadImage keeps it, so the image can be
+  // decoded again. Until the PNG is ready the canvas, with its recipe, stands
+  // in. Resolves false and changes nothing where it cannot: no toBlob, a Phaser
+  // without updateSource, or a texture re-stacked or removed meanwhile.
+  function bakeCanvasTexture(textures, key) {
+    let texture = null;
+    let source = null;
+    let canvas = null;
+    try {
+      texture = textures && textures.exists(key) ? textures.get(key) : null;
+      source = texture && texture.source ? texture.source[0] : null;
+      canvas = source ? source.image : null;
+    } catch (_e) {
+      return Promise.resolve(false);
+    }
+    if (
+      !canvas || typeof HTMLCanvasElement === "undefined" || !(canvas instanceof HTMLCanvasElement) ||
+      typeof canvas.toBlob !== "function" || typeof source.updateSource !== "function"
+    ) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      try {
+        canvas.toBlob((blob) => resolve(blob || null), "image/png");
+      } catch (_e) {
+        resolve(null);
+      }
+    }).then((blob) => (blob ? loadImage(blob) : null)).then((img) => {
+      if (!img) return false;
+      const current = textures.exists(key) ? textures.get(key) : null;
+      if (
+        current !== texture || source.image !== canvas ||
+        img.naturalWidth !== canvas.width || img.naturalHeight !== canvas.height
+      ) {
+        if (typeof img.src === "string" && img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+        return false;
+      }
+      source.updateSource(img);
+      return true;
+    }).catch(() => false);
+  }
+
+  // The tallest or widest atlas this runtime hands Phaser.
+  //
+  // A level's atlas is stacked under the local one (_stackAtlas), and the local
+  // game_asset alone is 2048 x 2128. The editor's atlas for an imported cart
+  // repacks the stock frames with the cart's at 2048 wide, so stacking a shelf
+  // cart such as Image Seal makes one sheet a few thousand pixels taller again.
+  // A desktop GPU loads a texture up to 16384 on a side, and Image Seal played
+  // there. A phone's limit can be lower, and a texture over it uploads as
+  // nothing: on a Pixel 9 the ship, enemies, shots, scenery (cut from the same
+  // sheet) and title art were all missing from the first frame, while game_ui's
+  // HUD, the bomb ring and the OSD text drew. So a stacked atlas taller or wider
+  // than this is repacked frame by frame into a sheet that fits
+  // (packStackedFrames). 4096 is what every WebGL device loads; a renderer that
+  // reports less is believed.
+  const ATLAS_SIDE_LIMIT = 4096;
+  function atlasSideLimit(scene) {
+    let max = 0;
+    try {
+      const game = scene && scene.sys && scene.sys.game ? scene.sys.game : scene ? scene.game : null;
+      const renderer = game ? game.renderer : null;
+      if (renderer && typeof renderer.getMaxTextureSize === "function") {
+        max = Number(renderer.getMaxTextureSize()) || 0;
+      }
+    } catch (_e) {
+      max = 0;
+    }
+    return max > 0 ? Math.min(max, ATLAS_SIDE_LIMIT) : ATLAS_SIDE_LIMIT;
+  }
+  // `frameMap` is a stacked atlas's frame map: a frame at y < localH is cut from
+  // `localSource`, one at y >= localH from `image` (drawn at localH). Each
+  // distinct rect is copied once into a new sheet, shelf-packed tallest first
+  // and no wider or taller than `limit`, and every name is pointed at its copy.
+  // A local frame the incoming atlas took over by name is left out, which is
+  // most of a cart's repacked copy of the stock frames. Null when the frames
+  // will not fit in `limit` either: the caller stacks as before.
+  function packStackedFrames(localSource, image, localH, frameMap, limit) {
+    const PAD = 1;
+    const rects = new Map();
+    const names = [];
+    for (const name in frameMap) {
+      const f = frameMap[name] && frameMap[name].frame;
+      if (!f || !(f.w > 0) || !(f.h > 0)) continue;
+      const incoming = f.y >= localH;
+      const y = incoming ? f.y - localH : f.y;
+      const key = (incoming ? "I" : "L") + "|" + f.x + "|" + y + "|" + f.w + "|" + f.h;
+      if (!rects.has(key)) {
+        rects.set(key, { src: incoming ? image : localSource, x: f.x, y, w: f.w, h: f.h, dx: 0, dy: 0 });
+      }
+      names.push([name, key]);
+    }
+    const list = Array.from(rects.values()).sort((a, b) => b.h - a.h || b.w - a.w);
+    let cx = 0;
+    let cy = 0;
+    let rowH = 0;
+    let usedW = 0;
+    for (const r of list) {
+      if (r.w > limit || r.h > limit) return null;
+      if (cx + r.w > limit) {
+        cy += rowH + PAD;
+        cx = 0;
+        rowH = 0;
+      }
+      r.dx = cx;
+      r.dy = cy;
+      cx += r.w + PAD;
+      rowH = Math.max(rowH, r.h);
+      usedW = Math.max(usedW, r.dx + r.w);
+    }
+    const usedH = cy + rowH;
+    if (!list.length || usedH > limit) return null;
+    const canvas = stableCanvas(usedW, usedH);
+    const ctx = canvas.getContext("2d");
+    for (const r of list) ctx.drawImage(r.src, r.x, r.y, r.w, r.h, r.dx, r.dy, r.w, r.h);
+    const frames = {};
+    for (const [name, key] of names) {
+      const r = rects.get(key);
+      frames[name] = { frame: { x: r.dx, y: r.dy, w: r.w, h: r.h } };
+    }
+    return { canvas, frames };
+  }
+  // The canvas and frame map for `image` stacked under `localSource`, the way
+  // _stackAtlas has always laid it out, unless that is over atlasSideLimit and
+  // the frames repack into a sheet that is not.
+  function stackedAtlasCanvas(scene, localSource, image, frameMap) {
+    const localH = localSource.height;
+    const width = Math.max(localSource.width, image.width);
+    const height = localH + image.height;
+    const limit = atlasSideLimit(scene);
+    if (width > limit || height > limit) {
+      const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
+      if (packed) return packed;
+    }
+    const canvas = stableCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(localSource, 0, 0);
+    ctx.drawImage(image, 0, localH);
+    return { canvas, frames: frameMap };
   }
   // Is this page an app built around one game? The export's shell says so
   // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
@@ -992,10 +1169,6 @@
           }
           const localW = localSource.width;
           const localH = localSource.height;
-          const mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
-          const mctx = mergedCanvas.getContext("2d");
-          mctx.drawImage(localSource, 0, 0);
-          mctx.drawImage(image, 0, localH);
           const mergedFrameMap = frameMapOf(localAtlas);
           for (const fname in frames) {
             const decodedName = decodeFirebaseKey(fname);
@@ -1016,8 +1189,10 @@
               }
             }
           }
+          const merged = stackedAtlasCanvas(scene, localSource, image, mergedFrameMap);
           scene.textures.remove(atlasKey);
-          scene.textures.addAtlas(atlasKey, mergedCanvas, { frames: mergedFrameMap });
+          scene.textures.addAtlas(atlasKey, merged.canvas, { frames: merged.frames });
+          bakeCanvasTexture(scene.textures, atlasKey);
           return true;
         } catch (atlasErr) {
           console.warn("Failed to merge atlas:", atlasErr);
@@ -1068,6 +1243,7 @@
           const frames = frameMapOf(atlas);
           scene.textures.remove(atlasKey);
           scene.textures.addAtlas(atlasKey, canvas, { frames });
+          bakeCanvasTexture(scene.textures, atlasKey);
           this._stockCutin = stock;
           return true;
         } catch (paintErr) {
@@ -1346,6 +1522,11 @@
       applyCabinet(levelData) {
         const cabinet = normalizeCabinet(levelData && levelData.cabinet);
         if (!cabinet || typeof document === "undefined") return Promise.resolve(false);
+        // A cabinet is drawn around the 256x480 screen; the Saturn field
+        // (?field=saturn) is a different shape, so it plays without one.
+        if (typeof window !== "undefined" && window.__GAME_FIELD__ && window.__GAME_FIELD__.saturn) {
+          return Promise.resolve(false);
+        }
         const host = document.getElementById("phaser-canvas") || document.body;
         if (cabinet.howto) installCabinetHowto(cabinet.howto);
         const backdrop = cabinet.backdrop
@@ -1471,12 +1652,13 @@
       // app leaves custom-bgm/ out of its binary); should that fail, the stock
       // sound in opts.stockPaths goes back under the key rather than silence.
       // Returns the discovered source URLs.
-      _queueAudioOverrides(levelData, opts) {
+      _queueAudioOverrides(levelData, opts, recipe) {
         const scene = this.scene;
         const sourceURLs = {};
         if (!levelData.customAudioURLs || typeof levelData.customAudioURLs !== "object") {
           return sourceURLs;
         }
+        const allKeys = Object.keys(levelData.customAudioURLs);
         const manifestKey = opts.manifestKey || DEFAULTS.audio.manifestKey;
         const customBgmDir = opts.customBgmDir || DEFAULTS.audio.customBgmDir;
         const baseUrlEl = typeof document !== "undefined" ? document.getElementById(opts.baseUrlElementId || DEFAULTS.audio.baseUrlElementId) : null;
@@ -1491,6 +1673,10 @@
           const uUrl = levelData.customAudioURLs[uKey];
           if (uUrl && typeof uUrl === "string") {
             sourceURLs[uKey] = uUrl;
+            // A track the game says it will not play (opts.wants: a cut of
+            // 2028.Ai's music for a longer stage than the level has) is
+            // named, for whoever lists the level's music, and not downloaded.
+            if (typeof opts.wants === "function" && !opts.wants(uKey, recipe, allKeys)) continue;
             if (scene.cache.audio.exists(uKey)) {
               scene.cache.audio.remove(uKey);
             }
@@ -1538,12 +1724,12 @@
       // Queue every audio source (URL overrides + collected blobs), run the
       // loader once, and resolve with the level's BGM source URL map. Resolves
       // immediately when low mode is on or nothing needs loading.
-      _loadAudio(levelData, opts, lowMode) {
+      _loadAudio(levelData, opts, lowMode, recipe) {
         const scene = this.scene;
         if (lowMode || !opts.enabled) {
           return Promise.resolve(this._queueOnlySourceURLs(levelData));
         }
-        const sourceURLs = this._queueAudioOverrides(levelData, opts);
+        const sourceURLs = this._queueAudioOverrides(levelData, opts, recipe);
         let queuedCount = Object.keys(sourceURLs).length;
         return this.collectCustomAudioEntries(opts).then((entries) => {
           const blobURLs = [];
@@ -1700,7 +1886,7 @@
             const source = usingOffline ? "offline" : "firebase";
             prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
             return Promise.all([
-              this._loadAudio(data, o.audio, o.lowMode),
+              this._loadAudio(data, o.audio, o.lowMode, recipe),
               this.applyStoryImages(data)
             ]).then(([bgmSourceURLs]) => ({
               recipe,
@@ -2326,12 +2512,111 @@
     stage_end3: "assets/img/stage/stage_end3.png",
     stage_end4: "assets/img/stage/stage_end4.png"
   };
-  var GAME_DIMENSIONS = {
+  // ---- The Dezaemon field mode (?field=saturn) ------------------------------
+  //
+  // A Dezaemon 2 cart is authored for the Saturn's 320x224 screen; this
+  // runtime's own screen is 256x480, so an import shows the middle 256
+  // columns of the cart's 320 and more than twice as far ahead, and every
+  // rule that counts screen pixels (when a row comes into view, how long a
+  // bullet takes to arrive, where a change channel arms) plays out on the
+  // wrong distance. ?field=saturn plays an import on the Saturn's own
+  // screen instead. A VERTICAL cart: 320x224, the 20-column grid 1:1 from
+  // x 0, the 224-px background at 48..272, and the engine's numbers with no
+  // scale factor (README-Parity.md P1). Every DEZA_FIELD test below is one
+  // of them.
+  //
+  // A HORIZONTAL cart is the same simulation with the Saturn's screen turned
+  // across it: 320 px along the scroll axis — the scroll coordinate runs
+  // from -96 at the entry edge to 224 at the exit edge, where a vertical
+  // game's runs 0..224 — and the 224-px playfield band, lateral 48..272,
+  // across. This runtime draws a horizontal cart transposed (lateral across,
+  // the scroll down), so its field is 224x320: screen x = lateral - 48,
+  // screen y = scroll coordinate + 96. That is ?field=saturn-h, and every
+  // DEZA_FIELD_H test below is one of its numbers. Nobody types it: the
+  // boot is asked for ?field=saturn and takes the cart's own orientation.
+  //
+  // It is a boot flag, not a property of the level, because the screen's
+  // size is baked into the Phaser config and into every GW/GH copy in this
+  // file before any level has loaded. The boot scene checks the level once
+  // it resolves (dezaFieldFits) and opens the page again with the flag the
+  // level needs: without it for a level that is no Dezaemon import, and
+  // with the other field for a cart of the other orientation.
+  function readDezaFieldFlag() {
+    try {
+      var f = new URLSearchParams(window.location.search).get("field");
+      return f === "saturn" || f === "saturn-h" ? f : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  var DEZA_FIELD_FLAG = readDezaFieldFlag();
+  var DEZA_FIELD = DEZA_FIELD_FLAG !== null;
+  var DEZA_FIELD_H = DEZA_FIELD_FLAG === "saturn-h";
+  var GAME_DIMENSIONS = DEZA_FIELD_H ? {
+    WIDTH: 224,
+    HEIGHT: 320,
+    CENTER_X: 112,
+    CENTER_Y: 160
+  } : DEZA_FIELD ? {
+    WIDTH: 320,
+    HEIGHT: 224,
+    CENTER_X: 160,
+    CENTER_Y: 112
+  } : {
     WIDTH: 256,
     HEIGHT: 480,
     CENTER_X: 128,
     CENTER_Y: 240
   };
+  // The page reads this to fit the canvas (lib/game-page.ts, the exported
+  // app's shell): it is laid out before the game exists.
+  if (typeof window !== "undefined") {
+    window.__GAME_FIELD__ = {
+      width: GAME_DIMENSIONS.WIDTH,
+      height: GAME_DIMENSIONS.HEIGHT,
+      saturn: DEZA_FIELD,
+      horizontal: DEZA_FIELD_H
+    };
+  }
+  // Where the engine's two axes lie on the field: the screen x of lateral 0
+  // and the screen y of scroll coordinate 0. A vertical cart's field is the
+  // engine's own screen; a horizontal cart's shows lateral 48..272 across
+  // and starts its scroll axis 96 px above coordinate 0.
+  var DEZA_FIELD_LATERAL0 = DEZA_FIELD_H ? -48 : 0;
+  var DEZA_FIELD_SCROLL0 = DEZA_FIELD_H ? 96 : 0;
+  // The engine's despawn box (+0x173A4), whole pixels of the 320x224 screen:
+  // what a shot or a bullet has left when it is retired — lateral 16..304,
+  // scroll -16..256 in a vertical game. A horizontal game's box is not
+  // traced (README-Parity.md, T22); its field takes the same margins about
+  // its own window, lateral 16..304 and scroll -112..256, which on the
+  // transposed screen is x -32..256, y -16..352.
+  var DEZA_FIELD_BOX = DEZA_FIELD_H
+    ? { left: -32, right: 256, top: -16, bottom: 352 }
+    : { left: 16, right: 304, top: -16, bottom: 256 };
+  function dezaFieldOutside(o) {
+    return o.x < DEZA_FIELD_BOX.left || o.x > DEZA_FIELD_BOX.right ||
+      o.y < DEZA_FIELD_BOX.top || o.y > DEZA_FIELD_BOX.bottom;
+  }
+  // The field a level plays on: "saturn" for a vertical Dezaemon import,
+  // "saturn-h" for a horizontal one, null for anything else.
+  function dezaFieldFor(recipe) {
+    var m = recipe && recipe.meta && recipe.meta.dezaemonSettings;
+    if (!m) return null;
+    return m.horizontal ? "saturn-h" : "saturn";
+  }
+  // True when the level the boot resolved can be played on the field this
+  // page booted with.
+  function dezaFieldFits(recipe, flag) {
+    return dezaFieldFor(recipe) === (flag === undefined ? DEZA_FIELD_FLAG : flag);
+  }
+  // The same page on the field the level needs: ?field= taken off for a
+  // level that has none, set to the cart's own orientation otherwise.
+  function dezaFieldLeaveUrl(href, field) {
+    var u = new URL(href);
+    if (field) u.searchParams.set("field", field);
+    else u.searchParams.delete("field");
+    return u.toString();
+  }
   var STAGE_DIMENSIONS = {
     WIDTH: typeof window !== "undefined" ? window.innerWidth : GAME_DIMENSIONS.WIDTH,
     HEIGHT: typeof window !== "undefined" ? window.innerHeight : GAME_DIMENSIONS.HEIGHT,
@@ -2618,6 +2903,9 @@
   // ?story=0 overrides all of that for one run. A cart with no story of its
   // own still skips either way (PhaserAdvScene).
   function storyOff(recipe) {
+    // The story panel is laid out on 480 lines; the Saturn field has 224 and
+    // the cart has no story of its own to show there.
+    if (DEZA_FIELD) return true;
     var asked = readSearchParam("story");
     if (asked != null && asked !== "") return !readBooleanSearchParam("story", true);
     if (!componentOn("story")) return true;
@@ -3359,6 +3647,84 @@
     var ids = recipeStageIds(recipe);
     return ids[ids.length - 1];
   }
+  // ---- A stage's music, by how long the stage runs -----------------------
+  // A level's custom audio may name its stage music by the stage's length
+  // rather than by its boss: stage_bgm for every stage, and stage_bgm_<N>min
+  // for a stage that runs N minutes or longer. A stage plays the longest of
+  // them it fills, from the top (GameScene's playBossBgm), and a level that
+  // names none plays its stage themes (boss_<name>_bgm) as it always has.
+  // 2028.Ai's own record names all three it has — stage_bgm, a two-minute
+  // cut and a four-minute one — so a stage built on it gets the cut of the
+  // track its length calls for. Its hidden boss has the four-minute cut as
+  // his own theme (boss_goki_bgm), whatever the stage's length, and its third
+  // boss a track of his own (boss2_bgm, playBossFightBgm).
+  //
+  // How long a stage runs is its wave list played out, and its boss. A web
+  // stage deals one row every STAGE_WAVE_TICKS of GameScene's 120 Hz step
+  // (its waveInterval, which only an import's record sets). An import's rows
+  // stand on its scroll, waveInterval Saturn frames apart, so its last row's
+  // number is the measure. A boss fight lasts as long as the player lets it
+  // (the timer allows 99 seconds), so it counts as STAGE_BOSS_SECONDS, about
+  // what one takes: 2028.Ai's own stages, 30 to 46 rows and a boss, come to
+  // 50 to 61 seconds.
+  var STAGE_TICKS_PER_SECOND = 120;
+  var STAGE_WAVE_TICKS = 80;
+  var STAGE_BOSS_SECONDS = 30;
+  var STAGE_BGM_KEY = /^stage_bgm(?:_(\d+)min)?$/;
+  function stageRunSeconds(recipe, stageId) {
+    var stage = recipe && recipe["stage" + String(stageId)];
+    var list = stage && stage.enemylist;
+    var ticks = 0;
+    if (Array.isArray(list) && list.length) {
+      ticks = list.length * STAGE_WAVE_TICKS;
+      if (Array.isArray(stage.waveRows) && stage.waveRows.length === list.length) {
+        var perRow = Number.isFinite(stage.waveInterval) && stage.waveInterval > 0 ? stage.waveInterval : 8;
+        var lastRow = 0;
+        for (var i = 0; i < stage.waveRows.length; i++) {
+          lastRow = Math.max(lastRow, Number(stage.waveRows[i]) || 0);
+        }
+        ticks = lastRow * perRow * SATURN_TICKS_PER_FRAME;
+      }
+    }
+    var boss = recipe && recipe.bossData && recipe.bossData["boss" + String(stageId)];
+    return ticks / STAGE_TICKS_PER_SECOND + (boss ? STAGE_BOSS_SECONDS : 0);
+  }
+  // The stage length, in minutes, from which a stage track plays: 0 for
+  // stage_bgm, N for stage_bgm_<N>min. -1 for any other key.
+  function stageBgmMinutes(key) {
+    var m = STAGE_BGM_KEY.exec(String(key));
+    return m ? Number(m[1] || 0) : -1;
+  }
+  // Of `keys`, the stage track a stage that runs `seconds` plays: the one
+  // that asks for the most of the length it has. null when none of them is a
+  // stage track it fills, and the stage plays its theme.
+  function stageBgmTrack(keys, seconds) {
+    var track = null;
+    var most = -1;
+    for (var i = 0; i < keys.length; i++) {
+      var minutes = stageBgmMinutes(keys[i]);
+      if (minutes > most && minutes * 60 <= seconds) {
+        track = keys[i];
+        most = minutes;
+      }
+    }
+    return track;
+  }
+  // Whether the game plays a custom audio key at all, which the level loader
+  // asks before it downloads one (audio.wants). Every key but a stage track
+  // is played; a stage track only when a stage of the game picks it out of
+  // `keys`, the level's whole list. 2028.Ai's stages all run about a minute,
+  // so it does not download its two-minute cut, which it would decode and
+  // never play. (Its four-minute one comes down all the same, as the hidden
+  // boss's theme.)
+  function stagePlaysAudioKey(key, recipe, keys) {
+    if (stageBgmMinutes(key) < 0) return true;
+    var ids = recipeStageIds(recipe);
+    for (var i = 0; i < ids.length; i++) {
+      if (stageBgmTrack(keys, stageRunSeconds(recipe, ids[i])) === key) return true;
+    }
+    return false;
+  }
 
   // ../2019-es7/src/phaser/BootScene.js
   var EDITOR_PLAY_RECIPE_KEY = "__editorPhaserRecipe__";
@@ -3558,8 +3924,8 @@
     return new Promise(function(resolve) {
       var url = URL.createObjectURL(blob);
       var img = new Image();
+      // Kept for a GPU-reset replay, as in loadImage.
       img.onload = function() {
-        URL.revokeObjectURL(url);
         resolve(img);
       };
       img.onerror = function() {
@@ -3591,10 +3957,6 @@
     }
     var localW = localSource.width;
     var localH = localSource.height;
-    var mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
-    var mctx = mergedCanvas.getContext("2d");
-    mctx.drawImage(localSource, 0, 0);
-    mctx.drawImage(image, 0, localH);
     var mergedFrameMap = {};
     for (var lk in localFrames) {
       if (lk === "__BASE") continue;
@@ -3619,8 +3981,10 @@
         mergedFrameMap[altName] = frameData;
       }
     }
+    var merged = stackedAtlasCanvas(scene, localSource, image, mergedFrameMap);
     scene.textures.remove("game_asset");
-    scene.textures.addAtlas("game_asset", mergedCanvas, { frames: mergedFrameMap });
+    scene.textures.addAtlas("game_asset", merged.canvas, { frames: merged.frames });
+    bakeCanvasTexture(scene.textures, "game_asset");
     return true;
   }
   function cloudStageRecord(src) {
@@ -4374,8 +4738,11 @@
   // the engine clears its orientation flag for the whole title.
   var DEZA_SCREEN_W = 320;
   var DEZA_SCREEN_H = 224;
-  var DEZA_TITLE_BAND_Y = 48;
-  var DEZA_ROLL_BAND_Y = 128;
+  // On the vertical field the screen IS that 224-line picture. A horizontal
+  // cart's field is 224x320, so the title and the roll keep the middle 224
+  // columns (dezaSatX) in a band centred on its 320 lines.
+  var DEZA_TITLE_BAND_Y = DEZA_FIELD_H ? 48 : DEZA_FIELD ? 0 : 48;
+  var DEZA_ROLL_BAND_Y = DEZA_FIELD_H ? 48 : DEZA_FIELD ? 0 : 128;
   function dezaSatX(sx) {
     return sx - (DEZA_SCREEN_W - GAME_DIMENSIONS.WIDTH) / 2;
   }
@@ -4692,7 +5059,7 @@
     [".: MAKER TESTING :.", "AGENT BASS, AGENT SMITH"],
     [".: PLAN :.", "JC BUSTILLOS"],
     [".: PROGRAM :.", "CODEMONKEY.GAMES"],
-    [".: SOUND :.", "2-D"],
+    [".: SOUND :.", "2-D, MYDIFFERENTBEATS"],
     [".: STORY :.", "BRANDON, AGENT BENAQUISTA"]
   ];
   // A game that brought its own staff roll plate — staffrollName.gif in its
@@ -5974,6 +6341,7 @@
         }
       }
       tex.refresh();
+      bakeCanvasTexture(scene.textures, key);
       var img = scene.add.image(0, mapHeight - (firstRow + rowCount) * TILE, key);
       img.setOrigin(0, 0);
       container.add(img);
@@ -6156,7 +6524,8 @@
   // and its ground line 46, and only band 7 sits on the bare base.
   var CHANNEL_TRIGGER_BAND = [-16, -16, -8, -8, -8, 8, 8, 0];
   var CHANNEL_TRIGGER_BAND_H = [-16, -8, -16, -8, 8, -8, 8, 0];
-  var CHANNEL_TRIGGER_SCALE = 480 / 224;
+  // On the field (?field=saturn) the lines are the engine's own pixels.
+  var CHANNEL_TRIGGER_SCALE = DEZA_FIELD ? 1 : 480 / 224;
   function channelTrigger(ch, ground, horizontal, band) {
     var mode = ch && ch.trigger ? ch.trigger & 7 : 0;
     if (ground) mode = mode === 0 ? 4 : mode === 4 ? 0 : mode;
@@ -6165,7 +6534,9 @@
     var table = horizontal ? CHANNEL_TRIGGER_PX_H : CHANNEL_TRIGGER_PX;
     var offsets = horizontal ? CHANNEL_TRIGGER_BAND_H : CHANNEL_TRIGGER_BAND;
     var off = offsets[(band || 0) & 7];
-    return (ground ? table[mode] + off : table[mode] - off) * CHANNEL_TRIGGER_SCALE;
+    // The line is a scroll coordinate; a horizontal cart's field draws
+    // coordinate 0 at y 96 (DEZA_FIELD_SCROLL0, 0 everywhere else).
+    return (ground ? table[mode] + off : table[mode] - off) * CHANNEL_TRIGGER_SCALE + DEZA_FIELD_SCROLL0;
   }
   // The band of a formation key: a grid-spawned zako carries its placement
   // cell byte (`1 bbb nnnn`), a death-word child its parent's parameter
@@ -6356,7 +6727,8 @@
   // This runtime's bullets fly at twice the engine's pixel rate to cross a
   // playfield twice as tall, so the same distances are 128 and 192 px here.
   var DEZA_STEER = { KINK: 19, SPLIT: 17, SPLIT_AIMED: 18 };
-  var DEZA_STEER_PX = 2;                  // runtime px per engine px of flight
+  // On the field (?field=saturn) the distances are the engine's own 64 and 96.
+  var DEZA_STEER_PX = DEZA_FIELD ? 1 : 2; // runtime px per engine px of flight
   var DEZA_STEER_DIST = 64 * DEZA_STEER_PX;
   var DEZA_STEER_DIST_AIMED = 96 * DEZA_STEER_PX;
   // State 17 and state 18's no-player fallback both burst into geometry 6.
@@ -6956,6 +7328,7 @@
     ctx.fillStyle = "rgba(220,255,255,0.9)";
     ctx.fillRect(5, 3, 2, 2);
     tex.refresh();
+    bakeCanvasTexture(scene.textures, ZAKO_BULLET_KEY);
   }
   // One volley of the engine's shooter: base angle from the aim bit (re-aimed
   // every shot, so bursts track a moving player) or the enemy's facing
@@ -7127,6 +7500,15 @@
     var GW = scene.scale ? scene.scale.width : 256;
     var GH = scene.scale ? scene.scale.height : 480;
     var top = dezaHorizontal(scene) ? -96 : 0;
+    // On the field (?field=saturn) the grid is whole, so the lateral band is
+    // the engine's own 48..272. A horizontal cart's field is exactly that
+    // window — lateral 48..272 across, scroll -96..224 down — so there an
+    // enemy may fire anywhere on the screen.
+    if (DEZA_FIELD) {
+      var lateral = enemy.x - DEZA_FIELD_LATERAL0;
+      var coord = enemy.y - DEZA_FIELD_SCROLL0;
+      return coord >= top && coord <= 224 && lateral >= 48 && lateral <= 272;
+    }
     return enemy.y >= top && enemy.y <= GH && enemy.x >= 16 && enemy.x <= GW - 16;
   }
   function updateEnemyFire(scene, enemy, shootFn) {
@@ -7255,8 +7637,11 @@
     var GW = scene.scale ? scene.scale.width : 256;
     return lateral - 48 + (GW - 224) / 2;
   }
+  // On the field (?field=saturn) the screen is the engine's 224 lines, so a
+  // scroll offset from the park is its own pixels.
+  var BOSS_ENGINE_SCROLL_SCALE = DEZA_FIELD ? 1 : 2;
   function bossEngineY(parkY, scroll) {
-    return parkY + (scroll - BOSS_ENGINE_PARK_SCROLL) * 2;
+    return parkY + (scroll - BOSS_ENGINE_PARK_SCROLL) * BOSS_ENGINE_SCROLL_SCALE;
   }
   // The engine's approach primitive (+0x1A6B4) sets a CONSTANT velocity of
   // distance/256 px per frame (k=1 on arrival, k=1/2 on the death glide,
@@ -8853,6 +9238,30 @@
 
   // ../2019-es7/src/phaser/TitleScene.js
   var BOARD_CYCLE_MS = 3e3;
+  // The title's music, where the level's custom audio names one (title_bgm):
+  // 2028.Ai's own, whose title played a tone-bank tape until its soundtrack
+  // went back to a recording. It loops at the stage music's level until the
+  // game starts or the title is left.
+  var TITLE_BGM_KEY = "title_bgm";
+  function playTitleBgm(scene) {
+    try {
+      if (!scene.cache.audio.exists(TITLE_BGM_KEY)) return false;
+      var snd = scene.sound.get(TITLE_BGM_KEY) || scene.sound.add(TITLE_BGM_KEY);
+      if (snd.isPlaying) snd.stop();
+      snd.__cmgBgmBase = 0.4;
+      snd.play({ volume: cmgBgmVol(0.4), loop: true });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  function stopTitleBgm(scene) {
+    try {
+      var snd = scene.sound.get(TITLE_BGM_KEY);
+      if (snd) snd.stop();
+    } catch (e) {
+    }
+  }
   var PhaserTitleScene = class extends Phaser.Scene {
     constructor() {
       super({ key: "PhaserTitleScene" });
@@ -9099,6 +9508,14 @@
           }
         )
         : null;
+      // The score block is this runtime's own, set under a 480-line title.
+      // The Saturn's title (?field=saturn) fills its 224 lines with the two
+      // logos, the prompt and the credit, and has no such lines.
+      if (DEZA_FIELD) {
+        [this.scoreTitleImg, this.worldBestLabel, this.highScoreText, this.scoreSyncLabel, this.godBestText].forEach(function(o) {
+          if (o) o.setVisible(false);
+        });
+      }
       var self = this;
       this.startText.on("pointerup", function() {
         self.titleStart();
@@ -9185,10 +9602,12 @@
       // The soundtrack's TITLE track: a cart's drawn title's, and any level's
       // whose set list (the editor's MUSIC) names a title tape that sounds.
       // startDezaemonBgm declines a level without one, and this title has no
-      // stock music to clash with.
+      // stock music to clash with. A level with no tape plays the title
+      // track its custom audio names, where it names one (playTitleBgm).
       if (!gameState.lowModeFlg) {
-        startDezaemonBgm(this, "title");
+        if (!startDezaemonBgm(this, "title")) playTitleBgm(this);
       }
+      this.events.once("shutdown", () => stopTitleBgm(this));
       this.enterKey = null;
       this.spaceKey = null;
       try {
@@ -9517,6 +9936,7 @@
     }
     goToAdvScene() {
       stopDezaemonBgm(this);
+      stopTitleBgm(this);
       var recipe = gameState._phaserRecipe;
       if (recipe && recipe.playerData) {
         gameState.spDamage = recipe.playerData.spDamage;
@@ -10900,7 +11320,9 @@
   function dezaScaleHp(scene, hp) {
     if (typeof hp !== "number" || !isFinite(hp)) return hp;
     var k = dezaSpawnHpScale(scene);
-    return k === 1 ? hp : Math.max(1, Math.round(hp * k));
+    // Unrounded: an import's hp is a ratio of durability units, and rounding
+    // it here would put back the whole-hit drift the importer stopped baking.
+    return k === 1 ? hp : hp * k;
   }
   // Enemies aim at ONE global target that ALTERNATES between the ships on a
   // timer while both are alive — not at whichever is nearest (traced; see
@@ -11096,6 +11518,7 @@
     p.shadow = createShadow(scene, p.sprite, firstFrame, true, 5, "game_asset");
     p.shadow.play(p.animKey);
     updateShadowPosition(p.shadow, p.sprite);
+    attachTrail(scene, p.sprite, pd && pd.trail);
     p.barrierActive = false;
     p.barrierTimer = 0;
     p.barrierSprite = null;
@@ -11204,8 +11627,22 @@
       onScreenDragEnd(scene, pointer);
     });
   }
+  // The ship's own clamps on the Saturn's screen (+0xAB0E): x 60..259,
+  // y 20..212 — applied to the ship's position, whatever its art's size.
+  // A horizontal game's clamps are not traced (README-Parity.md, T22); its
+  // field keeps the same insets about its own window — lateral 60..259,
+  // 20 px in from the entry edge and 12 from the exit edge of scroll
+  // -96..224 — which on the transposed screen is x 12..211, y 20..308.
+  var DEZA_FIELD_SHIP = DEZA_FIELD_H
+    ? { left: 12, right: 211, top: 20, bottom: 308 }
+    : { left: 60, right: 259, top: 20, bottom: 212 };
   function clampPlayerX(p, x) {
+    if (DEZA_FIELD) return clamp(x, DEZA_FIELD_SHIP.left, DEZA_FIELD_SHIP.right);
     return clamp(x, p.halfW, GW - p.halfW);
+  }
+  function clampPlayerY(p, y) {
+    if (DEZA_FIELD) return clamp(y, DEZA_FIELD_SHIP.top, DEZA_FIELD_SHIP.bottom);
+    return clamp(y, 50, GH - 20);
   }
   // Touch drives player 1 only: the game is configured for a single pointer
   // (no addPointer call), so a second finger is never delivered. P2 is a pad or
@@ -11262,7 +11699,7 @@
     }
     if (moveX !== 0 || moveY !== 0) {
       p.unitX = clampPlayerX(p, p.unitX + moveX);
-      p.sprite.y = clamp(p.sprite.y + moveY, 50, GH - 20);
+      p.sprite.y = clampPlayerY(p, p.sprite.y + moveY);
       p.unitY = p.sprite.y;
     }
     if (keys && keys.sp && Phaser.Input.Keyboard.JustDown(keys.sp) || gp.sp) {
@@ -11688,6 +12125,52 @@
     }
     return fallback;
   }
+  // A record's `trail`: a particle stream hung on the sprite, the way a Phaser
+  // game hangs an emitter on a ship with startFollow. `texture` names atlas
+  // frames; `speed`, `lifespan` and `angle` take a number or [min, max];
+  // `scale` is a number or {start, end}; `blendMode` defaults to ADD. The
+  // emitter stops while its sprite is hidden and goes with it.
+  function attachTrail(scene, sprite, trail) {
+    if (!trail || typeof trail !== "object" || gameState.lowModeFlg) return null;
+    var frames = bulletFramesInAtlas(scene, [].concat(trail.texture || []), []);
+    if (!frames.length) return null;
+    var range = function(v, d) {
+      if (Array.isArray(v) && v.length === 2) return { min: +v[0], max: +v[1] };
+      return Number.isFinite(v) ? v : d;
+    };
+    var cfg = {
+      frame: frames,
+      speed: range(trail.speed, 0),
+      lifespan: range(trail.lifespan, 250),
+      scale: trail.scale && typeof trail.scale === "object"
+        ? { start: +trail.scale.start || 0, end: +trail.scale.end || 0 }
+        : (Number.isFinite(trail.scale) ? trail.scale : { start: 1, end: 0 }),
+      blendMode: trail.blendMode || "ADD",
+      follow: sprite,
+      followOffset: { x: +trail.offsetX || 0, y: +trail.offsetY || 0 }
+    };
+    if (trail.angle != null) cfg.angle = range(trail.angle, 0);
+    if (Number.isFinite(trail.frequency)) cfg.frequency = trail.frequency;
+    var emitter;
+    try {
+      emitter = scene.add.particles(0, 0, "game_asset", cfg);
+    } catch (e) {
+      return null;
+    }
+    emitter.setDepth((sprite.depth || 0) - 1);
+    var sync = function() {
+      if (!sprite.active) return;
+      emitter.emitting = sprite.visible;
+    };
+    scene.events.on("update", sync);
+    sprite.once("destroy", function() {
+      scene.events.off("update", sync);
+      emitter.stop();
+      scene.time.delayedCall(1000, function() { emitter.destroy(); });
+    });
+    sprite.setData("trail", emitter);
+    return emitter;
+  }
   function createEnemy(scene, data, x, y, itemName) {
     var frames = resolveFrames(scene, "game_asset", data.texture || []);
     var frameKey = frames[0] || "soliderA0.gif";
@@ -11747,6 +12230,7 @@
     }
     enemy.setData("shadow", shadow);
     updateShadowPosition(shadow, enemy);
+    attachTrail(scene, enemy, data.trail);
     scene.enemies.push(enemy);
     return enemy;
   }
@@ -11758,6 +12242,60 @@
     var data = scene.recipe && scene.recipe.enemyData
       ? scene.recipe.enemyData["enemy" + enemyKey] : null;
     return !(data && data.blocksClear === false);
+  }
+  // How far ahead of the screen's bottom edge a placement row is spawned, in
+  // scroll px: this runtime's 480-px screen plus 32, or — on the field
+  // (?field=saturn) — the Saturn's 224 lines plus the 48 px the grid walker
+  // starts an object above the top edge (+0x152E8, 0xE800 = -48 px). In a
+  // horizontal game the same helper starts it at -144 px (0xB800), 48 px
+  // beyond an entry edge that lies at -96: on that cart's 320-line field
+  // the lead is 320 + 48 by the same sum.
+  var DEZA_FIELD_ENTRY = 48;
+  function dezaWaveLead() {
+    return DEZA_FIELD ? GAME_DIMENSIONS.HEIGHT + DEZA_FIELD_ENTRY : 512;
+  }
+  // Sprite width and height per art band (the record bands of the stage
+  // bank: 16x16, 32x16, 16x32, 32x32, 64x32, 32x64, 64x64).
+  var DEZA_BAND_WIDTH = [16, 32, 16, 32, 64, 32, 64, 16];
+  var DEZA_BAND_HEIGHT = [16, 16, 32, 32, 32, 64, 64, 16];
+  // Where a grid spawn stands on the field (?field=saturn), from its cell:
+  // the engine stores the cell's left edge (column << 11, +0x169EE) and the
+  // sprite is drawn from it, so the centre is col*16 + w/2; on the scroll
+  // axis the object starts with its row — 48 px above the top when the gate
+  // opens — shifted by the per-band byte the arm resolver uses
+  // (CHANNEL_TRIGGER_BAND), subtracted for an air object and added for a
+  // ground one (+0x1679A), so a taller sprite's foot enters on the same
+  // line as a smaller one's.
+  //
+  // NOT applied: the engine's separate start word for a GROUND object
+  // (0x8800, where an air one takes 0xE800 = -48 px). Read as the signed
+  // -240 px and taken at this gate it would lift a turret 192 px off the
+  // terrain it is painted on, and the one ground record the Ramsie survey
+  // saw (W, band 5) stood at its row + 8 px — its row with the band byte
+  // added — on the Saturn and here alike. What differs is WHEN: here W
+  // comes on with its row, at scroll 467; the Saturn first logs it at 787,
+  // already under the screen, at the 272 px that word is when read
+  // unsigned, plus 8 (run 6). How the walker starts a ground cell is still
+  // to be read out of it (README-Parity.md, T21).
+  //
+  // A HORIZONTAL cart's field (DEZA_FIELD_H) takes the same two rules with
+  // that game's own tables: the band byte is the horizontal one
+  // (CHANNEL_TRIGGER_BAND_H, +0x2204C — there the scroll axis runs along
+  // the sprite's width), and the cell's edge is the sprite's edge along
+  // the lateral axis, which on the Saturn's turned screen is its HEIGHT —
+  // so the lateral centre is col*16 + h/2. That second half is deduced
+  // from the vertical rule, not traced or surveyed (no horizontal cart has
+  // been surveyed; README-Parity.md P1). The x returned is lateral: the
+  // caller's gridLeft carries it onto the screen (-48 on that field).
+  function dezaFieldSpawn(scene, dezaemon, col, row) {
+    var band = dezaBand(dezaemon);
+    var ground = !!(dezaemon && dezaemon.behavior && dezaemon.behavior.ground);
+    var off = (DEZA_FIELD_H ? CHANNEL_TRIGGER_BAND_H : CHANNEL_TRIGGER_BAND)[band & 7];
+    var across = (DEZA_FIELD_H ? DEZA_BAND_HEIGHT : DEZA_BAND_WIDTH)[band & 7];
+    return {
+      x: col * 16 + across / 2,
+      y: GAME_DIMENSIONS.HEIGHT + scene.dezaBg._scroll - row * 16 + (ground ? off : -off)
+    };
   }
   function enemyWave(scene) {
     if (scene.waveCount >= scene.stageEnemyPositionList.length) {
@@ -11809,6 +12347,11 @@
       if (deza) {
         ex = gridLeft + i * 16 + 16;
         ey = GH2 + scene.dezaBg._scroll - (dezaRow * 16 + 8);
+        if (DEZA_FIELD && scene.waveDueByScroll && enemyData.dezaemon) {
+          var at = dezaFieldSpawn(scene, enemyData.dezaemon, i, dezaRow);
+          ex = gridLeft + at.x;
+          ey = at.y;
+        }
         if (!scene.waveDueByScroll) {
           // Legacy tick-timed stages keep the fly-in clamp.
           if (ey > -16) ey = -16;
@@ -12115,6 +12658,11 @@
   // decoded settings; a Dezaemon import divides by its own weapon instead
   // (dezaDamageUnit).
   var DEZA_BOMB_UNIT = 5120;
+  // An imported enemy's hp is its durability in units over the cart's divisor,
+  // unrounded, and each hit subtracts attack units over the same divisor. Both
+  // are exact ratios but not exact floats, so a kill that lands on zero can
+  // leave a residue of a few 1e-16. Anything this close to spent is spent.
+  var DEZA_HP_EPS = 1e-9;
   var DEZA_BOMB_POWER = { 1: 4096, 2: 5632, 3: 6144, 4: 4608, 5: 10240, 6: 3584, 7: 3584, 8: 512 };
   // Dispatcher nibble -> behaviour. 0 and 8 fire nothing at all.
   var DEZA_BOMB_BY_NIBBLE = [0, 1, 2, 3, 4, 5, 6, 8, 0, 1, 2, 3, 4, 5, 7, 8];
@@ -12343,6 +12891,7 @@
     ctx.drawImage(scratch, Math.round(r - w / 2), Math.round(r - h / 2));
     ctx.restore();
     tex.refresh();
+    bakeCanvasTexture(scene.textures, key);
     return true;
   }
   // {full, empty} texture keys for this game's own SP button, or null to
@@ -12903,7 +13452,7 @@
       if (hp === "infinity") continue;
       hp -= b.power;
       e.setData("hp", hp);
-      if (hp <= 0) {
+      if (hp <= DEZA_HP_EPS) {
         if (e.getData("type") === "boss") scene.bossDie(e, b.owner);
         else scene.enemyDie(e, true, b.owner);
       }
@@ -13012,8 +13561,8 @@
   // 2026-09-02 from KUMITATE's option lists — see FORMAT.md, settings +0x14).
   // The names are the old transposed ones; the behaviour is right. Its seven
   // values are VULCAN A, VULCAN B, MISSILE, HOMING, SHADOW, WAVE, BOUND, and
-  // the editor's SUB (byte0 bits0-2) is the field this runtime does NOT
-  // implement — its own autofire stands in for that one.
+  // the editor's SUB (byte0 bits0-2) has its own handlers further down:
+  // fireDezaSub for values 1-4, the pod updaters for 5-7.
   //
   // Max shots per tap (+0x21C50) and reload interval in frames (+0x21C58).
   // The reload drains 1/frame for every type; only type 7 adds the power-scaled
@@ -13514,13 +14063,20 @@
       pod.y = at.y;
     }
   }
-  // byte0 bits0-2 — the editor's SUB. Values 1-4 are shot types this runtime
-  // does not implement (its own autofire stands in), and the charge lockout
-  // rule is special-cased on type 7. Values 5/6/7 are OPTION A/B/C, which are
-  // pods rather than shots and are implemented above.
+  // byte0 bits0-2 — the editor's SUB. Values 1-4 are shot types (fireDezaSub
+  // below; the stock autofire that used to stand in for them is switched off
+  // while one is equipped), and the charge lockout rule is special-cased on
+  // type 7. Values 5/6/7 are OPTION A/B/C, which are pods rather than shots
+  // and are implemented above.
   function dezaSubType(scene, p) {
     var lo = dezaLoadout(scene, p);
     return lo ? (lo.sub & 7) : 0;
+  }
+  // SUB 1-4 fire their own shots, so the stock autofire has nothing left to
+  // stand in for.
+  function dezaSubOwnsShot(scene, p) {
+    var t = dezaSubType(scene, p);
+    return t >= 1 && t <= 4;
   }
   function dezaMainType(scene, p) {
     var lo = dezaLoadout(scene, p);
@@ -13583,7 +14139,7 @@
     if (!dezaLoadout(scene, p) || !p.sprite || p.dead) return;
     var st = p.dezaWeapons || (p.dezaWeapons = {
       tick: 0, burst: 255, reload: 0, aim: 64, wobble: 0, gauge: 0, busy: 0,
-      chargeType: 0, chargeLevel: -1, subClock: 0
+      chargeType: 0, chargeLevel: -1, subClock: 0, subReload: 0
     });
     st.tick = (st.tick + 1) % SATURN_TICKS_PER_FRAME;
     if (st.tick !== 0) return;
@@ -13617,9 +14173,9 @@
         st.gauge = 0;
       }
     }
-    // A charge past 31 always locks out the MAIN weapon. It locks the SUB —
-    // which this runtime's own autofire stands in for — only when the SUB
-    // type is 7: charge_step +0xA0F0 tests `cmp/eq #7` at +0xA2EA against the
+    // A charge past 31 always locks out the MAIN weapon. It locks the SUB
+    // only when the SUB type is 7, so SUB 1-4 below keep firing through a
+    // charge: charge_step +0xA0F0 tests `cmp/eq #7` at +0xA2EA against the
     // bits0-2 array and stores flag 3 rather than 1 into 0x0608CB10[player],
     // and only flag bit 1 gates the autofire. (The bomb is never gated: it
     // runs off its own button.) Corrected 2026-09-02; this used to lock both
@@ -13650,6 +14206,22 @@
       // on the MAIN weapon, which gets a flat -3 when it is type 7.
       if (stype === 7 && st.reload !== 0) st.reload = Math.max(0, st.reload - (L + 2));
     }
+
+    // --- SUB 1-4: one dispatcher call per re-arm, its own reload ---
+    // The gate is the MAIN one's twin, keyed on the SUB field: +0x21C60 is 1
+    // shot per tap for all four and +0x21C68 the reload. This runtime
+    // autofires, so the tap cap never applies and the period is the reload.
+    // Load-then-drain, as MAIN above and OPTION B do. (Whether the drain is a
+    // plain 1 a frame for all four is assumed from MAIN 1-6; the SUB gate's
+    // own drain has not been read for types 1-4.)
+    var subT = dezaSubType(scene, p);
+    if (subT >= 1 && subT <= 4) {
+      if (st.subReload === 0) {
+        fireDezaSub(scene, p, subT, L);
+        st.subReload = DEZA_SUB_INTERVAL[subT];
+      }
+      if (st.subReload !== 0) st.subReload -= 1;
+    }
     p.dezaLastX = p.sprite.x;
   }
   if (typeof window !== "undefined") {
@@ -13665,6 +14237,10 @@
     window.__fireDezaMain = fireDezaMain;
     window.__dezaShotLevel = dezaShotLevel;
     window.__DEZA_MAIN_DAMAGE = DEZA_MAIN_DAMAGE;
+    window.__fireDezaSub = fireDezaSub;
+    window.__DEZA_SUB_DAMAGE = DEZA_SUB_DAMAGE;
+    window.__DEZA_SUB_INTERVAL = DEZA_SUB_INTERVAL;
+    window.__DEZA_SUB_MUZZLES = DEZA_SUB_MUZZLES;
     window.__DEZA_MAIN5_STEP = DEZA_MAIN5_STEP;
     window.__DEZA_MAIN5_STEP_OPTC = DEZA_MAIN5_STEP_OPTC;
     window.__DEZA_MAIN6_SCALE = DEZA_MAIN6_SCALE;
@@ -13842,6 +14418,142 @@
     else if (vx > 0) st.aim = Math.max(40, st.aim - 2);
     else st.aim += st.aim < 64 ? 1 : st.aim > 64 ? -1 : 0;
   }
+  // ---- SUB 1-4: H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER -------------------
+  //
+  // What is TRACED here and what is NOT. Read this before trusting a number.
+  //
+  // Traced (FORMAT.md settings +0x14, README-Parity P5):
+  //   - the cadence pair, the SUB twins of MAIN's +0x21C50/+0x21C58;
+  //   - the FIRST and LAST entry of each damage table (13312..5120 and so on),
+  //     and that the level index is the OPTION count like every other table;
+  //   - that H-MISSILE at OPTION 0 is two objects of 13312 each, in slots
+  //     68-69 — the first two slots after P1's pod block 64-67, so SUB shots
+  //     do not draw from MAIN's 30-slot window (the Oct 26-27 survey).
+  //
+  // NOT traced — PROVISIONAL, written without the disc (jump table +0x15150
+  // entries 1-4, entry 1 = +0xF498, have never been disassembled):
+  //   - the three middle entries of each damage table, filled in as the even
+  //     steps every traced five-entry table of this engine takes;
+  //   - every muzzle offset, shot count above OPTION 0, speed, acceleration,
+  //     turn rate and lifetime below, and what each weapon actually does —
+  //     the behaviours are read off the editor's names and the size of the
+  //     damage numbers (tables 3 and 4 are two orders of magnitude under 1 and
+  //     2, the mark of the per-frame-of-contact weapons MAIN 4-6);
+  //   - the SUB slot window's size (12 = slots 68-79, up to P2's pods at 80).
+  // When the handlers are traced, replace the DEZA_SUB_* constants; the
+  // dispatch, cadence, damage units and slot bookkeeping do not change.
+  var DEZA_SUB_BURST = [0, 1, 1, 1, 1, 1, 3, 0];        // +0x21C60, max shots per tap
+  var DEZA_SUB_INTERVAL = [0, 24, 32, 10, 32, 1, 8, 0]; // +0x21C68, reload frames
+  var DEZA_SUB_DAMAGE = [
+    null,
+    [13312, 11264, 9216, 7168, 5120],     // 1  +0x21D6C  ends traced
+    [19712, 17664, 15616, 13568, 11520],  // 2  +0x21D8C  ends traced
+    [256, 224, 192, 160, 128],            // 3  +0x21DAC  ends traced; per frame (assumed)
+    [1024, 1056, 1088, 1120, 1152]        // 4  +0x21DCC  ends traced; per frame (assumed)
+  ];
+  var DEZA_SUB_SLOT_WINDOW = 12;
+  // PROVISIONAL. Lateral muzzle offsets by OPTION count, in position units.
+  // Row 0 is the surveyed pair; one more missile a level after that is MAIN
+  // 1's rule borrowed, squaring with per-shot damage that falls as it rises.
+  var DEZA_SUB_MUZZLES = [
+    [-768, 768],
+    [-1024, 0, 1024],
+    [-1536, -512, 512, 1536],
+    [-2048, -1024, 0, 1024, 2048],
+    [-2560, -1536, -512, 512, 1536, 2560]
+  ];
+  // PROVISIONAL flight numbers, units/frame and engine angle units.
+  var DEZA_SUB1_LAUNCH = 512, DEZA_SUB1_ACCEL = 48, DEZA_SUB1_MAX = 1536, DEZA_SUB1_TURN = 6;
+  var DEZA_SUB2_LAUNCH = 256, DEZA_SUB2_ACCEL = 64;
+  var DEZA_SUB3_SPEED = 640;
+  var DEZA_SUB4_SPEED = 1536, DEZA_SUB4_ANGLE = 32, DEZA_SUB4_LIFE = 96;
+  function dezaLiveSubSlots(scene, p) {
+    var n = 0, i, b;
+    for (i = 0; i < scene.playerBullets.length; i++) {
+      b = scene.playerBullets[i];
+      if (b && b.active && b.getData("owner") === p.index) n += b.getData("dezaSubSlots") || 0;
+    }
+    return n;
+  }
+  // One dispatcher call: the whole volley or nothing, as every handler of this
+  // engine reserves its slots up front.
+  function fireDezaSub(scene, p, type, L) {
+    var ship = p.sprite;
+    var dmg = (DEZA_SUB_DAMAGE[type] || DEZA_SUB_DAMAGE[1])[L];
+    // No x1.5 here: that rule (+0xBA00) pays for flying with the SUB off, and
+    // a SUB shot exists only when it is on.
+    var row = type === 4 ? [-768, 768] : DEZA_SUB_MUZZLES[L] || DEZA_SUB_MUZZLES[0];
+    if (dezaLiveSubSlots(scene, p) + row.length > DEZA_SUB_SLOT_WINDOW) return 0;
+    var i, b, th, fired = 0;
+    for (i = 0; i < row.length; i++) {
+      var x = ship.x + dezaPx(row[i]);
+      var y = ship.y - dezaPx(1024);
+      if (type === 1) {
+        // H-MISSILE: launched straight up, accelerating, turning toward the
+        // nearest target. One hit, spent on contact.
+        b = spawnDezaPlayerShot(scene, p, x, y, 0, -dezaVel(DEZA_SUB1_LAUNCH),
+          dezaHitDamage(scene, dmg));
+        if (b) b.setData("dezaSubHome", { heading: 0, speed: DEZA_SUB1_LAUNCH, target: null });
+      } else if (type === 2) {
+        // S-MISSILE: dead straight, accelerating. One hit.
+        b = spawnDezaPlayerShot(scene, p, x, y, 0, -dezaVel(DEZA_SUB2_LAUNCH),
+          dezaHitDamage(scene, dmg));
+        if (b) b.setData("dezaAccelY", -dezaVel(DEZA_SUB2_ACCEL) / SATURN_TICKS_PER_FRAME);
+      } else if (type === 3) {
+        // G-MISSILE: a slow fan that ploughs through what it touches, billing
+        // every overlapping frame.
+        th = Math.round(row[i] / 128) * DEZA_ANG;
+        b = spawnDezaPlayerShot(scene, p, x, y,
+          Math.sin(th) * dezaVel(DEZA_SUB3_SPEED), -Math.cos(th) * dezaVel(DEZA_SUB3_SPEED),
+          dezaFrameDamage(scene, dmg));
+        if (b) b.setData("dezaPerFrame", true);
+      } else {
+        // RF-LASER: a diagonal pair that reflects off the side walls, billing
+        // every overlapping frame until its lifetime runs out.
+        th = (row[i] < 0 ? -DEZA_SUB4_ANGLE : DEZA_SUB4_ANGLE) * DEZA_ANG;
+        b = spawnDezaPlayerShot(scene, p, x, y,
+          Math.sin(th) * dezaVel(DEZA_SUB4_SPEED), -Math.cos(th) * dezaVel(DEZA_SUB4_SPEED),
+          dezaFrameDamage(scene, dmg));
+        if (b) {
+          b.setData("dezaPerFrame", true);
+          b.setData("dezaReflect", true);
+          b.setData("dezaLife", DEZA_SUB4_LIFE * SATURN_TICKS_PER_FRAME);
+        }
+      }
+      if (b) { b.setData("dezaSubSlots", 1); fired++; }
+    }
+    if (fired) scene.playSound("se_shot", 0.1);
+    return fired;
+  }
+  // H-MISSILE's flight, one tick: accelerate to the cap and turn toward the
+  // nearest live target ahead. PROVISIONAL — see the block comment above.
+  function dezaStepSubHoming(scene, bullet, home) {
+    var target = home.target;
+    if (!target || !target.active) {
+      target = null;
+      var best = Infinity;
+      for (var i = 0; i < scene.enemies.length; i++) {
+        var e = scene.enemies[i];
+        if (!e || !e.active || e.getData("hp") === "infinity") continue;
+        if (e.getData("dezaNoCollision")) continue;
+        var d2 = (e.x - bullet.x) * (e.x - bullet.x) + (e.y - bullet.y) * (e.y - bullet.y);
+        if (d2 < best) { best = d2; target = e; }
+      }
+      home.target = target;
+    }
+    if (target) {
+      var want = Math.atan2(target.x - bullet.x, bullet.y - target.y) / DEZA_ANG;
+      var d = ((want - home.heading + 384) % 256) - 128;
+      var turn = DEZA_SUB1_TURN / SATURN_TICKS_PER_FRAME;
+      home.heading = (home.heading + Math.max(-turn, Math.min(turn, d)) + 256) % 256;
+    }
+    home.speed = Math.min(DEZA_SUB1_MAX, home.speed + DEZA_SUB1_ACCEL / SATURN_TICKS_PER_FRAME);
+    var th = home.heading * DEZA_ANG;
+    bullet.setData("dezaVx", Math.sin(th) * dezaVel(home.speed));
+    bullet.setData("dezaVy", -Math.cos(th) * dezaVel(home.speed));
+    bullet.setRotation(th - Math.PI / 2);
+    snapQuarterTurn(bullet);
+  }
   // The charge release, and — for types 2 and 3 — every other frame of the
   // attack that follows it.
   function fireDezaCharge(scene, p, type, level, st) {
@@ -13955,7 +14667,7 @@
           scene.bossHp = hp;
           scene.checkBossDanger();
         }
-        if (hp <= 0) {
+        if (hp <= DEZA_HP_EPS) {
           if (isBoss) scene.bossDie(en, c.owner);
           else scene.enemyDie(en, true, c.owner);
         }
@@ -14063,6 +14775,16 @@
     }
     var home = bullet.getData("dezaHome");
     if (home) dezaStepHoming(scene, bullet, home);
+    var subHome = bullet.getData("dezaSubHome");
+    if (subHome) dezaStepSubHoming(scene, bullet, subHome);
+    if (bullet.getData("dezaReflect")) {
+      var rvx = bullet.getData("dezaVx") || 0;
+      if ((bullet.x <= 0 && rvx < 0) || (bullet.x >= GAME_DIMENSIONS.WIDTH && rvx > 0)) {
+        bullet.setData("dezaVx", -rvx);
+        bullet.setRotation(Math.atan2(bullet.getData("dezaVy") || 0, -rvx));
+        snapQuarterTurn(bullet);
+      }
+    }
     return true;
   }
   // A growing shot's hit box, the engine's way: half_x = ((scale>>3)*k)>>8 with
@@ -14446,7 +15168,8 @@
       // A pod is placed by its own updater and lives as long as the loadout
       // does, so it is exempt from the off-screen cull that retires shots.
       if (bullet.getData("dezaPod")) continue;
-      if (bullet.y < -20 || bullet.y > GH3 + 20 || bullet.x < -20 || bullet.x > GW4 + 20) {
+      if (DEZA_FIELD ? dezaFieldOutside(bullet)
+          : bullet.y < -20 || bullet.y > GH3 + 20 || bullet.x < -20 || bullet.x > GW4 + 20) {
         bullet.destroy();
         scene.playerBullets.splice(b, 1);
       }
@@ -15559,6 +16282,8 @@
       scene.stageClear();
       return;
     }
+    // His own music, where the level names one for this stage's boss.
+    playBossFightBgm(scene, stageId);
     // Same spawn-time scaler the zako get: the boss core is initialised
     // through it too (`+0x1AFF4`). bossMaxHp follows, so the HP-stage bands —
     // which are fractions of one bar, never a multiplier — are unaffected.
@@ -15619,6 +16344,7 @@
     scene.bossShadow = createShadow(scene, scene.bossSprite, bossFrame, bossShadowReverse, bossShadowOffsetY);
     scene.bossSprite.setData("shadow", scene.bossShadow);
     armBossOverlay(scene, scene.bossSprite, bossData);
+    attachTrail(scene, scene.bossSprite, bossData.trail);
     var patternSlot = bossPatternSlot(bossData, stageId);
     armBossStances(scene, bossData, patternSlot);
     // Run by his own record Akuma is Akuma throughout — his voice and his
@@ -15840,8 +16566,12 @@
           scene.bossHpBarFg.setVisible(false);
           // A tone-bank soundtrack plays on through the hidden boss as it does
           // through every other boss; only the mp3 path swaps to Goki's own
-          // track.
-          if (!scene._dezaBgm) {
+          // track, whatever the stage was playing: its theme or the stage
+          // track its length called for. A level's custom audio may name his
+          // (2028.Ai's is its four-minute cut), and where that is the very
+          // track the stage is already playing, it plays on instead of
+          // starting over (sameBgmTrack).
+          if (!scene._dezaBgm && !sameBgmTrack(scene.stageBgmName, "boss_goki_bgm")) {
             try {
               var oldBgm = scene.sound.get(scene.stageBgmName);
               if (oldBgm && oldBgm.isPlaying) oldBgm.stop();
@@ -16884,6 +17614,24 @@
   var P2_HUD_TINT = 3120639;
   var GW13 = GAME_DIMENSIONS.WIDTH;
   var GH11 = GAME_DIMENSIONS.HEIGHT;
+  // An enemy that has flown off the screen for good. On the field
+  // (?field=saturn) the bottom line is the despawn box's 256; the sides are
+  // that box widened to 16 px outside the picture, because a zako's own
+  // bound is per size class (+0x4C8C) and not yet read (README-Parity.md,
+  // T21), and the grid's outer columns stand inside x 16. Nothing leaves by
+  // the top: a grid spawn enters from there.
+  //
+  // The sides are counted on the lateral axis, 16 px outside the 320-px
+  // grid: on a horizontal cart's field the grid reaches 48 px past each
+  // edge of the picture (DEZA_FIELD_LATERAL0), and its outer columns must
+  // not be retired where they are placed.
+  function dezaZakoLeft(enemy, bottomMargin) {
+    if (DEZA_FIELD) {
+      var lateral = enemy.x - DEZA_FIELD_LATERAL0;
+      return enemy.y > DEZA_FIELD_BOX.bottom || lateral < -16 || lateral > 336;
+    }
+    return enemy.y > GH11 + bottomMargin || enemy.x < -40 || enemy.x > GW13 + 40;
+  }
   var GCX6 = GAME_DIMENSIONS.CENTER_X;
   var GCY3 = GAME_DIMENSIONS.CENTER_Y;
   // --- The Saturn's own score line -------------------------------------------
@@ -17005,6 +17753,52 @@
   }
   function recipeData() {
     return gameState._phaserRecipe || null;
+  }
+  // The key a stage's music plays under: the stage track its length calls
+  // for (stageBgmTrack), of the ones the level loaded, or else `themeKey`.
+  // Boss rush deals no waves, whatever the stage's list holds.
+  function stageBgmKey(scene, stageId, themeKey) {
+    var keys = [];
+    try {
+      keys = scene.cache.audio.getKeys();
+    } catch (e) {
+    }
+    var seconds = gameState.shortFlg ? 0 : stageRunSeconds(scene.recipe || recipeData(), stageId);
+    return stageBgmTrack(keys, seconds) || themeKey;
+  }
+  // A boss's own music. boss<N>_bgm in a level's custom audio is the fight
+  // with stage N's boss, numbered as the record's bossData numbers him, and
+  // it takes over from the stage's music as he arrives (bossAdd), from the
+  // top. A level that names none keeps the stage's music through the fight,
+  // as it always has, and a tone-bank soundtrack keeps its own boss slot.
+  // 2028.Ai names one for its third boss, boss2_bgm.
+  function playBossFightBgm(scene, stageId) {
+    if (scene._dezaBgm || gameState.lowModeFlg) return false;
+    var key = "boss" + String(stageId) + "_bgm";
+    try {
+      if (!scene.cache.audio.exists(key)) return false;
+    } catch (e) {
+      return false;
+    }
+    // The very track the stage is on already plays on.
+    if (sameBgmTrack(scene.stageBgmName, key)) return false;
+    try {
+      var stageBgm = scene.sound.get(scene.stageBgmName);
+      if (stageBgm && stageBgm.isPlaying) stageBgm.stop();
+    } catch (e) {
+    }
+    scene.stageBgmName = key;
+    scene.playBgm(key, 0.4);
+    return true;
+  }
+  // Whether two audio keys are one track: the level named the same source
+  // for both. Such a track plays on where the game would otherwise swap one
+  // key's sound for the other's.
+  function sameBgmTrack(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    var urls = gameState.bgmSourceURLs;
+    return !!(urls && urls[a] && urls[a] === urls[b]);
   }
   function rectOverlap(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -17172,7 +17966,9 @@
           // to their scenery whatever the save's speed curve does: row r is
           // due when the scroll reaches r*16 - 512 px — the same window the
           // tick formula below encodes at the legacy constant 2 px/frame.
-          if (self0.waveDueByScroll) return Math.max(0, row * 16 - 512);
+          // On the field (?field=saturn) it is the Saturn's own gate, the
+          // row 48 px above a 224-px top (dezaWaveLead).
+          if (self0.waveDueByScroll) return Math.max(0, row * 16 - dezaWaveLead());
           if (self0.dezaBg) {
             return Math.max(0, (row * perRow - 256) * SATURN_TICKS_PER_FRAME);
           }
@@ -17809,15 +18605,17 @@
       });
       var game = this.game;
       this.time.delayedCall(2500, function() {
-        var urls = gameState.bgmSourceURLs;
         var currentKey = self.stageBgmName;
         var nextStageId = gameState.stageId + 1;
         var bossNames = ["bison", "barlog", "sagat", "vega", "fang"];
         var nextBossName = bossNames[nextStageId] || "";
-        var nextKey = nextBossName ? "boss_" + nextBossName + "_bgm" : "";
+        // What the next stage will play (stageBgmKey). A theme it shares
+        // with this one pauses here and the next stage resumes it. A stage
+        // track is cut to its stage, so it starts over with every stage.
+        var nextKey = nextBossName ? stageBgmKey(self, nextStageId, "boss_" + nextBossName + "_bgm") : "";
         var recipeNow = gameState._phaserRecipe;
         var lastStage = recipeNow ? lastStageId(recipeNow) : 4;
-        var sameBgm = urls && currentKey && nextKey && urls[currentKey] && urls[nextKey] && urls[currentKey] === urls[nextKey];
+        var sameBgm = stageBgmMinutes(nextKey) < 0 && sameBgmTrack(currentKey, nextKey);
         if (sameBgm) {
           try {
             var sounds = self.sound.getAll();
@@ -18036,7 +18834,7 @@
               en.setData("hp", ehp);
               self.bossHp = ehp;
               self.checkBossDanger();
-              if (ehp <= 0) {
+              if (ehp <= DEZA_HP_EPS) {
                 self.bossDie(en, p.index);
               }
             } else {
@@ -18342,7 +19140,9 @@
       }
       var bossNames = ["bison", "barlog", "sagat", "vega", "fang"];
       var name = bossNames[assetStageId(stageId)] || "bison";
-      var key = "boss_" + name + "_bgm";
+      // The stage track the stage's length calls for, or its theme where the
+      // level names none (stageBgmKey).
+      var key = stageBgmKey(this, stageId, "boss_" + name + "_bgm");
       this.stageBgmName = key;
       if (gameState.bgmContinuityActive && gameState.currentBgmKey) {
         try {
@@ -18525,7 +19325,9 @@
         if (p.dead) continue;
         p.shootTimer += 1;
         var interval = p.shootSpeed === "speed_high" ? Math.floor(p.shootInterval * 0.6) : p.shootInterval;
-        if (p.dezaShotLocked) p.shootTimer = 0;
+        // A cart whose SUB is 1-4 fires that weapon itself (fireDezaSub); the
+        // stock shot only ever stood in for it.
+        if (p.dezaShotLocked || dezaSubOwnsShot(this, p)) p.shootTimer = 0;
         else if (p.shootTimer >= interval) {
           p.shootTimer = 0;
           shootBullets(this, p);
@@ -18558,7 +19360,7 @@
         // NO-COLLISION attribute, dezaNoCollision); it still leaves when it
         // flies off.
         if (enemy.getData("dezaNoContact") || enemy.getData("dezaNoCollision")) {
-          if (enemy.getData("dezaGone") || enemy.y > GH11 + 20 || enemy.x < -40 || enemy.x > GW13 + 40) {
+          if (enemy.getData("dezaGone") || dezaZakoLeft(enemy, 20)) {
             this.enemies.splice(e, 1);
             var ncShadow = enemy.getData("shadow");
             if (ncShadow && ncShadow.active) ncShadow.destroy();
@@ -18617,7 +19419,7 @@
                   triggerHaptic("bossHit", hapticPadOf(this, pb.getData("owner")));
                   this.checkBossDanger();
                 }
-                if (poolHp - pbPool <= 0) {
+                if (poolHp - pbPool <= DEZA_HP_EPS) {
                   if (isBoss) this.bossDie(enemy, pb.getData("owner"));
                   else this.enemyDie(enemy, false, pb.getData("owner"));
                 }
@@ -18665,7 +19467,7 @@
                 }
                 this.showHitImpact(pb.x, pb.y, false);
                 this.playSound("se_damage", 0.15);
-                if (ehp <= 0) {
+                if (ehp <= DEZA_HP_EPS) {
                   if (isBoss) {
                     this.bossDie(enemy, pb.getData("owner"));
                   } else {
@@ -18743,7 +19545,7 @@
     // long, or a pool-spawned object outside the despawn box); it used to
     // be honoured only for the no-contact branch above, so a retired zako
     // with a hitbox stayed in the pool.
-    if (!isBoss && (enemy.getData("dezaGone") || enemy.y > GH11 + entryMargin || enemy.x < -40 || enemy.x > GW13 + 40)) {
+    if (!isBoss && (enemy.getData("dezaGone") || dezaZakoLeft(enemy, entryMargin))) {
           var idx = this.enemies.indexOf(enemy);
           if (idx >= 0) this.enemies.splice(idx, 1);
           var osShadow = enemy.getData("shadow");
@@ -18789,7 +19591,8 @@
           }
         }
         if (eBullet.getData("tints")) flashOverlayTint(this, eBullet);
-        if (eBullet.y > GH11 + 20 || eBullet.y < -20 || eBullet.x < -20 || eBullet.x > GW13 + 20) {
+        if (DEZA_FIELD ? dezaFieldOutside(eBullet)
+          : eBullet.y > GH11 + 20 || eBullet.y < -20 || eBullet.x < -20 || eBullet.x > GW13 + 20) {
           eBullet.destroy();
           this.enemyBullets.splice(eb, 1);
           continue;
@@ -19453,20 +20256,29 @@
       }
     }
     showGameOverPanel() {
+      // The panel stacks under the ship's portrait on 480 lines. On the
+      // Saturn field (?field=saturn) there are 224, so the portrait is left
+      // out and the score and GO TO TITLE stack straight under GAME OVER.
+      var stackY = this.loseFace.y + this.loseFace.height;
+      if (DEZA_FIELD) {
+        this.loseFace.setVisible(false);
+        if (this.shipFace && this.shipFace.setVisible) this.shipFace.setVisible(false);
+        stackY = this.gameOverTxt.y + this.gameOverTxt.height / 2 - 22;
+      }
       if (scoreCountsAsRecord() && Number(gameState.score || 0) > Number(gameState.highScore || 0)) {
         // A run played here, so it is this device's best as well, and the
         // cookie keeps it (saveHighScore stores the local best alone).
         keepLocalBest(Number(gameState.score || 0));
         this.add.sprite(
           0,
-          this.loseFace.y + this.loseFace.height + 10,
+          stackY + 10,
           "game_ui",
           "continueNewrecord.gif"
         ).setOrigin(0, 0);
       }
       var scoreTitleTxt = this.add.sprite(
         32,
-        this.loseFace.y + this.loseFace.height + 30,
+        stackY + 30,
         "game_ui",
         "scoreTxt.gif"
       );
@@ -21236,7 +22048,7 @@
         atlasKey: "game_asset",
         defaultLevel: "foo",
         lowMode: !!gameState.lowModeFlg,
-        audio: { stockPaths: RESOURCE_PATHS },
+        audio: { stockPaths: RESOURCE_PATHS, wants: stagePlaysAudioKey },
         onPrimeState: (recipe, info) => {
           gameState._phaserRecipe = recipe;
           gameState.hasCustomEnemies = info.hasCustomEnemies;
@@ -21246,6 +22058,18 @@
           cmgApplyCheatStart(recipe);
         }
       }).then((result) => {
+        // ?field=saturn fits a Dezaemon import, on the field of its own
+        // orientation: a horizontal cart is opened again on the 224x320
+        // field (and a vertical one asked for that, on the 320x224), any
+        // other level on this runtime's own screen.
+        if (DEZA_FIELD && !dezaFieldFits(gameState._phaserRecipe)) {
+          var fieldWanted = dezaFieldFor(gameState._phaserRecipe);
+          console.warn(fieldWanted
+            ? "[2028.Ai] ?field=saturn: a " + (fieldWanted === "saturn-h" ? "horizontal" : "vertical") + " cart — reopening on its own field"
+            : "[2028.Ai] ?field=saturn needs a Dezaemon import — reopening on the 256x480 screen");
+          window.location.replace(dezaFieldLeaveUrl(window.location.href, fieldWanted));
+          return;
+        }
         // Which game this is, now that its level has resolved, and only now
         // its WORLD BEST, TODAY'S BEST and local best: nothing reads or
         // writes a board before this line. The title reads gameState every

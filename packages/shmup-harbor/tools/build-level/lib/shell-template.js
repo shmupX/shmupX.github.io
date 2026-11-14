@@ -49,7 +49,19 @@ const AUDIO_UNLOCK = `
 // rotation.
 const FIT_PORTRAIT = `
 (function () {
-  var GW = 256, GH = 480;
+  // The screen the game draws: 256x480, or the Saturn's under ?field=saturn
+  // (game.bundle.js, DEZA_FIELD — read here as well because the page is
+  // laid out before the bundle runs): 320x224 for a vertical cart, and
+  // 224x320 — that screen laid across a horizontal cart's transposed world —
+  // under ?field=saturn-h, which the bundle opens itself for such a cart.
+  // Neither is turned: html.field-saturn opts out of the rotation below
+  // and the canvas is fitted as it stands.
+  var FIELD = null;
+  try { FIELD = new URLSearchParams(window.location.search).get("field"); } catch (e) {}
+  var FIELD_SATURN = FIELD === "saturn" || FIELD === "saturn-h";
+  var GW = FIELD === "saturn-h" ? 224 : FIELD_SATURN ? 320 : 256;
+  var GH = FIELD === "saturn-h" ? 320 : FIELD_SATURN ? 224 : 480;
+  if (FIELD_SATURN) document.documentElement.classList.add("field-saturn");
 
   function isRotated() {
     var t = window.getComputedStyle(document.documentElement).transform;
@@ -177,9 +189,9 @@ html, body { margin: 0; padding: 0; width: 100%; height: 100%; height: 100dvh; b
 #phaser-canvas { width: 100%; height: 100%; height: 100dvh; display: flex; align-items: center; justify-content: center; box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
 #phaser-canvas canvas { image-rendering: pixelated; image-rendering: crisp-edges; touch-action: none; }
 @media screen and (orientation: landscape) {
-  html { transform: rotate(-90deg); transform-origin: left top; width: 100vh; height: 100vw; overflow: hidden; position: absolute; top: 100%; left: 0; }
-  html body { height: 100%; }
-  html #phaser-canvas { height: 100%; }
+  html:not(.field-saturn) { transform: rotate(-90deg); transform-origin: left top; width: 100vh; height: 100vw; overflow: hidden; position: absolute; top: 100%; left: 0; }
+  html:not(.field-saturn) body { height: 100%; }
+  html:not(.field-saturn) #phaser-canvas { height: 100%; }
 }
 `;
 

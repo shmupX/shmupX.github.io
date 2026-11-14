@@ -875,7 +875,11 @@ and the spawn puts a grid object well above every line: the spawn-time
 helper `+0x152E8` (called from `+0x15434`) adds a signed word to the scroll
 coordinate — `0xE800` = **−48 px** for an air object in a vertical game,
 `0xB800` = −144 px horizontal, `0x8800` = **−240 px** for a ground object in
-either — and the spawn tail `+0x1679A` then shifts that start by the SAME
+either (the SIGNED reading, and not confirmed: Ramsie's one ground record
+is first logged by the Saturn survey at +272 px plus its band byte, which is
+the same word read unsigned — 48 px past the exit edge, in either
+orientation; README-Parity.md T21) — and the spawn tail `+0x1679A` then
+shifts that start by the SAME
 per-band byte the resolver uses, subtracted for air and added for ground, so
 a bigger sprite travels the same distance to its line as a smaller one. A
 ground 1/2/3 therefore passes its test on its first serviced frame and runs

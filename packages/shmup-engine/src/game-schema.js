@@ -19,6 +19,13 @@ function isObj(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+// An optional particle `trail` (the runtime's attachTrail): an emitter that
+// follows the sprite, drawing the atlas frames its `texture` names.
+function checkTrail(where, t, err) {
+    if (t === undefined) return;
+    if (!isObj(t) || !isTextureArray(t.texture)) err(`${where}.trail must be an object with a non-empty texture array`);
+}
+
 function isTextureArray(v) {
     return Array.isArray(v) && v.length > 0 && v.every((t) => typeof t === "string" && t.length > 0);
 }
@@ -51,6 +58,7 @@ export function validateGameJson(g) {
             if (!Number.isFinite(e.hp) && e.hp !== "infinity") err(`${k}.hp must be a number or "infinity"`);
             if (!Number.isFinite(e.score)) err(`${k}.score must be a number`);
             if (!isTextureArray(e.texture)) err(`${k}.texture must be a non-empty string array`);
+            checkTrail(k, e.trail, err);
         }
     }
 
@@ -124,6 +132,7 @@ export function validateGameJson(g) {
         const p = g.playerData;
         if (!Number.isFinite(p.maxHp)) err("playerData.maxHp must be a number");
         if (!isTextureArray(p.texture)) err("playerData.texture must be a non-empty string array");
+        checkTrail("playerData", p.trail, err);
         for (const shoot of ["shootNormal", "shootBig", "shoot3way"]) {
             if (!isObj(p[shoot]) || !isTextureArray(p[shoot].texture)) {
                 err(`playerData.${shoot} must be an object with a non-empty texture array`);
@@ -155,6 +164,7 @@ export function validateGameJson(g) {
             if (!isObj(b)) { err(`${k} must be an object`); continue; }
             if (!Number.isFinite(b.hp)) err(`${k}.hp must be a number`);
             if (!isObj(b.anim) || !isTextureArray(b.anim.idle)) err(`${k}.anim.idle must be a non-empty string array`);
+            checkTrail(k, b.trail, err);
         }
         // The runtime spawns bossData["boss"+stageId] after each stage's last wave.
         for (const k of stageKeys) {

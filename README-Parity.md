@@ -87,6 +87,16 @@ rig's own record-by-record reading of the two surveys, which §2's tables
 reproduce — sits beside its `report.json` (§5, Phase 0); a copy is at
 [docs/parity-ramsie-survey.md](docs/parity-ramsie-survey.md).
 
+Run 6 (2026-11-10) is the web pane alone, on the Saturn field, on a box
+with no disc: the cart rebuilt from the project's own save library and
+checked against its recorded SHA-256, and the Saturn's side taken from run
+1 as a saved reading (P1;
+[docs/parity-ramsie-field-survey.md](docs/parity-ramsie-field-survey.md)).
+The letters in this document are run 1's. The roster has since gained the
+four records only a big shot spawns (P2), so run 6's report letters the
+same records differently — W, the ground turret, is its AA, and X its AB —
+and its Id and Rec columns are the names that hold.
+
 ### The cart
 
 Ramsie is a five-stage vertical game with 2P join-in (settings `+0x00` =
@@ -121,6 +131,150 @@ names what is still to be read out of GAME.CMP before the fix can be exact;
 ![Ramsie stage 0 at the same four moments of the run's clock, 6.8 s, 24.0 s, 43.8 s and 54.4 s: the Saturn pane (320×240) beside the web pane (256×480); the black sides at 6.8 s are the stage's opening corridor on both](docs/parity-ramsie.png)
 
 ### P1. The web plays on a 256×480 window; the Saturn on 320×224
+
+**Landed 2026-11-10 as an opt-in field mode, and re-surveyed on the web's
+side the same day** (run 6, below: seventeen records within 4 px of the
+Saturn's, every bullet kind on both sides, the ground turret still out —
+the Saturn pane itself was not run again and T21 is not traced, for want of
+the disc on that box; the paragraphs from **Measured** on are the
+measurement the field answers). `?field=saturn` plays a Dezaemon import on
+the Saturn's own screen, with the engine's numbers applied with no scale
+factor. A **vertical** cart boots at 320×224: the 20-column grid lies 1:1
+from x 0 and the 224-px background at 48..272. A **horizontal** cart is
+the same simulation with that screen turned across it — 320 px along the
+scroll axis, whose coordinate runs from −96 at the entry edge to 224 at the
+exit edge, and the 224-px playfield band (lateral 48..272) across — and
+the runtime draws a horizontal cart transposed, so its field is **224×320**:
+screen x = lateral − 48, screen y = scroll coordinate + 96. The shipped
+game, and every level without the flag, keeps 256×480.
+
+| Rule | Vertical cart, 320×224 | Horizontal cart, 224×320 | Source |
+| --- | --- | --- | --- |
+| Wave gate | `row·16 − 272` (was `− 512`): a row is spawned 48 px above a 224-px top | `row·16 − 368`: 48 px beyond an entry edge at −96 | traced (`+0x152E8`: `0xE800` / `0xB800`); the vertical one surveyed |
+| Spawn, scroll axis | the row's own line shifted by the band byte, subtracted for air and added for ground: a 16/32/64-px-tall air sprite starts at y −32/−40/−56, every foot 24 px above the screen | the same with the horizontal band table, which follows the sprite's width: a 16/32/64-px-wide one at scroll −128/−136/−152 (y −32/−40/−56) | traced (`+0x1679A`, tables `+0x22044` / `+0x2204C`) |
+| Spawn, lateral | the cell's left edge plus half the band's width (`col·16 + w/2`) | the cell's edge plus half the band's **height** (`col·16 + h/2`), the side that lies along the lateral axis on the turned screen | vertical traced (`+0x169EE`) and surveyed; horizontal **deduced** from it |
+| Change-channel lines | 62 / 112 / 164 px, band-shifted, unscaled | 14 / 48 / 116 px of the scroll coordinate (y 110 / 144 / 212), its own band table | traced |
+| Steering kink / split | 64 / 96 px of flight (were 128 / 192) | the same | traced |
+| Fire window | lateral 48..272, scroll 0..224 | lateral 48..272, scroll −96..224: the whole screen | traced (`+0x1983E`) |
+| Ship | x 60..259, y 20..212, whatever the art's width | **provisional**: the same insets about its own window — lateral 60..259, scroll −76..212 (x 12..211, y 20..308) | vertical traced (`+0xAB0E`); horizontal untraced (T22) |
+| Shots and enemy bullets leave | by the despawn box, x 16..304, y −16..256 | **provisional**: the same margins, lateral 16..304, scroll −112..256 (x −32..256, y −16..352) | vertical traced (`+0x173A4`); horizontal untraced (T22) |
+| Boss arrival and death presets | in the screen's own px (were doubled along the scroll) | 1:1 as well, but from the vertical tables: the two horizontal-only preset blocks are not decoded | decoded |
+| Title, staff roll, SCORE and BOMB | at their Saturn coordinates, no 32-px window and no band | the untransposed 320×224 picture's middle 224 columns in a band 48 px down; SCORE and BOMB as on the tall screen | measured (vertical) |
+| **An enemy leaves** | under y 256, or 16 px outside the grid at the sides | under y 352, or 16 px outside the grid (x −64..288) | **provisional**: the box's bottom line; a zako's own bound is per size class (`+0x4C8C`) and unread (T21) |
+| **A ground object's start** | with its row, like an air one, the band byte added | the same | **provisional**: the engine's separate start word (`0x8800`) is not applied; run 6 measures what that costs (below, T21) |
+
+It is a boot flag because the screen's size is baked into the Phaser
+config and copied into some twenty module-level `GW`/`GH` pairs before any
+level has loaded; `DEZA_FIELD` is read ahead of all of them, so they
+follow it. The boot cannot know the cart's orientation either, so the flag
+has two values and nobody types the second: once the level resolves, the
+boot scene opens the page again on the field the level needs
+(`dezaFieldFor`, `dezaFieldFits`) — `?field=saturn-h`, 224×320, for a
+horizontal cart, `?field=saturn` for a vertical one asked for the other,
+and no flag at all for a level that is no Dezaemon import. The page fits
+the canvas at the field's size and is not turned (`html.field-saturn`,
+`lib/game-page.ts` and the exported app's shell); a cabinet backdrop or
+bezel is not drawn (it frames the tall screen); the title's WORLD BEST
+block and the game-over portrait are left out, and the story is off,
+because those three are laid out on 480 lines. The rig takes
+`--field saturn` with `--full` (§6) and reads the orientation off the
+import: the web pane is recorded at the field's size, the pilot flies
+inside the ship's clamps and `--survey-lead` defaults to 0.
+
+**Re-surveyed: run 6, the web pane on the field against run 1's Saturn.**
+The Saturn pane plays the original cart whatever the web does, so run 1's
+Saturn side still stands; it was carried to a box with no disc as a saved
+reading (`--saturn-reading`, §5 Phase 0;
+[docs/parity-ramsie-saturn.reading.json](docs/parity-ramsie-saturn.reading.json)
+is run 1's, transcribed from its report) and the web pane played Ramsie's
+stage 0 on the field for 62 s, four takes. The report of the last is
+[docs/parity-ramsie-field-survey.md](docs/parity-ramsie-field-survey.md).
+With no lead taken out, every placed record both runs saw comes on at the
+Saturn's own scroll position:
+
+| Record | Saturn first seen (scroll) | Web on the field (scroll) | Δ |
+| --- | --- | --- | --- |
+| C (2) | 340 | 337 | −3 |
+| X (53) | 468 | 467 | −1 |
+| L (32) | 769 | 772 | +3 |
+| R (38) | 801 | 803 | +2 |
+| F (7) | 995 | 992 | −3 |
+| J, K (27, 28) | 1091 | 1091 | 0 |
+| Z (56) | 1152 | 1154 | +2 |
+| E (6) | 1203 | 1204 | +1 |
+| A, B (0, 1) | 1632 | 1636 | +4 |
+| I (26) | 1923 | 1923 | 0 |
+| D (4) | 1955 | 1954 | −1 |
+| S, Y (39, 54) | 2193 | 2193 | 0 |
+| U, V (48, 49) | 2433 | 2436 | +3 |
+
+Seventeen records, the largest difference 4 px against a tolerance of one
+row (16) and a 10 Hz sampler that moves 4.5 px a tick. No record failed
+that tolerance in any of the four takes, and in the three whose rows were
+read none was more than 4 px out. B is judged now: the web builds R's
+big shots as objects of record 1 (P2), and the sampler marks each with the
+key of the enemy that fired it, so B's first placement is no longer taken
+for R's first shot. That is Phase 1's first acceptance — "every record's
+first-seen scroll matches the Saturn's within one row" — met for the gate.
+Its second, a type-0 bullet crossing the field in the same number of
+frames, needs the Saturn's own samples and was not measured.
+
+**The ground turret W is the one finding left, 320 px early.** The web
+spawns record 52 with its row (first seen at scroll 467, at y −37: 8 px
+under a row then standing at −45), fires it and lets the ship kill it on
+the way down; the Saturn logged it first at scroll 787 at y 283, 8 px
+under a row then standing at 275 — below the screen — and parked it at
+315. Both sides hold W at its row plus the band byte; what differs is
+when it exists, and that is the ground start the field does not apply. One
+arithmetic lead for T21, not a trace: the Saturn's first position is, to
+one sampler tick, `0x8800` read as an UNSIGNED word — 272 px, 48 px past
+the exit edge at 224 — plus W's band byte, 8; and 784, the scroll that puts
+W's row at 272, is `row·16 + 48`. The signed reading the notes carry
+(−240 px) puts it at −232. An exit-edge start would also explain why that
+word is the same in a vertical and a horizontal game, whose exit edges are
+both at 224, while the air word differs with the entry edge (−48, −144).
+What an object started there is for — it can only be carried further out —
+is exactly what the trace has to say, so the field keeps its provisional
+rule and the report keeps failing on W until it does.
+
+**Bullet kinds agree, and their counts are the pilots'.** With the big
+shots built as objects on both sides, every kind is now seen on both
+(Saturn | web, births in the take reported): record 5's cells 30 | 31,
+record 13's 9 | 20, record 3's 8 | 8, record 1's 8 | 6, record 24's 1 | 1,
+type 0 16 | 11 — P2's re-survey as well, with one side saved. The type-0
+count is not stable enough to judge: over the four takes the web fired 1,
+0, 10 and 11, and the take with none fails the report's "one side only"
+rule. Stepped frame by frame with the ship left where it starts, it fires
+six. Most of Ramsie's type-0 shooters open with a reload of 14..42 fire
+ticks (1.9–5.6 s at the opening rank, the same `interval + rand % window`
+on both sides), and on a 224-px field the ship has usually killed them by
+then — web lives of 2.2–4.0 s in the take reported against the Saturn's
+2.7–4.0 — so the Saturn's sixteen are a handful of volleys (X's five are
+one burst) and the web's zero to eleven are the same few dice. Settling it
+takes what Phase 0 still lists: the same pad log on both sides and a
+seeded take.
+
+**A horizontal cart on its field.** Checked in a browser on Biometal Gust
+(a horizontal cart of the community collection, 40 s of its stage 0): the
+boot asked for `?field=saturn` reopened itself at 224×320; rows came on at
+`row·16 − 368` (rows 50, 51 and 52 first seen at scroll 435, 452 and 469
+against gates of 432, 448 and 464); a 32×32 air zako was first seen at
+y −36 and −34 (it starts at −40), a 64×32 ground one at −40; columns 5 to
+14 centred at `col·16 + h/2 − 48`; the ship was stopped at x 12 and 211
+and at y 308; nothing lived past y 352.
+
+![Biometal Gust, a horizontal cart, on its 224×320 field at four moments of its first stage: lateral across, the scroll running down, the ship as its author drew it for a landscape screen](docs/parity-field-horizontal.png)
+
+What that does not show is a Saturn beside it: no horizontal cart has been
+surveyed, so the rules marked deduced or provisional above are exactly
+that, and three things are still open there. The picture is the Saturn's
+turned a quarter turn, as this runtime has always drawn a horizontal cart:
+the ship, its shots and the grid's zako are drawn the way their author
+painted them for a landscape screen, so a faithful frame needs those
+sprites turned −90° and the canvas +90° (enemy bullets, items and some
+effects, which the engine itself turns, are then right as they are). The
+boss parks where the tall screen's rule puts it, with the vertical preset
+tables. And the horizontal ship clamps and despawn box are T22.
 
 **Measured.** Every placement row enters the web's screen 240 scroll-px
 (4.7–5.8 s at 45 px/s) before it enters the Saturn's, on thirteen of the
@@ -198,7 +352,8 @@ ground spawn offset and the arm test are traced (`+0x152E8`, `+0x1679A`,
   wave gate `scrollPos >= row·16 − 512` and the spawn at `GH + scroll −
   (row·16 + 8)`; `CHANNEL_TRIGGER_SCALE = 480/224`; `DEZA_STEER_PX = 2`;
   `dezaVolley`'s `(rank·4/512 + speedAdd)·2`.
-- Fix: a Dezaemon **field mode** for imports — the simulation on the
+- Fix (landed, above — a vertical cart's 320×224 and a horizontal cart's
+  224×320): a Dezaemon **field mode** for imports — the simulation on the
   Saturn's 320×224 screen, letterboxed or scaled into the page (the
   Saturn's own 4:3), the gate and spawns at the traced 272/48/240 px with
   the band shift and the width-aware centre, the ground arm rule, bullet
@@ -206,8 +361,9 @@ ground spawn offset and the arm test are traced (`+0x152E8`, `+0x1679A`,
   ship clamp at x 60..259 / y 20..212. This is the single largest change
   and the precondition for comparing anything else by eye; until it lands,
   every timing comparison must be made in scroll px, as the survey does.
-- Trace: none needed for the field; the clamp, the offsets and the arm
-  test are traced.
+- Trace: T21 — the ground start and a zako's despawn bound; T22 — a
+  horizontal game's ship clamps and despawn box. The vertical clamp, the
+  air offset and the arm test are traced; draw order is T18.
 
 ### P2. "Purple fireballs": the big shot is drawn with 2028.Ai's stock bullet
 
@@ -428,14 +584,37 @@ passes the slot's icon); only its name is collapsed to the six-way digit.
   shots, gauge, counts); the barrier's duration and hit rule; the bomb-stock
   seed (the runtime hard-codes 3) and the spare-ship count (hard-codes 2).
 
-### P5. SUB weapons 1-4 are not there; Ramsie's player 1 flies one
+### P5. SUB weapons 1-4 fire, on untraced geometry; Ramsie's player 1 flies one
 
-The runtime implements MAIN 1-7, CHARGE 1-3, OPTION A/B/C and the eight
-bomb classes, but SUB 1-4 (H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER) are
-"stood in for" by Duke's stock autofire (interval 23 ticks, damage 1).
-Ramsie's preset 0 is H-MISSILE and preset 2 is G-MISSILE. On the Saturn the
-survey saw H-MISSILE's objects (sprite 21, attack 13312 — the top of its
-per-level table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
+**Landed 2026-11-09, without the disc — the handlers are still untraced.**
+Until then SUB 1-4 (H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER) were "stood
+in for" by Duke's stock autofire (interval 23 ticks, damage 1). They now
+have their own handler (`fireDezaSub`), and the stock autofire is switched
+off while one is equipped (`dezaSubOwnsShot`). Ramsie's preset 0 is
+H-MISSILE and preset 2 is G-MISSILE. On the Saturn the survey saw
+H-MISSILE's objects (sprite 21, attack 13312 — the top of its per-level
+table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
+
+What the web's SUB 1-4 stand on:
+
+| | Source |
+| --- | --- |
+| Reload 24 / 32 / 10 / 32 frames, one dispatcher call per re-arm | traced (`+0x21C60`, `+0x21C68`); that the drain is a plain 1 a frame is assumed from MAIN 1-6 |
+| Damage at OPTION 0 and OPTION 4 (13312/5120, 19712/11520, 256/128, 1024/1152) | traced (the tables' ends) |
+| Damage at OPTION 1-3 | **interpolated** in even steps, as every traced five-entry table of this engine runs |
+| H-MISSILE at OPTION 0 = two shots of 13312, in slots of their own (not MAIN's 30) | surveyed (slots 68-69) |
+| No ×1.5: that rule pays for SUB = 0 | traced (`+0xBA00` tests the SUB field) |
+| SUB 1-4 fire through a held charge | traced (the lockout stores flag 3 only for SUB 7, `+0xA2EA`) |
+| Shot count above OPTION 0, muzzles, speeds, acceleration, homing, lifetime, the 12-slot window | **provisional — invented**, from the editor's names |
+| G-MISSILE and RF-LASER bill per overlapping frame | **assumed** from the size of their tables (two orders under 1 and 2, like MAIN 4-6) |
+
+The provisional behaviours: H-MISSILE launches 2-6 missiles straight up that
+accelerate and turn toward the nearest target; S-MISSILE 2-6 that fly dead
+straight, accelerating; G-MISSILE a slow piercing fan of 2-6; RF-LASER a
+diagonal pair that reflects off the side walls for 96 frames. All of it is
+the `DEZA_SUB_*` constant block in `game.bundle.js`, written so the trace
+replaces numbers, not structure. They draw the ship's stock shot art (P3).
+The web still has no SUB button: it autofires SUB as it autofires MAIN.
 
 - Hardware: dispatcher `+0x15128`, jump table `+0x15150` entries 1→`+0xF498`
   … 4; cadence twins `+0x21C60 = [0,1,1,1,1,1,3,0]` / `+0x21C68 =
@@ -443,20 +622,33 @@ per-level table `+0x21D6C`) in slots 68-69 alongside VULCAN B's.
   FORMAT.md L1209, and `+0x21D8C` (19712..11520), `+0x21DAC` (256..128),
   `+0x21DCC` (1024..1152) read out of the spawn sites and recorded only in
   `decode-settings.js` L45-47. FORMAT.md L1231 says the rest is untraced.
-- Code: `dezaSubType` has seven reads in five roles — the pod count,
-  rebuild and update, the charge lockout (type 7 only), the OPTION C
-  re-muzzle through every pod, the OPTION C tables for MAIN 5/6, and the
-  ×1.5 no-SUB bonus (`game.bundle.js` ~12365-12847); none reaches a type
-  1-4 handler.
-- Trace: the four handlers' geometry, speed, lifetime and homing rules —
-  the second trace on the list. It also decides the hp divisor:
-  `shotDamage` is keyed on the SUB field (H-MISSILE's 5120 units → 20 for
-  Ramsie) because the SUB is what the stock autofire stands in for; a
-  divisor built from the MAIN tables would be VULCAN B's 2560 floor → 10,
-  halving every hit count, and the decoder's own comment leaves which field
-  should set the pace open. The Saturn kills Ramsie's D (25600 units) in
-  four VULCAN B bullets of 6656; the web, with hp 5 at 5120 per hit, needs
-  five.
+- Code: `fireDezaSub`, `dezaStepSubHoming`, the SUB gate at the end of
+  `updateDezaWeapons`, `dezaSubOwnsShot` and the `DEZA_SUB_*` block in
+  `game.bundle.js`; `tests/deza_sub_weapons_test.ts` pins the traced and
+  surveyed rows of the table above and leaves the provisional ones free.
+- Trace: still the second on the list (T2) — the four handlers' geometry,
+  speed, lifetime and homing rules, the middle of each damage table, the
+  billing period of 3 and 4, and the SUB slot window.
+- **The hp divisor is not what made the web need five hits on D**
+  (corrected 2026-11-09; this paragraph used to say the trace "decides the
+  hp divisor"). Ramsie's D is 25600 units, hp 5 at the 5120 divisor. The
+  web's own VULCAN B bullet does 6656/5120 = 1.3 and always killed D in
+  four, as the Saturn does; the shot that needed five was the flat
+  1-damage stock autofire standing in for H-MISSILE, which is gone now
+  (two H-MISSILEs of 13312 kill D). Every traced weapon divides by the same
+  number hp does, so the divisor cancels out of its hit count; `shotDamage`
+  (keyed on the SUB field, 20 for Ramsie) only sets what the runtime's
+  remaining flat-damage sources are worth.
+- **The drift that was real was the importer's rounding**, fixed the same
+  day: hp was `max(1, ceil(units / divisor))`, whole steps against
+  fractional damage. A 12800-unit enemy (Ramsie's F and R) became hp 3 and
+  took three VULCAN B bullets at OPTION 0 where the Saturn takes two; at
+  OPTION 2-4 a 256-unit enemy took two instead of one. hp is the unrounded
+  ratio now (`unitsToHp` in `map-to-game.js`; the runtime treats a residue
+  under `DEZA_HP_EPS` as spent and no longer rounds the 2P ×1.5), so the
+  count is `ceil(units / attack)` for every weapon and level
+  (`map-to-game.test.js`). A cart imported before this keeps its rounded hp
+  until it is re-imported (`deno task level:reimport`).
 
 ### P6. Enemy bullets: all shootable, half-speed crossing, a garbage config
 
@@ -622,11 +814,11 @@ pieces of them a 60-second stage exercises.
 
 | # | Difference | Kind | Blocks 1:1 | Trace needed |
 | --- | --- | --- | --- | --- |
-| P1 | 256×480 window vs 320×224; rows enter 240 px early, ground objects armed like air, bullets cross in 2.14× the time | runtime geometry | yes | draw order only (T18) |
-| P2 | **landed 2026-10-27** — a big shot is the named record spawned as a zako; its art, hp, armour and script are the record's | importer + runtime | re-survey | none |
+| P1 | **landed 2026-11-10 as `?field=saturn`** — a vertical cart on 320×224, a horizontal one on 224×320, with the engine's gate, spawn, lines, clamps and despawn box; re-surveyed on the web's side (run 6): seventeen records within 4 px. The default screen is still 256×480 | runtime geometry | the ground start (W, 320 px early); a Saturn run beside the field; a horizontal cart's art turn, boss presets and survey | ground start, zako bound (T21); horizontal clamps and box (T22); draw order (T18) |
+| P2 | **landed 2026-10-27** — a big shot is the named record spawned as a zako; its art, hp, armour and script are the record's; re-surveyed with P1 (run 6): each record's cells on both sides | importer + runtime | a Saturn run beside it for the counts | none |
 | P3 | ship's shots, pods, charge and bombs drawn with Duke's art / shapes | importer + runtime | yes | effect art per level |
 | P4 | weapon-change items inert; drops fall; barrier timed; cycle baked | runtime + importer | yes | `+0x1CF3C`, barrier, stock seeds |
-| P5 | SUB 1-4 missing (Ramsie P1 flies H-MISSILE) | runtime | yes | SUB handlers |
+| P5 | SUB 1-4 fire on provisional geometry (landed 2026-11-09); hp no longer rounded | runtime + importer | yes | SUB handlers (T2) |
 | P6 | every bullet shootable; blasts stock; type-3 config | runtime | yes | blast objects (T17) |
 | P7 | ship speed/autofire/stock constants | runtime | yes | hit box, respawn, seeds |
 | P8 | parts silent, beam/flame invented, no HP-stage invulnerability | runtime | yes | types 5/6, core frames |
@@ -754,7 +946,7 @@ P-item above.
 | # | What | Where to start | Blocks | Why it matters for Ramsie |
 | --- | --- | --- | --- | --- |
 | T1 | **Settled 2026-10-27.** The seven `+0x16070..+0x165E0` routines are the grid's own spawn wrappers, not updaters: a big shot is the record byte 5 names, spawned through the zako initialiser at the shooter's position, and moves by that record's appearance script and change channels. FORMAT.md "Bullet type 3". | — | P2 | the runtime spawns the roster entry as a zako |
-| T2 | SUB weapons 1-4: H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER handlers (geometry, speed, lifetime, homing) | jump table `+0x15150` entries 1-4 (`+0xF498` is entry 1) | P5 | P1's starting weapon and preset 2's; also decides the hp divisor (SUB 20 vs MAIN 45) |
+| T2 | SUB weapons 1-4: H-MISSILE, S-MISSILE, G-MISSILE, RF-LASER handlers (geometry, speed, lifetime, homing) | jump table `+0x15150` entries 1-4 (`+0xF498` is entry 1) | P5 | P1's starting weapon and preset 2's: the web fires them on invented geometry until this lands. Also the middle three entries of `+0x21D6C/8C/AC/CC`, whether 3 and 4 bill per frame, the SUB slot window, and that SUB is on B. (It does not decide the hp divisor — see P5.) |
 | T3 | Weapon-change pickup `+0x1CF3C`: what it resets | `+0x1CF3C`, the six pod-rebuild events | P4 | eight weapon-change pickups on stage 0 alone |
 | T4 | Boss fire-point types 5 (beam) and 6 (flame): geometry, damage, duration, art | period table `+0x21FA0` and its readers in the executor `+0x19FF4` | P8 | stage-0 boss pattern 0 and 2 run a beam |
 | T5 | Ship: hit box, respawn position/sequence, invincibility window, spare-ship seed, bomb-stock seed, extend rule | player init `+0x90EC`/`+0x92E6`; the lives byte's writers (`--xref 0x06084354`); death bit7 path from `+0x0635C` | P7 | every death and every bomb |
@@ -773,6 +965,8 @@ P-item above.
 | T18 | Object draw priority / sort order (player vs enemy vs bullets vs effects) | the sort key writers around `+0x473E` | P1 | needed once the field is 320×224 and frames are compared pixelwise |
 | T19 | **Settled 2026-10-27.** The seven spawn wrappers write the band's CONTACT attack as an immediate into `0x0608C720`: 256 / 512 / 512 / 768 / 1024 / 1024 / 1280 for bands 0-6 (`+0x160D4` and its six twins), independent of hp — the survey's 256 / 512 / 768 / 1024 / 1280 for bands 0 / 2 / 3 / 4-5 / 6. Not yet read by the runtime. | — | P6 | what a hull touch and a charge orb's mutual-hp trade cost on every enemy |
 | T20 | **Settled 2026-10-27.** `0x6085F90` for a shooter in the four-frame bands 0-3 (records 0-47), `0x6085F80` for bands 4-6 (`+0x154E4` tests the band wrapper's frame-count word against 3); the shot goes out on the frame the reload reads 0 and the same frame refills it, so the period is interval + 1 frames (D: 12). | — | P2 | `bigShotInterval` in the decoder |
+| T21 | **Not traced — the disc was not on the box (2026-11-10).** Where the ground start applies (`+0x152E8` adds the word `0x8800` for a ground object against `0xE800` = −48 px for an air one, at a gate that puts the row itself at −48), and a zako's own despawn bound per size class. What run 6 adds: on both sides W stands at its row + 8 (its band byte), and the Saturn first logs it at scroll 787, y 283 — one sampler tick from `0x8800` read UNSIGNED (272 px, 48 past the exit edge) plus 8, at the scroll `row·16 + 48` that puts the row there; the signed −240 px puts it at −232. So read first how that word is extended and what the walker's gate is for a ground cell. Without the disc, run 1's own files answer part of it: `--survey-report` on that out dir now lists every ground record's first position against its row and where each spawn parked after leaving the frame, by art band — the bound, measured (§5 Phase 0) | `+0x152E8` (RAM `0x060792E8`) and its caller `+0x15434`; the grid walker around `+0x169EE`; the spawn tail `+0x1679A`; the ground arm test `+0x589E`; the bound resolver `+0x4C8C` | P1 | W never entered the Saturn's screen and is on the web's 320 px early; the field starts a ground object with its row and retires an enemy by the shot box's bottom line until this is read |
+| T22 | A horizontal game's own numbers: the ship's clamps (the vertical ones are `+0xAB0E`), the despawn box (`+0x173A4` in a vertical game), what the walker adds to a cell's edge on the lateral axis (the two further size-class tables `+0x22054` / `+0x2205C` are unread and may be it), and the two horizontal-only boss preset blocks | `+0xAB0E` and `+0x173A4` and whatever they branch to on game mode bit 0 (read in place through `u32[0x060840C0]`); the tables after `+0x2204C` | P1 | the 224×320 field takes the vertical insets about its own window, and centres a spawn at `col·16 + h/2` by deduction |
 
 Documentation to strike at the same time, so the plan starts from the
 latest readings: FORMAT.md L219 (scroll curve "open"), L304-331's bullet
@@ -824,6 +1018,37 @@ compare through `dev-fixtures/debug-tools/parity-compare-runs.py` and
 `parity-compare-keys.py`, and `parity-cells.ts` draws a cart's bullet and
 blast cells.
 
+Added 2026-11-10, with the field's re-survey (run 6):
+
+- **A saved Saturn reading.** Every report built on a Saturn survey now
+  leaves `panes/saturn.reading.json` beside it — what the comparison uses
+  and nothing else, by placement id: first sightings, lives, bullet kinds,
+  the ship's objects, exits, the run's own numbers — and
+  `--saturn-reading <file>` gives a run that has no Saturn survey its
+  Saturn side from one. The Saturn plays the cart itself, so one reading
+  judges every later web run of that cart on any box; the report says in
+  its first line which it was built from. Run 1's is checked in as
+  `docs/parity-ramsie-saturn.reading.json`, transcribed from its report's
+  tables (seconds to 0.1, a record's lives as their mean, no positions but
+  the three this document quotes): `--survey-report` on run 1's own out
+  dir writes the full one, and that should replace it.
+- **Big shots as objects.** The web sampler marks an enemy the runtime
+  built as a big shot with the key of the one that fired it (`shotOf`),
+  and the report counts it as that shooter's shot, drawn as its record's
+  cells when its frame is one of the record's own (the atlas stores
+  identical art once: record 1 is drawn with record 0's frames). A record
+  the roster carries only to be spawned (`placements: 0`) is no placement:
+  its key is never ambiguous and its row says where it is counted.
+- **Ground starts and exits**, for T21: each ground record's first logged
+  position on both sides beside where its own map row stood at that
+  scroll, and where every Saturn spawn stopped after leaving the frame, by
+  art band and edge — the engine parks an object just past its own bound,
+  so that is the bound, measured. The web's position is read only on a
+  Saturn field, where a pixel is an engine pixel (the web survey file says
+  which field it ran on).
+- A horizontal cart's Saturn frame is lateral 48..272 and scroll −96..224
+  in the engine's coordinates; the life rule takes it from the import.
+
 Next:
 
 1. The report's blind spots: the web survey does not sample the ship's
@@ -858,6 +1083,15 @@ Next:
    (spawn scroll per record, bullet kinds per record, hp per record).
 
 ### Phase 1 — the field (P1)
+
+Landed 2026-11-10 as `?field=saturn` (P1 above): a vertical cart's 320×224
+and a horizontal cart's 224×320. Re-surveyed the same day on the web's
+side (run 6): the first acceptance below is met, every record within 4 px
+with no lead. Left: W, which waits on T21 — untraced, the disc was not on
+the box; a Saturn pane run beside the field (the second acceptance, the
+bullet's crossing time, needs its samples); and for a horizontal cart a
+survey of its own, T22, the art's quarter turn and the boss presets. As
+planned:
 
 A Dezaemon import plays on the Saturn's 320×224 screen: the camera, the
 wave gate and spawn offsets (272 / 48 air / 240 ground, band-shifted, the
@@ -952,6 +1186,59 @@ deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsi
 deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsie.sav" --stage 0 --targets saturn,web
 ```
 
+```bash
+deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsie.sav" --full --field saturn --targets saturn,web --console-seconds 60 --max-mb 0 --keep-frames
+```
+
+The last is the first again with the web pane on the Saturn field
+(`?field=saturn`, out dir `ramsie-sav-full-field`): Phase 1's acceptance
+run, judged with no gate lead. On a box with no disc the same run plays
+the web pane alone against a saved Saturn reading — run 6, as it was made:
+
+```bash
+deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Ramsie.sav" --full --field saturn --targets web --saturn-reading docs/parity-ramsie-saturn.reading.json --console-seconds 60 --max-mb 0 --keep-frames
+```
+
+It needs the cart, Chrome and ffmpeg and nothing else, and exits 1 while
+W is out. A horizontal cart takes the same flags; the rig reads its
+orientation off the import and records the pane at 224×320 (no Saturn
+reading of one exists, so there is no report):
+
+```bash
+deno run -A scripts/testdrive-parity.ts --sav "dev-fixtures/Saturn/Dez 2 - Biometal Gust.sav" --full --field saturn --targets web --console-seconds 40 --max-mb 0 --keep-frames
+```
+
+And on the box that still holds run 1's files, the full reading and the
+measured half of T21 come from disk, with no disc and no emulator:
+
+```bash
+deno run -A scripts/testdrive-parity.ts --survey-report build/testdrive/parity/ramsie-sav-full
+```
+
+```bash
+cp build/testdrive/parity/ramsie-sav-full/panes/saturn.reading.json docs/parity-ramsie-saturn.reading.json
+```
+
+The first rewrites that run's `report-survey.md` with the section
+"Ground starts and exits" and leaves `panes/saturn.reading.json` beside
+the survey; the second makes it the checked-in reference. T21's other
+half is the disassembly, which needs the disc:
+
+```bash
+deno run -A dev-fixtures/debug-tools/extract-disc.ts
+```
+
+```bash
+SH2DIS_BIN=dev-fixtures/.cache/saturn-disc/unpacked/GAME.bin node dev-fixtures/debug-tools/sh2dis.mjs 0x060792E8 0x06079480
+```
+
+```bash
+SH2DIS_BIN=dev-fixtures/.cache/saturn-disc/unpacked/GAME.bin node dev-fixtures/debug-tools/sh2dis.mjs 0x06068C8C 0x06068D60
+```
+
+(`+0x152E8` through its caller `+0x15434`, then the resolver `+0x4C8C`;
+the walker is around `0x0607A9EE` and the spawn tail at `0x0607A79A`.)
+
 The first is the survey this document is built on; the second plays the
 import on the five exports; the third puts the import's round trip on the
 Saturn instead of the cart; the fourth is the boss rush (the import's
@@ -974,7 +1261,8 @@ deno run -A scripts/testdrive-parity.ts --survey-report build/testdrive/parity/r
 
 It exits 1 on a failing verdict and 2 when a survey is missing;
 `--survey-lead <px>` sets the gate lead it takes out before judging (240
-today, 0 once Phase 1 lands). Behind §3, two Saturn runs compare through
+on the tall screen, 0 for a `--field saturn` run), and `--saturn-reading
+<file>` stands in for a Saturn survey the out dir does not hold. Behind §3, two Saturn runs compare through
 the debug tools (Python 3, standard library only; the cell sheet is Deno):
 
 ```bash
