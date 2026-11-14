@@ -218,6 +218,59 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(foo.dezaemonBgm, undefined);
 });
 
+Deno.test("a stage's own track, stage<N>_bgm, wins over the length cuts", async () => {
+  const js = await read(BUNDLE);
+  const names = [
+    "clampStageId",
+    "recipeStageIds",
+    "stageRunSeconds",
+    "stageBgmMinutes",
+    "stageBgmTrack",
+    "stagePlaysAudioKey",
+    "recipeData",
+    "stageBgmKey",
+  ];
+  const consts = [
+    "MAX_STAGE_ID",
+    "SATURN_TICKS_PER_FRAME",
+    "STAGE_TICKS_PER_SECOND",
+    "STAGE_WAVE_TICKS",
+    "STAGE_BOSS_SECONDS",
+    "STAGE_BGM_KEY",
+  ];
+  const { stageBgmKey, stagePlaysAudioKey } = new Function(
+    "gameState",
+    consts.map((c) => constSource(js, c)).join("") +
+      names.map((n) => functionSource(js, n)).join("") +
+      "\nreturn { stageBgmKey, stagePlaysAudioKey };",
+  )({ shortFlg: false }) as {
+    stageBgmKey(scene: unknown, stageId: number, theme: string): string;
+    stagePlaysAudioKey(key: string, recipe: Recipe, keys: string[]): boolean;
+  };
+  const recipe = {
+    stage0: { enemylist: rows(40) },
+    stage4: { enemylist: rows(40) },
+  };
+  const scene = (keys: string[]) => ({
+    recipe,
+    cache: { audio: { getKeys: () => keys } },
+  });
+  const keys = ["stage_bgm", "stage_bgm_4min", "stage4_bgm"];
+  // The secret stage plays its own track; the others their length's cut.
+  assertEquals(stageBgmKey(scene(keys), 4, "boss_fang_bgm"), "stage4_bgm");
+  assertEquals(stageBgmKey(scene(keys), 0, "boss_bison_bgm"), "stage_bgm");
+  // Without one loaded, the stage falls back as before.
+  assertEquals(
+    stageBgmKey(scene(["stage_bgm"]), 4, "boss_fang_bgm"),
+    "stage_bgm",
+  );
+  assertEquals(stageBgmKey(scene([]), 4, "boss_fang_bgm"), "boss_fang_bgm");
+  // The loader downloads it: it is no length cut.
+  assert(stagePlaysAudioKey("stage4_bgm", recipe, keys));
+  // 2028.Ai's secret stage, the fifth, has the two-minute cut as its own.
+  assertEquals(SOUNDTRACK.stage4_bgm, SOUNDTRACK.stage_bgm_2min);
+});
+
 Deno.test("the game scene plays the stage track, starts it over each stage, and gives the hidden boss his own", async () => {
   const js = await read(BUNDLE);
   const flat = js.replace(/\s+/g, " ");

@@ -17754,15 +17754,20 @@
   function recipeData() {
     return gameState._phaserRecipe || null;
   }
-  // The key a stage's music plays under: the stage track its length calls
-  // for (stageBgmTrack), of the ones the level loaded, or else `themeKey`.
-  // Boss rush deals no waves, whatever the stage's list holds.
+  // The key a stage's music plays under: the stage's own track where the
+  // level names one (stage<N>_bgm, N numbered as bossData numbers the stage's
+  // boss), else the stage track its length calls for (stageBgmTrack), of the
+  // ones the level loaded, or else `themeKey`. 2028.Ai names one for its
+  // secret stage, stage4_bgm, reached by finishing every boss with the CA
+  // bomb. Boss rush deals no waves, whatever the stage's list holds.
   function stageBgmKey(scene, stageId, themeKey) {
     var keys = [];
     try {
       keys = scene.cache.audio.getKeys();
     } catch (e) {
     }
+    var own = "stage" + String(stageId) + "_bgm";
+    if (keys.indexOf(own) >= 0) return own;
     var seconds = gameState.shortFlg ? 0 : stageRunSeconds(scene.recipe || recipeData(), stageId);
     return stageBgmTrack(keys, seconds) || themeKey;
   }
