@@ -816,19 +816,42 @@
   // The canvas and frame map for `image` stacked under `localSource`, the way
   // _stackAtlas has always laid it out, unless that is over atlasSideLimit and
   // the frames repack into a sheet that is not.
+  // What each stacking did, for the atlasInfo=1 readout (armAtlasInfo in
+  // game.bundle.js). Kept short and only ever read by that readout.
+  function atlasInfoNote(kind, data) {
+    try {
+      const list = globalThis.__atlasInfoLog || (globalThis.__atlasInfoLog = []);
+      if (list.length < 40) list.push(Object.assign({ kind }, data));
+    } catch (_e) {
+      // The readout is a diagnostic; a page without globalThis just has none.
+    }
+  }
   function stackedAtlasCanvas(scene, localSource, image, frameMap) {
     const localH = localSource.height;
     const width = Math.max(localSource.width, image.width);
     const height = localH + image.height;
     const limit = atlasSideLimit(scene);
+    const info = {
+      local: localSource.width + "x" + localH,
+      incoming: image.width + "x" + image.height,
+      stacked: width + "x" + height,
+      limit,
+    };
     if (width > limit || height > limit) {
       const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
-      if (packed) return packed;
+      if (packed) {
+        atlasInfoNote("stack", Object.assign(info, { result: "packed", out: packed.canvas.width + "x" + packed.canvas.height }));
+        return packed;
+      }
+      info.result = "repack failed, stacked";
+    } else {
+      info.result = "stacked";
     }
     const canvas = stableCanvas(width, height);
     const ctx = canvas.getContext("2d");
     ctx.drawImage(localSource, 0, 0);
     ctx.drawImage(image, 0, localH);
+    atlasInfoNote("stack", Object.assign(info, { out: canvas.width + "x" + canvas.height }));
     return { canvas, frames: frameMap };
   }
   // Is this page an app built around one game? The export's shell says so
@@ -4226,10 +4249,19 @@
       if (editorPlay) {
         readEditorAtlasBridge2().then(function(bridge) {
           if (!bridge) {
+            atlasInfoNote("handoff", { atlas: "none stored" });
             return null;
           }
           return blobToImage(bridge.blob).then(function(img) {
-            if (!img) return null;
+            if (!img) {
+              atlasInfoNote("handoff", { atlas: "image did not decode", bytes: bridge.blob.size });
+              return null;
+            }
+            atlasInfoNote("handoff", {
+              atlas: img.naturalWidth + "x" + img.naturalHeight,
+              frames: Object.keys(bridge.frames).length,
+              bytes: bridge.blob.size
+            });
             return mergeAtlasIntoGameAsset(self, img, bridge.frames);
           });
         }).catch(function(err) {
@@ -22219,6 +22251,7 @@
     cmgWrapLoop(game);
     retypeTextsAfterGpuReset(game);
     armCanvasRepaint(game);
+    armAtlasInfo(game);
     console.log("[2028.Ai] Phaser game started");
     if (typeof window !== "undefined") {
       if (typeof window.__fitCanvas === "function") window.__fitCanvas();
@@ -22234,6 +22267,181 @@
   // label) stays invisible. So once the context is back, every Text on a
   // running scene is typed again: now if its canvas is back already, else on
   // the canvas's own contextrestored.
+  // ?atlasInfo=1: a readout over the game of what the GPU was handed and
+  // what it kept. Image Seal drew nothing from its sprite sheet on a Pixel 9
+  // in Chrome, while Brave, Canary and a MacBook drew the stock game, and the
+  // project's cloud browser has no WebGL to look with. The readout lists the
+  // renderer and its texture limit, what the editor handed over, how the sheet
+  // was stacked (atlasInfoNote), and for the largest textures whether a pixel
+  // the source has is also in the GPU's copy, read back through a framebuffer.
+  // "EMPTY" there means the upload failed. Nothing runs without the parameter.
+  function armAtlasInfo(game) {
+    let wanted = false;
+    try {
+      wanted = typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("atlasInfo") === "1";
+    } catch (_e) {
+      wanted = false;
+    }
+    if (!wanted || typeof document === "undefined") return;
+    const box = document.createElement("pre");
+    box.id = "atlas-info";
+    box.style.cssText = "position:fixed;left:0;top:0;z-index:2147483647;margin:0;padding:4px 6px;" +
+      "max-width:100vw;max-height:70vh;overflow:auto;white-space:pre-wrap;word-break:break-all;" +
+      "font:10px/1.3 monospace;color:#fff;background:rgba(0,0,0,0.78);pointer-events:none;";
+    const mount = () => {
+      if (!box.isConnected && document.body) document.body.appendChild(box);
+    };
+    let lost = 0;
+    let restored = 0;
+    const glErrors = [];
+    let armedCanvas = null;
+    const sourceAlpha = (img, x, y) => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = 1;
+        c.height = 1;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, x, y, 1, 1, 0, 0, 1, 1);
+        return ctx.getImageData(0, 0, 1, 1).data[3];
+      } catch (_e) {
+        return -1;
+      }
+    };
+    const glAlpha = (gl, tex, x, y, h) => {
+      if (!gl || !tex) return "no tex";
+      let prev = null;
+      let fb = null;
+      try {
+        prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+        fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) return "fb " + status.toString(16);
+        const px = new Uint8Array(4);
+        gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        const a = px[3];
+        gl.readPixels(x, h - 1 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        return Math.max(a, px[3]);
+      } catch (e) {
+        return "err " + (e && e.message ? e.message : e);
+      } finally {
+        try {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+          if (fb) gl.deleteFramebuffer(fb);
+        } catch (_e) {
+          // Readout only; the game's next frame binds what it needs.
+        }
+      }
+    };
+    const checkTexture = (gl, key, texture) => {
+      const source = texture.source && texture.source[0];
+      if (!source) return key + ": no source";
+      const img = source.image;
+      const w = source.width;
+      const h = source.height;
+      const kind = img && img.tagName ? img.tagName.toLowerCase() : typeof img;
+      const tex = source.glTexture ? source.glTexture.webGLTexture || null : null;
+      const names = Object.keys(texture.frames || {}).filter((n) => n !== "__BASE");
+      const picks = names.length
+        ? [0, 0.25, 0.5, 0.75, 0.999].map((p) => names[Math.floor(p * (names.length - 1))])
+        : ["__BASE"];
+      let ok = 0;
+      let empty = 0;
+      let blank = 0;
+      for (const name of Array.from(new Set(picks))) {
+        const f = texture.frames[name];
+        if (!f) continue;
+        let hit = null;
+        for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.75], [0.25, 0.75], [0.75, 0.25]]) {
+          const x = Math.floor(f.cutX + f.cutWidth * fx);
+          const y = Math.floor(f.cutY + f.cutHeight * fy);
+          if (sourceAlpha(img, x, y) > 0) {
+            hit = [x, y];
+            break;
+          }
+        }
+        if (!hit) {
+          blank++;
+          continue;
+        }
+        if (!gl) continue;
+        const a = glAlpha(gl, tex, hit[0], hit[1], h);
+        if (typeof a === "number" && a > 0) ok++;
+        else if (typeof a === "number") empty++;
+        else return key + " " + w + "x" + h + " " + kind + ": " + a;
+      }
+      const verdict = !gl ? "" : empty ? " EMPTY on GPU (" + empty + " of " + (ok + empty) + ")" : ok ? " ok on GPU" : " no pixels to test";
+      return key + " " + w + "x" + h + " " + kind + verdict + (blank ? ", " + blank + " blank in source" : "");
+    };
+    const render = () => {
+      mount();
+      const lines = ["atlasInfo v1  " + new Date().toLocaleTimeString()];
+      const renderer = game.renderer;
+      const gl = renderer && renderer.gl ? renderer.gl : null;
+      if (game.canvas && game.canvas !== armedCanvas) {
+        armedCanvas = game.canvas;
+        armedCanvas.addEventListener("webglcontextlost", () => lost++);
+        armedCanvas.addEventListener("webglcontextrestored", () => restored++);
+      }
+      if (gl) {
+        const two = typeof WebGL2RenderingContext !== "undefined" && gl instanceof WebGL2RenderingContext;
+        let gpu = "";
+        try {
+          const ext = gl.getExtension("WEBGL_debug_renderer_info");
+          gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+        } catch (_e) {
+          gpu = "?";
+        }
+        lines.push("WebGL" + (two ? "2" : "1") + " " + gpu);
+        lines.push("MAX_TEXTURE_SIZE " + gl.getParameter(gl.MAX_TEXTURE_SIZE) +
+          "  phaser max " + (typeof renderer.getMaxTextureSize === "function" ? renderer.getMaxTextureSize() : "?") +
+          "  context lost " + (gl.isContextLost() ? "NOW" : "no"));
+        for (let i = 0; i < 4; i++) {
+          const e = gl.getError();
+          if (!e) break;
+          if (glErrors.length < 8) glErrors.push("0x" + e.toString(16));
+        }
+      } else {
+        lines.push("Canvas renderer (no WebGL)");
+      }
+      lines.push("contextlost " + lost + "  restored " + restored + "  gl errors " + (glErrors.join(" ") || "none"));
+      for (const n of globalThis.__atlasInfoLog || []) {
+        const rest = Object.keys(n).filter((k) => k !== "kind").map((k) => k + " " + n[k]).join(", ");
+        lines.push(n.kind + ": " + rest);
+      }
+      const list = game.textures && game.textures.list ? game.textures.list : {};
+      const big = Object.keys(list)
+        .filter((k) => k !== "__DEFAULT" && k !== "__MISSING" && k !== "__WHITE" && k !== "__NORMAL")
+        .map((k) => {
+          const s = list[k] && list[k].source && list[k].source[0];
+          return { k, area: s ? s.width * s.height : 0 };
+        })
+        .sort((a, b) => b.area - a.area)
+        .slice(0, 7);
+      for (const { k } of big) {
+        try {
+          lines.push(checkTexture(gl, k, list[k]));
+        } catch (e) {
+          lines.push(k + ": check failed " + (e && e.message ? e.message : e));
+        }
+      }
+      box.textContent = lines.join("\n");
+    };
+    let ticks = 0;
+    const tick = () => {
+      try {
+        render();
+      } catch (e) {
+        box.textContent = "atlasInfo failed: " + (e && e.message ? e.message : e);
+        mount();
+      }
+      ticks++;
+      setTimeout(tick, ticks < 10 ? 2000 : 5000);
+    };
+    setTimeout(tick, 1500);
+  }
   function retypeTextsAfterGpuReset(game) {
     var hook = function() {
       var renderer = game.renderer;

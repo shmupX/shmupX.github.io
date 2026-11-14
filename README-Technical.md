@@ -304,7 +304,20 @@ they are written out in full.
     name. Frames too big to fit even then are stacked as before. The cloud
     browser this was written in has no WebGL (the game runs on Phaser's
     canvas renderer there), so only a phone can show it works.
-    `tests/atlas_side_limit_test.ts` pins it.
+    `tests/atlas_side_limit_test.ts` pins it. It did not bring Image Seal
+    back in Chrome on the Pixel 9 either (Brave and Canary there draw the
+    stock game, which has no editor hand-off to stack).
+  - `armAtlasInfo` (game.bundle.js) and `atlasInfoNote` (the loader, both
+    copies): a readout over the game, only with `?atlasInfo=1`, for a device
+    this cloud browser cannot stand in for. It lists the WebGL renderer and
+    `MAX_TEXTURE_SIZE`, context losses and GL errors, what the editor handed
+    over (`handoff`: the atlas's size, or that none was stored or it did not
+    decode), how each sheet was stacked (`stack`: sizes, the limit, stacked,
+    packed or repack failed), and for the seven largest textures whether a
+    pixel the source has is also in the GPU's copy, read back through a
+    throwaway framebuffer: `EMPTY on GPU` means the upload failed. It never
+    takes input and puts the game's framebuffer back after each read.
+    `tests/atlas_info_readout_test.ts` pins it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
