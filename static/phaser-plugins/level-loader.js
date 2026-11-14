@@ -915,19 +915,42 @@ function packStackedFrames(localSource, image, localH, frameMap, limit) {
 // The canvas and frame map for `image` stacked under `localSource`, the way
 // _stackAtlas has always laid it out, unless that is over atlasSideLimit and
 // the frames repack into a sheet that is not.
+// What each stacking did, for the atlasInfo=1 readout (armAtlasInfo in
+// game.bundle.js). Kept short and only ever read by that readout.
+function atlasInfoNote(kind, data) {
+  try {
+    const list = globalThis.__atlasInfoLog || (globalThis.__atlasInfoLog = []);
+    if (list.length < 40) list.push(Object.assign({ kind }, data));
+  } catch (_e) {
+    // The readout is a diagnostic; a page without globalThis just has none.
+  }
+}
 function stackedAtlasCanvas(scene, localSource, image, frameMap) {
   const localH = localSource.height;
   const width = Math.max(localSource.width, image.width);
   const height = localH + image.height;
   const limit = atlasSideLimit(scene);
+  const info = {
+    local: localSource.width + "x" + localH,
+    incoming: image.width + "x" + image.height,
+    stacked: width + "x" + height,
+    limit,
+  };
   if (width > limit || height > limit) {
     const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
-    if (packed) return packed;
+    if (packed) {
+      atlasInfoNote("stack", Object.assign(info, { result: "packed", out: packed.canvas.width + "x" + packed.canvas.height }));
+      return packed;
+    }
+    info.result = "repack failed, stacked";
+  } else {
+    info.result = "stacked";
   }
   const canvas = stableCanvas(width, height);
   const ctx = canvas.getContext("2d");
   ctx.drawImage(localSource, 0, 0);
   ctx.drawImage(image, 0, localH);
+  atlasInfoNote("stack", Object.assign(info, { out: canvas.width + "x" + canvas.height }));
   return { canvas, frames: frameMap };
 }
 // Is this page an app built around one game? The export's shell says so
