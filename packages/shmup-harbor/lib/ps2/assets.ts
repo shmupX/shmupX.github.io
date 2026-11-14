@@ -379,6 +379,19 @@ export function buildLevelAtlas(
   return roomier.displayScale < built.displayScale ? roomier : built;
 }
 
+/**
+ * The type a record's big shot spawns, as the enemyData key's suffix
+ * (`dezaemon.bigShotChild` is spelled `enemyP`; this answers `P`), or null.
+ */
+export function bigShotChildType(rec: unknown): string | null {
+  const child = (rec as { dezaemon?: { bigShotChild?: unknown } } | null)
+    ?.dezaemon?.bigShotChild;
+  return typeof child === "string" && child.length > "enemy".length &&
+      child.startsWith("enemy")
+    ? child.slice("enemy".length)
+    : null;
+}
+
 /** The wave grid and enemy table as the disc's level.json carries them. */
 export interface DiscStage {
   enemylist: string[][];
@@ -453,7 +466,32 @@ export function discStage(
     .sort();
   if (known.length === 0) return unchanged;
 
-  const taken = new Set(known.filter((type) => type.length === 1));
+  // The records a shipped shooter's big shot spawns. A type-3 shot is another
+  // enemy record (`dezaemon.bigShotChild`, spelled as an enemyData key), which
+  // the runtime looks up by that key and spawns where the shooter stands — no
+  // grid names it, so without this the disc would carry the shooter and not
+  // its shot. They are spawn-only: no grid cell needs a one-character code
+  // for them, so they keep their own keys, and are shipped along with whatever
+  // THEY spawn.
+  const kids: string[] = [];
+  const seen = new Set(known);
+  for (const type of [...known]) {
+    const queue = [type];
+    for (let at = 0; at < queue.length; at++) {
+      const child = bigShotChildType(enemyData[`enemy${queue[at]}`]);
+      if (child === null || seen.has(child)) continue;
+      if (!(`enemy${child}` in enemyData)) continue;
+      seen.add(child);
+      kids.push(child);
+      queue.push(child);
+    }
+  }
+
+  // A key a one-character code is not handed out over: a type that already
+  // has one on the disc, a grid's or a spawn-only record's.
+  const taken = new Set(
+    [...known, ...kids].filter((type) => type.length === 1),
+  );
   const pool = [...CODE_CHARS].filter((c) => !taken.has(c));
   const renamed: Record<string, string> = {};
   const leftover: string[] = [];
@@ -464,9 +502,24 @@ export function discStage(
     else renamed[type] = next;
   }
 
+  // A shooter's `bigShotChild` names the record by the key it had in the
+  // save, and the grid types above have been re-keyed since: the same name
+  // could now be a different record (enemyP became deza0_49 where the save's
+  // enemyP was deza0_20). It follows its record to the key it ships under, and
+  // is dropped when the record did not ship, so the runtime falls back to a
+  // plain bullet rather than spawning something else.
+  const keyOf = (type: string) => `enemy${renamed[type] ?? type}`;
+  const withChild = (rec: Record<string, unknown>) => {
+    const child = bigShotChildType(rec);
+    if (child === null) return rec;
+    const dezaemon = { ...(rec.dezaemon as Record<string, unknown>) };
+    if (seen.has(child)) dezaemon.bigShotChild = keyOf(child);
+    else delete dezaemon.bigShotChild;
+    return { ...rec, dezaemon };
+  };
   const out: Record<string, Record<string, unknown>> = {};
-  for (const type of known) {
-    out[`enemy${renamed[type] ?? type}`] = enemyData[`enemy${type}`];
+  for (const type of [...known, ...kids]) {
+    out[keyOf(type)] = withChild(enemyData[`enemy${type}`]);
   }
   const recode = (rows: string[][]) =>
     rows.map((row) =>
@@ -484,6 +537,7 @@ export function discStage(
   const laterCount = Object.keys(later).length;
   const note = `level.json: ${known.length} enemy type(s) on the grid` +
     (laterCount ? ` and the ${laterCount} stage(s) after it` : "") +
+    (kids.length ? `, ${kids.length} more their big shots spawn` : "") +
     (renames
       ? `, ${renames} re-coded to one character for the port (${
         Object.entries(renamed).slice(0, 3).map(([from, to]) =>
@@ -648,6 +702,18 @@ export function stageRecipes(
         if (!matched) unmatched.add(code);
       }
     }
+  }
+
+  // A big shot is another enemy record the shooter spawns where it stands
+  // (bigShotChildType), named by no grid: its art goes on the sheet too, and
+  // the art of whatever it spawns in turn.
+  const spawned = [...enemyKeys];
+  for (let at = 0; at < spawned.length; at++) {
+    const child = bigShotChildType(enemyData[spawned[at]]);
+    const key = child === null ? null : `enemy${child}`;
+    if (key === null || !(key in enemyData) || enemyKeys.has(key)) continue;
+    enemyKeys.add(key);
+    spawned.push(key);
   }
 
   // The port plays `bossData["boss" + stageId]` for the exported stage and

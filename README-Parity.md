@@ -469,8 +469,15 @@ Why, in order (as it stood before the fix):
   `dezaemon.bigShotChild` in `map-to-game.js`; `spawnBigShot`,
   `dezaFireWindow` and the row gate in `updateEnemyFire`
   (`game.bundle.js`); `DEZA_MAX_LIVE_ZAKO` is the pool's 150. The PS2 port's
-  zako patch (`packages/shmup-harbor/lib/ps2/runtime-patches.ts`) still
-  fires its stand-in bullet for type 3.
+  zako patch (`packages/shmup-harbor/lib/ps2/runtime-patches.ts`) fired a
+  stand-in bullet for type 3 until 2026-11-07, unbounded: a handful of
+  shooters stood Master Arena Mod's field up in pillars of hundreds of bullets
+  and the console crawled. It now spawns the record (`dezaBigShot`, on the
+  same reload), which the disc build ships and re-keys (`discStage`); both
+  that and its volleys are held to the 150-object pool, and the spawned shots
+  to 48 live at once (`DEZA_MAX_LIVE_SHOTS`, the console's own budget — a
+  judgement, not measured on hardware). Armour is not modelled there: the
+  spawned shots can be shot down.
 - Trace: closed (T1, T20 below). What the survey called the shots' fall
   and halt was record 13's own script (appearance 0x9a: a 384-unit drift
   down, then a slow turn).

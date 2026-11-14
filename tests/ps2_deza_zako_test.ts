@@ -149,7 +149,10 @@ async function browserPath(mirror: boolean, frames: number) {
     consts + js.slice(start, js.indexOf("\n  }\n", start) + 4) +
       "\nreturn stepEntryScript;",
   )() as (enemy: Json, st: Json) => boolean;
-  const enemy = { x: 0, y: 0 };
+  // stepEntryScript asks the enemy whether it is a successor (a long row runs
+  // 1.5x longer for one); Clevin here is a stage's own, and the port does not
+  // model successors.
+  const enemy = { x: 0, y: 0, getData: (_key: string) => undefined };
   const st = {
     entry: {
       rows: CLEVIN.dezaemon.entry.rows,
@@ -263,4 +266,321 @@ Deno.test("the patched port's Clevin fires aimed badges on the pulse, not a stre
   // A plain enemy keeps the port's own mover and gun.
   assertEquals(plain.deza, undefined);
   assertEquals([plain.speed, plain.interval], [2, 60]);
+});
+
+// Master Arena Mod's stage-0 shooter (deza0_54, `enemyc`): a type-3 big shot,
+// interval 3, window 2. On the hardware its shot is a zako out of the 150-slot
+// enemy pool, every interval + 1 Saturn frames, spawned where it stands. This
+// record names no child, so the port fires a stand-in bullet for it instead.
+const BIG_SHOOTER: Json = {
+  ...structuredClone(CLEVIN),
+  speed: 0,
+  interval: 3,
+  dezaemon: {
+    behavior: {
+      appearance: 221,
+      death: { mode: 0, param: 0, silent: false, small: false },
+      fire: {
+        aimed: false,
+        bigShot: {
+          band: 1,
+          character: 147,
+          frames: 4,
+          index: 4,
+          key: 148,
+          record: 20,
+        },
+        direction: 0,
+        directionEx: 0,
+        enabled: true,
+        interval: 3,
+        mode: 3,
+        window: 2,
+      },
+    },
+  },
+};
+
+/**
+ * A shooter standing at (x, y) in a scene that already holds `held` other
+ * shots, run for `steps` steps with no shot ever leaving the field — so what
+ * it has made is what the pool let it make. `records` joins the recipe's
+ * enemyData (the records a big shot may name); `loopAll` runs every enemy the
+ * scene holds through the port's enemyLoop each step, as the port does, and
+ * removes the ones it retires, where otherwise only the shooter is run.
+ */
+function standAndFire(
+  p: Port,
+  data: Json,
+  steps: number,
+  held = 0,
+  { records = {}, loopAll = false }: { records?: Json; loopAll?: boolean } = {},
+) {
+  const recipe = {
+    enemyData: {
+      enemyH: { ...structuredClone(data), atlas: "level_atlas" },
+      ...Object.fromEntries(
+        Object.entries(structuredClone(records)).map((
+          [key, rec],
+        ) => [key, { ...(rec as Json), atlas: "level_atlas" }]),
+      ),
+    },
+  };
+  const quiet = console.log;
+  console.log = () => {};
+  try {
+    p.normalizeRecipe(recipe);
+  } finally {
+    console.log = quiet;
+  }
+  const ctx = fakeCtx(recipe);
+  const e = p.createEnemy(ctx, recipe.enemyData.enemyH);
+  // createEnemy reads a speed of 0 as 1; stand the shooter still on screen.
+  e.speed = 0;
+  e.x = 100;
+  e.y = 100;
+  const gs = {
+    player: SHIP,
+    enemies: [e] as Json[],
+    projectiles: Array.from({ length: held }, () => ({ held: true })) as Json[],
+    frameCnt: 0,
+  };
+  const g = globalThis as Json;
+  const saved = { gs: g.__PS2_GS__, fps: g.__PS2_GAME_FPS__ };
+  g.__PS2_GS__ = () => gs;
+  g.__PS2_GAME_FPS__ = 120;
+  const at: number[] = [];
+  // Every enemy the shooter's shots have added to the scene, in order, with
+  // the step it came in on and where it stood the moment it did.
+  const kids: { en: Json; at: number; centre: [number, number] }[] = [];
+  const seen = new Set<Json>(gs.enemies);
+  // The first of them, followed: its y after each step it is alive for.
+  const firstY: number[] = [];
+  try {
+    for (let i = 0; i < steps; i++) {
+      gs.frameCnt++;
+      const before = gs.projectiles.length;
+      if (loopAll) {
+        for (let k = gs.enemies.length - 1; k >= 0; k--) {
+          if (p.enemyLoop(ctx, gs.enemies[k], SHIP) === 0) {
+            gs.enemies.splice(k, 1);
+          }
+          // Where a spawn stood is only meaningful before its own first step.
+          for (const en of gs.enemies) {
+            if (!seen.has(en)) {
+              seen.add(en);
+              kids.push({
+                en,
+                at: i,
+                centre: [en.x + en.width / 2, en.y + en.height / 2],
+              });
+            }
+          }
+        }
+      } else {
+        p.enemyLoop(ctx, e, SHIP);
+        for (const en of gs.enemies) {
+          if (!seen.has(en)) {
+            seen.add(en);
+            kids.push({
+              en,
+              at: i,
+              centre: [en.x + en.width / 2, en.y + en.height / 2],
+            });
+          }
+        }
+      }
+      for (let k = before; k < gs.projectiles.length; k++) at.push(i);
+      if (kids.length && gs.enemies.includes(kids[0].en)) {
+        firstY.push(kids[0].en.y);
+      }
+    }
+  } finally {
+    g.__PS2_GS__ = saved.gs;
+    g.__PS2_GAME_FPS__ = saved.fps;
+  }
+  return { gs, e, at, kids, firstY };
+}
+
+Deno.test("a type-3 big shooter fires every interval + 1 Saturn frames, one bullet each", async () => {
+  const p = await port();
+  if (!p) return;
+  const { at } = standAndFire(p, BIG_SHOOTER, 120);
+  // 4 Saturn frames = 8 steps at 120 a second, and the first of them after
+  // the reload has counted its 3 down.
+  assert(at.length >= 10, `${at.length} shots in 120 steps`);
+  for (let i = 1; i < at.length; i++) {
+    assertEquals(at[i] - at[i - 1], 8, `shots ${i - 1}-${i}`);
+  }
+});
+
+Deno.test("the shots in flight and the enemies together never pass the hardware's 150-object pool", async () => {
+  const p = await port();
+  if (!p) return;
+  // Master Arena's shooter left standing for a minute of play, its shots
+  // never leaving the field: before the pool, 7,200 steps made ~900 bullets.
+  const { gs, at } = standAndFire(p, BIG_SHOOTER, 7200);
+  assertEquals(gs.enemies.length + gs.projectiles.length, 150);
+  assertEquals(gs.projectiles.length, 149);
+  // It filled the pool at its own cadence and then stopped, not before.
+  assertEquals(at.length, 149);
+  assertEquals(at.at(-1)! - at[0], 8 * 148);
+});
+
+Deno.test("a volley wider than the pool's room fires only what fits", async () => {
+  const p = await port();
+  if (!p) return;
+  // gs's 15-way spread (geometry 15: eight bullets a volley), interval 1,
+  // window 1 — the widest, fastest gun a cart has. 146 shots already in
+  // flight and the shooter itself leave room for three of its eight.
+  const spread = structuredClone(BIG_SHOOTER);
+  spread.dezaemon.behavior.fire = {
+    aimed: false,
+    direction: 15,
+    directionEx: 0,
+    enabled: true,
+    geometry: 15,
+    interval: 1,
+    mode: 0,
+    window: 1,
+  };
+  const { gs } = standAndFire(p, spread, 600, 146);
+  assertEquals(gs.enemies.length + gs.projectiles.length, 150);
+  assertEquals(gs.projectiles.filter((s: Json) => !s.held).length, 3);
+});
+
+// The record Master Arena Mod's stage-0 shooter spawns (deza0_49, `enemyP`): a
+// 1-hp zako whose script drops it 110 px, holds it 65 Saturn frames, and flies
+// it back up and off the top. It is not a bullet.
+const BIG_CHILD: Json = {
+  ...structuredClone(CLEVIN),
+  speed: 0,
+  interval: -1,
+  hp: 1,
+  dezaemon: {
+    behavior: {
+      appearance: 51,
+      death: { mode: 0, param: 0, silent: true, small: false },
+      fire: {
+        aimed: false,
+        direction: 0,
+        directionEx: 0,
+        enabled: false,
+        geometry: 0,
+        interval: 119,
+        mode: 0,
+        window: 29,
+      },
+    },
+    entry: {
+      rows: [[55, 49152, 0, 512, 4113], [65, 49152, 0, 0, 1], [
+        32767,
+        16384,
+        0,
+        512,
+        1,
+      ]],
+    },
+  },
+};
+
+/** The shooter, now naming `enemyP` as the record its big shot spawns. */
+function shooterOf(child: string | null): Json {
+  const data = structuredClone(BIG_SHOOTER);
+  if (child) data.dezaemon.bigShotChild = child;
+  return data;
+}
+
+Deno.test("a big shot spawns the record it names, as a zako, where the shooter stands", async () => {
+  const p = await port();
+  if (!p) return;
+  const { gs, e, at, kids } = standAndFire(p, shooterOf("enemyP"), 120, 0, {
+    records: { enemyP: BIG_CHILD },
+  });
+  // No stand-in bullet: the shots are enemies.
+  assertEquals(at.length, 0);
+  assertEquals(gs.projectiles.length, 0);
+  assert(kids.length >= 10, `${kids.length} shots in 120 steps`);
+  // The hardware's cadence, interval + 1 Saturn frames: 8 steps.
+  for (let i = 1; i < kids.length; i++) {
+    assertEquals(kids[i].at - kids[i - 1].at, 8, `shots ${i - 1}-${i}`);
+  }
+  const shooter = [e.x + e.width / 2, e.y + e.height / 2];
+  for (const { en, centre } of kids) {
+    // Centred on the shooter, armed with its own script and hp.
+    assertEquals(centre, shooter);
+    assertEquals(en.deza.rows.length, 3);
+    assertEquals(en.hp, 1);
+    assertEquals(en.deza.fire, null);
+  }
+});
+
+Deno.test("the spawned record flies its own script, and leaves", async () => {
+  const p = await port();
+  if (!p) return;
+  const { gs, kids, firstY } = standAndFire(p, shooterOf("enemyP"), 900, 0, {
+    records: { enemyP: BIG_CHILD },
+    loopAll: true,
+  });
+  const first = kids[0];
+  const start = first.centre[1] - first.en.height / 2;
+  // Down 2 px a Saturn frame for ~55 of them, then held, then up and gone.
+  const dip = Math.max(...firstY) - start;
+  assert(dip > 100 && dip < 125, `dipped ${dip} px`);
+  const held = firstY.slice(
+    firstY.indexOf(Math.max(...firstY)),
+  ).filter((y) => y === Math.max(...firstY)).length;
+  assert(held >= 100, `held ${held} steps at the foot`);
+  assert(!gs.enemies.includes(first.en), "the first shot never left the field");
+  // Shots that leave make room: a steady few dozen live, and no bullets —
+  // where the stand-in's lived the length of the field and piled up.
+  assert(gs.enemies.length < 100, `${gs.enemies.length} enemies live`);
+  assertEquals(gs.projectiles.length, 0);
+});
+
+Deno.test("a big shot whose record the recipe lacks falls back to a bullet", async () => {
+  const p = await port();
+  if (!p) return;
+  const { gs, at, kids } = standAndFire(p, shooterOf("enemyNope"), 120);
+  assertEquals(kids.length, 0);
+  assert(at.length >= 10 && gs.projectiles.length === at.length);
+});
+
+Deno.test("spawned shots stop at 48 live, however long the shooter stands", async () => {
+  const p = await port();
+  if (!p) return;
+  // Nothing retires them here, so what it has made is what the budget allowed:
+  // each one is a hit test against every shot of the player's, every step.
+  const { gs, kids } = standAndFire(p, shooterOf("enemyP"), 7200, 0, {
+    records: { enemyP: BIG_CHILD },
+  });
+  assertEquals(kids.length, 48);
+  assertEquals(gs.enemies.length, 49); // and the shooter
+  assertEquals(gs.projectiles.length, 0);
+  // Under it, the cadence is the hardware's: one every 8 steps.
+  assertEquals(kids.at(-1)!.at - kids[0].at, 8 * 47);
+});
+
+Deno.test("a spawn is refused when the 150-object pool has no room, shot budget or not", async () => {
+  const p = await port();
+  if (!p) return;
+  // 120 shots of other guns in flight and the shooter leave room for 29.
+  const { gs, kids } = standAndFire(p, shooterOf("enemyP"), 7200, 120, {
+    records: { enemyP: BIG_CHILD },
+  });
+  assertEquals(kids.length, 29);
+  assertEquals(gs.enemies.length + gs.projectiles.length, 150);
+});
+
+Deno.test("shots that are retired free the budget for the next", async () => {
+  const p = await port();
+  if (!p) return;
+  // Run for 3,000 steps with the port's own loop retiring them off the top:
+  // the count peaks at the budget and holds, rather than stopping for good.
+  const { kids, gs } = standAndFire(p, shooterOf("enemyP"), 3000, 0, {
+    records: { enemyP: BIG_CHILD },
+    loopAll: true,
+  });
+  assert(kids.length > 100, `${kids.length} spawned in 3,000 steps`);
+  assert(gs.enemies.length <= 49, `${gs.enemies.length} live`);
 });

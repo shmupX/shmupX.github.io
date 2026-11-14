@@ -5555,6 +5555,50 @@ gun stand down for such a record; terrain rides and steered shots (geometries 8
 and 9) are not modelled. `tests/ps2_deza_zako_test.ts` flies Clevin's real
 record through the patched port beside the browser's own `stepEntryScript`.
 
+**A big shot is a zako, and the pool bounds what a zako fires.** On the Saturn a
+type-3 shot is another enemy record the shooter spawns where it stands, out of
+the 150-slot enemy pool (the survey counted at most 149 live objects of every
+kind), and a full pool drops the spawn. The port had neither: it fired a stock
+bullet for it every interval + 1 Saturn frames, and kept every shot until it
+crossed the edge of the field. Master Arena Mod's stage-0 shooter (`deza0_54`,
+interval 3) did so every 8 steps, so eight of them put ~470 bullets in the air in
+20 seconds, still climbing, and the console's step cost climbed with them:
+`FixedStep` runs at most 5 steps a tick and drops the rest, so the game fell into
+slow motion, and a slower game kept every bullet longer.
+
+Two halves fix it. The disc (`discStage`, `stageRecipes` in `lib/ps2/assets.ts`)
+now ships the records a shipped shooter's big shot spawns
+(`dezaemon.bigShotChild`, an enemyData key, followed through whatever they spawn
+in turn) and puts their art on the level atlas — no grid names them, so they
+were left behind — and re-points each `bigShotChild` through the re-coding. That
+second part matters: `enemyP` was `deza0_20` in the save and `deza0_49` on the
+disc, a grid type having taken the letter, so the shooter would have spawned the
+wrong enemy; a spawn-only record's own letter is now kept from the re-coding,
+and a `bigShotChild` whose record the save lacks is dropped rather than left to
+name something else. And the runtime (`dezaBigShot` in `DEZA_ZAKO_RUNTIME`)
+spawns the record as the browser's `spawnBigShot` does — centred on the shooter,
+with its own script, hp and art (Master Arena's are roses) — on the hardware's
+reload: counted every Saturn frame and refilled on the frame it reads 0, on the
+field or off, so a shooter off the field never banks a shot. A recipe without the
+record still gets the stand-in bullet.
+
+Two bounds, both refusing the spawn the way a full pool does: enemies and shots
+together stay under `DEZA_OBJECT_POOL` (150, the hardware's), which also bounds
+every ordinary volley, a volley wider than the room firing what fits; and no
+more than `DEZA_MAX_LIVE_SHOTS` (48, the cap the browser used before it took the
+pool's 150) spawned shots are live at once. The second is the console's, not the
+hardware's: Master Arena's stage-0 shot is a 10-hp zako that falls the length of
+the field, so a stream of them is ~75 enemies, each one a hit test against every
+shot of the player's every step, where a bullet is a single test against the
+ship. It is a judgement, not a measurement — nothing here has run on a console —
+so it is the number to move if one plays too slowly or too thinly. In the web
+host of the patched build eight shooters hold 48 spawned shots and no bullets at
+120 steps a second. `tests/ps2_deza_zako_test.ts` and
+`packages/shmup-harbor/tests/stage_recipes_test.ts` pin the cadence, both
+bounds, the script the shot flies, the fallback, and the re-keying. The boss's
+own shots (`BOSS_RUNTIME`) are not counted or capped, and armour (a shot that
+shatters the player's) is not modelled: the spawned shots can be shot down.
+
 **Running into an enemy** costs one hit and kills the enemy, as in the browser.
 The port only hurt the ship and left the enemy flying through it, and the
 ship's blink after a hit — the port's 30 steps — lasted a quarter of a second
@@ -6161,7 +6205,11 @@ reads goes into the game frame as one more standard Gamepad, through the same
 `getGamepads` patch Twin-Stick and Split Controller use (`touchPadGamepads` in
 `svelte-src/Dashboard.svelte`), so a game needs no change. Its id is `CMG Touch
 Twin-Stick` or `CMG Touch Pad`. Sh'M↑ Party's `/touch twin-?stick/` test reads
-the first one as touch input. The pad shows only for same-origin frames. A
+the first one as touch input. An arcade board is the one exception: its player
+mirrors only Start and the D-pad out of that list, so
+`static/gamepad-support.js` also reads the pad (`processTouchPad`) and sends the
+same P1 panel keys a real pad gets. Zunzunkyou's Shot is on A and Bomb on B, and
+a tap of SELECT drops a coin. The pad shows only for same-origin frames. A
 cross-origin twin-stick game is told to run its own touch analogs instead
 (`cmg-twinstick-touch-set`). A pad connecting takes the overlay away and
 disconnecting brings it back. The Legion's FPS mode never shows it, and only
