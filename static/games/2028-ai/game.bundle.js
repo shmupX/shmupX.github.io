@@ -1876,7 +1876,13 @@
         // 2028.Ai's frame for frame, so its atlas's copy would read as a stock
         // copy (_withoutStockCutins) and lose to rando's.
         const exportedApp = o.exportedApp !== void 0 ? !!o.exportedApp : isExportedApp();
-        return this.fetchLevel(levelName, o).then((data) => {
+        // A game may amend the record it fetched before anything reads it
+        // (`amendLevel(levelKey, data)`, resolving the record to play): 2028.Ai
+        // gives the cloud foo the bonus stage its baked foo.json has. A hook
+        // that fails leaves the record as it came.
+        return this.fetchLevel(levelName, o).then((data) => typeof o.amendLevel === "function"
+          ? Promise.resolve(o.amendLevel(this.resolvedLevelName || levelName, data)).then((amended) => amended || data, () => data)
+          : data).then((data) => {
           const levelKey = this.resolvedLevelName || levelName;
           if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
           return this.applyCabinet(data).then(() => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
@@ -4382,8 +4388,6 @@
       var game = this.game;
       var stageParam = readStageParam();
       fetchFirebaseLevel(levelName).then(function(data) {
-        return withOwnBonusStage(levelName, data, self.cache.json.get("recipe"));
-      }).then(function(data) {
         var baseRecipe = self.cache.json.get("recipe") || {};
         var localEnemyData = baseRecipe.enemyData ? JSON.parse(JSON.stringify(baseRecipe.enemyData)) : {};
         var stageKey = data.stageKey || "stage0";
@@ -4597,9 +4601,6 @@
             }
           });
         }
-        var finishWithBonusAtlas = function() {
-          mergeBonusAtlas(self, data, finishLevelLoad);
-        };
         if (data.atlasImageDataURL && data.atlasFrames) {
           var fbImg = new Image();
           fbImg.onload = function() {
@@ -4608,15 +4609,15 @@
             } catch (atlasErr) {
               console.warn("Failed to merge Firebase atlas:", atlasErr);
             }
-            finishWithBonusAtlas();
+            finishLevelLoad();
           };
           fbImg.onerror = function() {
             console.warn("Firebase atlas image failed to load, using local");
-            finishWithBonusAtlas();
+            finishLevelLoad();
           };
           fbImg.src = data.atlasImageDataURL;
         } else {
-          finishWithBonusAtlas();
+          finishLevelLoad();
         }
       }).catch(function(err) {
         console.warn("Firebase level load failed for '" + levelName + "':", err);
@@ -22301,6 +22302,10 @@
         defaultLevel: "foo",
         lowMode: !!gameState.lowModeFlg,
         audio: { stockPaths: RESOURCE_PATHS, wants: stagePlaysAudioKey },
+        // foo.codemonkey.games plays the cloud foo: give it the bonus stage.
+        amendLevel: (levelKey, data) => withOwnBonusStage(levelKey, data, this.cache.json.get("recipe")).then((amended) => new Promise((resolve) => {
+          mergeBonusAtlas(this, amended, () => resolve(amended));
+        })),
         onPrimeState: (recipe, info) => {
           gameState._phaserRecipe = recipe;
           gameState.hasCustomEnemies = info.hasCustomEnemies;
