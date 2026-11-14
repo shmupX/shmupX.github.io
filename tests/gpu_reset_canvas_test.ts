@@ -403,7 +403,10 @@ Deno.test("the level loader stacks atlases and repaints the cut-in on stable can
     const js = await read(path);
     for (
       const [what, body] of [
-        ["_stackAtlas", methodSource(js, "_stackAtlas")],
+        // _stackAtlas lays its sheet out in stackedAtlasCanvas, which
+        // repacks it in packStackedFrames when it is over the size limit.
+        ["stackedAtlasCanvas", functionSource(js, "stackedAtlasCanvas")],
+        ["packStackedFrames", functionSource(js, "packStackedFrames")],
         ["applyCustomCutin", methodSource(js, "applyCustomCutin")],
         ["cutFrames", functionSource(js, "cutFrames")],
       ]
@@ -436,7 +439,8 @@ Deno.test("every canvas texture the bundle paints once is built off the GPU", as
   );
   for (
     const [name, uses] of [
-      ["mergeAtlasIntoGameAsset", "stableCanvas("],
+      // Through stackedAtlasCanvas, held to stableCanvas above.
+      ["mergeAtlasIntoGameAsset", "stackedAtlasCanvas("],
       ["nameLogoTexture", "stableCanvas("],
       ["shipTitleGTexture", "stableCanvas("],
       ["ensureZakoBulletTexture", "stableCanvasTexture(scene,"],

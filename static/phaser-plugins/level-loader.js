@@ -832,6 +832,104 @@ function bakeCanvasTexture(textures, key) {
   }).catch(() => false);
 }
 
+// The tallest or widest atlas this runtime hands Phaser.
+//
+// A level's atlas is stacked under the local one (_stackAtlas), and the local
+// game_asset alone is 2048 x 2128. The editor's atlas for an imported cart
+// repacks the stock frames with the cart's at 2048 wide, so stacking a shelf
+// cart such as Image Seal makes one sheet a few thousand pixels taller again.
+// A desktop GPU loads a texture up to 16384 on a side, and Image Seal played
+// there. A phone's limit can be lower, and a texture over it uploads as
+// nothing: on a Pixel 9 the ship, enemies, shots, scenery (cut from the same
+// sheet) and title art were all missing from the first frame, while game_ui's
+// HUD, the bomb ring and the OSD text drew. So a stacked atlas taller or wider
+// than this is repacked frame by frame into a sheet that fits
+// (packStackedFrames). 4096 is what every WebGL device loads; a renderer that
+// reports less is believed.
+const ATLAS_SIDE_LIMIT = 4096;
+function atlasSideLimit(scene) {
+  let max = 0;
+  try {
+    const game = scene && scene.sys && scene.sys.game ? scene.sys.game : scene ? scene.game : null;
+    const renderer = game ? game.renderer : null;
+    if (renderer && typeof renderer.getMaxTextureSize === "function") {
+      max = Number(renderer.getMaxTextureSize()) || 0;
+    }
+  } catch (_e) {
+    max = 0;
+  }
+  return max > 0 ? Math.min(max, ATLAS_SIDE_LIMIT) : ATLAS_SIDE_LIMIT;
+}
+// `frameMap` is a stacked atlas's frame map: a frame at y < localH is cut from
+// `localSource`, one at y >= localH from `image` (drawn at localH). Each
+// distinct rect is copied once into a new sheet, shelf-packed tallest first
+// and no wider or taller than `limit`, and every name is pointed at its copy.
+// A local frame the incoming atlas took over by name is left out, which is
+// most of a cart's repacked copy of the stock frames. Null when the frames
+// will not fit in `limit` either: the caller stacks as before.
+function packStackedFrames(localSource, image, localH, frameMap, limit) {
+  const PAD = 1;
+  const rects = new Map();
+  const names = [];
+  for (const name in frameMap) {
+    const f = frameMap[name] && frameMap[name].frame;
+    if (!f || !(f.w > 0) || !(f.h > 0)) continue;
+    const incoming = f.y >= localH;
+    const y = incoming ? f.y - localH : f.y;
+    const key = (incoming ? "I" : "L") + "|" + f.x + "|" + y + "|" + f.w + "|" + f.h;
+    if (!rects.has(key)) {
+      rects.set(key, { src: incoming ? image : localSource, x: f.x, y, w: f.w, h: f.h, dx: 0, dy: 0 });
+    }
+    names.push([name, key]);
+  }
+  const list = Array.from(rects.values()).sort((a, b) => b.h - a.h || b.w - a.w);
+  let cx = 0;
+  let cy = 0;
+  let rowH = 0;
+  let usedW = 0;
+  for (const r of list) {
+    if (r.w > limit || r.h > limit) return null;
+    if (cx + r.w > limit) {
+      cy += rowH + PAD;
+      cx = 0;
+      rowH = 0;
+    }
+    r.dx = cx;
+    r.dy = cy;
+    cx += r.w + PAD;
+    rowH = Math.max(rowH, r.h);
+    usedW = Math.max(usedW, r.dx + r.w);
+  }
+  const usedH = cy + rowH;
+  if (!list.length || usedH > limit) return null;
+  const canvas = stableCanvas(usedW, usedH);
+  const ctx = canvas.getContext("2d");
+  for (const r of list) ctx.drawImage(r.src, r.x, r.y, r.w, r.h, r.dx, r.dy, r.w, r.h);
+  const frames = {};
+  for (const [name, key] of names) {
+    const r = rects.get(key);
+    frames[name] = { frame: { x: r.dx, y: r.dy, w: r.w, h: r.h } };
+  }
+  return { canvas, frames };
+}
+// The canvas and frame map for `image` stacked under `localSource`, the way
+// _stackAtlas has always laid it out, unless that is over atlasSideLimit and
+// the frames repack into a sheet that is not.
+function stackedAtlasCanvas(scene, localSource, image, frameMap) {
+  const localH = localSource.height;
+  const width = Math.max(localSource.width, image.width);
+  const height = localH + image.height;
+  const limit = atlasSideLimit(scene);
+  if (width > limit || height > limit) {
+    const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
+    if (packed) return packed;
+  }
+  const canvas = stableCanvas(width, height);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(localSource, 0, 0);
+  ctx.drawImage(image, 0, localH);
+  return { canvas, frames: frameMap };
+}
 // Is this page an app built around one game? The export's shell says so
 // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
 // (__OFFLINE_LEVEL_NAME__); the hosted game says neither.
@@ -1238,10 +1336,6 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
 
         const localW = localSource.width;
         const localH = localSource.height;
-        const mergedCanvas = stableCanvas(Math.max(localW, image.width), localH + image.height);
-        const mctx = mergedCanvas.getContext("2d");
-        mctx.drawImage(localSource, 0, 0);
-        mctx.drawImage(image, 0, localH);
 
         const mergedFrameMap = frameMapOf(localAtlas);
         // Incoming frames are offset down by the local atlas height.
@@ -1267,8 +1361,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           }
         }
 
+        const merged = stackedAtlasCanvas(scene, localSource, image, mergedFrameMap);
         scene.textures.remove(atlasKey);
-        scene.textures.addAtlas(atlasKey, mergedCanvas, { frames: mergedFrameMap });
+        scene.textures.addAtlas(atlasKey, merged.canvas, { frames: merged.frames });
         bakeCanvasTexture(scene.textures, atlasKey);
         return true;
       } catch (atlasErr) {

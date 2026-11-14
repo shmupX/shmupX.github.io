@@ -287,7 +287,24 @@ they are written out in full.
     made), and until the PNG lands the canvas and its recipe stand in.
     Canvases the game types again itself (the HUD line, the lens, `Text`)
     stay canvases. `tests/gpu_reset_baked_texture_test.ts` pins the helper and
-    its callers. Not yet run on Android hardware.
+    its callers. On a Pixel 9 it did not bring Image Seal back: the art was
+    missing from the first frame, not after a reset, and the game played
+    normally on a MacBook.
+  - `stackedAtlasCanvas`, `packStackedFrames` and `atlasSideLimit` (in the
+    loader, so in both copies): the size a stacked atlas may reach. Stacking
+    puts a level's atlas under the 2048 x 2128 game_asset, and the editor's
+    atlas for an imported cart repacks the stock frames with the cart's at
+    2048 wide, so a shelf cart's sheet runs thousands of pixels taller. A
+    texture over the GPU's limit uploads as nothing, and on the phone that
+    was every frame of game_asset and the scenery and title art cut from it.
+    `_stackAtlas` and `mergeAtlasIntoGameAsset` keep the old layout while it
+    is within `atlasSideLimit` (4096, or the renderer's `getMaxTextureSize()`
+    if lower) and otherwise copy each distinct frame rect into a sheet
+    shelf-packed within it, dropping local frames the level took over by
+    name. Frames too big to fit even then are stacked as before. The cloud
+    browser this was written in has no WebGL (the game runs on Phaser's
+    canvas renderer there), so only a phone can show it works.
+    `tests/atlas_side_limit_test.ts` pins it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
