@@ -777,6 +777,61 @@ function armCanvasRepaint(game) {
   else if (game.events && typeof game.events.once === "function") game.events.once("ready", arm);
 }
 
+// A texture painted once on a canvas, handed to Phaser as an image instead.
+//
+// The replay above keeps a lost canvas's recipe, and a phone still lost the
+// art: Image Seal (a Dezaemon shelf cart, PLAYed from the editor) went on
+// scoring with no ship, enemies, shots or scenery, while the score popups (cut
+// from game_ui, an <img>) and the SP button's rim and ground (a canvas painted
+// from shapes alone) came through. What a canvas had drawn from an image did
+// not come back; what is an image did, because Phaser re-uploads an image
+// texture from the image itself when WebGL is restored.
+//
+// So a canvas texture that is finished (a stacked atlas, the Dezaemon scenery
+// strips, the SP faces, the zako bullet) is encoded to a PNG once and its
+// texture source swapped to that image (TextureSource.updateSource, which
+// keeps every Frame and the GL texture it uploads into). A GPU reset then has
+// no canvas of theirs to lose, and Phaser restores them the way it restores
+// game_ui. The blob URL is kept, as loadImage keeps it, so the image can be
+// decoded again. Until the PNG is ready the canvas, with its recipe, stands
+// in. Resolves false and changes nothing where it cannot: no toBlob, a Phaser
+// without updateSource, or a texture re-stacked or removed meanwhile.
+function bakeCanvasTexture(textures, key) {
+  let texture = null;
+  let source = null;
+  let canvas = null;
+  try {
+    texture = textures && textures.exists(key) ? textures.get(key) : null;
+    source = texture && texture.source ? texture.source[0] : null;
+    canvas = source ? source.image : null;
+  } catch (_e) {
+    return Promise.resolve(false);
+  }
+  if (
+    !canvas || typeof HTMLCanvasElement === "undefined" || !(canvas instanceof HTMLCanvasElement) ||
+    typeof canvas.toBlob !== "function" || typeof source.updateSource !== "function"
+  ) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      canvas.toBlob((blob) => resolve(blob || null), "image/png");
+    } catch (_e) {
+      resolve(null);
+    }
+  }).then((blob) => (blob ? loadImage(blob) : null)).then((img) => {
+    if (!img) return false;
+    const current = textures.exists(key) ? textures.get(key) : null;
+    if (
+      current !== texture || source.image !== canvas ||
+      img.naturalWidth !== canvas.width || img.naturalHeight !== canvas.height
+    ) {
+      if (typeof img.src === "string" && img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+      return false;
+    }
+    source.updateSource(img);
+    return true;
+  }).catch(() => false);
+}
+
 // Is this page an app built around one game? The export's shell says so
 // (__EXPORTED_LEVEL_APP__), and so does the in-game forge's
 // (__OFFLINE_LEVEL_NAME__); the hosted game says neither.
@@ -1214,6 +1269,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
 
         scene.textures.remove(atlasKey);
         scene.textures.addAtlas(atlasKey, mergedCanvas, { frames: mergedFrameMap });
+        bakeCanvasTexture(scene.textures, atlasKey);
         return true;
       } catch (atlasErr) {
         console.warn("Failed to merge atlas:", atlasErr);
@@ -1261,6 +1317,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         const frames = frameMapOf(atlas);
         scene.textures.remove(atlasKey);
         scene.textures.addAtlas(atlasKey, canvas, { frames });
+        bakeCanvasTexture(scene.textures, atlasKey);
         this._stockCutin = stock;
         return true;
       } catch (paintErr) {

@@ -269,6 +269,25 @@ they are written out in full.
     succession, which no canvas can fix.
     `tests/gpu_reset_canvas_test.ts` runs both copies of the recipe against a
     fake canvas and pins every builder.
+    The replay was still not enough on a phone: Image Seal (a Dezaemon shelf
+    cart PLAYed from the editor) kept scoring with no ship, enemies, shots or
+    scenery, while the score popups (cut from `game_ui`, an `<img>`) and the
+    SP button's rim and ground (a canvas painted from shapes alone) came
+    through. What a canvas had drawn from an image did not come back; image
+    textures, which Phaser re-uploads from the image itself on restore, did.
+    So a canvas texture that is finished is now handed to Phaser as an image:
+    `bakeCanvasTexture(textures, key)` (in the loader, so in both copies)
+    encodes the canvas to a PNG, loads it with `loadImage` (which keeps the
+    blob URL) and swaps the texture's source to it with Phaser's
+    `TextureSource.updateSource`, which keeps every `Frame` and the GL texture
+    it uploads into. `_stackAtlas`, `applyCustomCutin`,
+    `mergeAtlasIntoGameAsset`, the scenery strips, the SP faces and the zako
+    bullet call it. It changes nothing where it cannot (no `toBlob`, a Phaser
+    without `updateSource`, a texture re-stacked or removed while the PNG was
+    made), and until the PNG lands the canvas and its recipe stand in.
+    Canvases the game types again itself (the HUD line, the lens, `Text`)
+    stay canvases. `tests/gpu_reset_baked_texture_test.ts` pins the helper and
+    its callers. Not yet run on Android hardware.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
