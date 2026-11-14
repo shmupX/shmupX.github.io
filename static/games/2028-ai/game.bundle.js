@@ -3814,6 +3814,113 @@
       return data;
     });
   }
+  // foo.codemonkey.games (?level=foo) plays 2028.Ai from the cloud record,
+  // shmupX/levels/foo, which was saved before foo had its bonus stage. The
+  // baked foo.json is the record of 2028.Ai's own game, so a cloud foo with no
+  // bonus stage of its own takes foo.json's: the stage, the enemies and boss it
+  // fields, its music, and the atlas frames those draw from. Nothing the cloud
+  // record already has is replaced; if foo.json can't be read, the cloud
+  // record plays as it is.
+  var OWN_BONUS_LEVEL = "foo";
+  function hasBonusStage(data) {
+    var stages = data && data.stages && typeof data.stages === "object" ? data.stages : null;
+    if (!stages) return false;
+    for (var k in stages) {
+      if (/^stage\d+$/.test(k) && stages[k] && stages[k].bonus === true) return true;
+    }
+    return false;
+  }
+  function graftBonusStages(data, baked, baseRecipe) {
+    if (!data || !hasBonusStage(baked)) return data;
+    var out = Object.assign({}, data);
+    out.stages = Object.assign({}, data.stages && typeof data.stages === "object" ? data.stages : {});
+    for (var k in baked.stages) {
+      var rec = baked.stages[k];
+      if (/^stage\d+$/.test(k) && rec && rec.bonus === true && !out.stages[k]) out.stages[k] = rec;
+    }
+    var base = baseRecipe || {};
+    function addMissing(field) {
+      var have = Object.assign({}, data[field] || base[field] || {});
+      var from = baked[field] || {};
+      var added = false;
+      for (var key in from) {
+        if (!(key in have)) {
+          have[key] = from[key];
+          added = true;
+        }
+      }
+      if (added || data[field]) out[field] = have;
+    }
+    addMissing("enemyData");
+    addMissing("bossData");
+    var audio = Object.assign({}, data.customAudioURLs || {});
+    var bakedAudio = baked.customAudioURLs || {};
+    for (var sk in out.stages) {
+      var bgm = sk + "_bgm";
+      if (out.stages[sk] && out.stages[sk].bonus === true && bakedAudio[bgm] && !audio[bgm]) audio[bgm] = bakedAudio[bgm];
+    }
+    out.customAudioURLs = audio;
+    if (baked.atlasImageDataURL && baked.atlasFrames) {
+      var have = data.atlasFrames || {};
+      var missing = {};
+      var any = false;
+      for (var fname in baked.atlasFrames) {
+        if (!(fname in have)) {
+          missing[fname] = baked.atlasFrames[fname];
+          any = true;
+        }
+      }
+      if (any) out.bonusAtlas = { image: baked.atlasImageDataURL, frames: missing };
+    }
+    return out;
+  }
+  function withOwnBonusStage(levelName, data, baseRecipe) {
+    if (!data || String(levelName || "").toLowerCase() !== OWN_BONUS_LEVEL || hasBonusStage(data)) {
+      return Promise.resolve(data);
+    }
+    return fetchLevel2(LEVEL_DATA_URL).catch(function() {
+      return fetchLevel2(LEVEL_DATA_FALLBACK_URL);
+    }).then(function(baked) {
+      return graftBonusStages(data, baked, baseRecipe);
+    }).catch(function(err) {
+      console.warn("[2028.Ai] no bonus stage for the cloud foo:", err);
+      return data;
+    });
+  }
+  function mergeBonusAtlas(scene, data, done) {
+    var extra = data && data.bonusAtlas;
+    if (!extra) {
+      done();
+      return;
+    }
+    var atlas = scene.textures.get("game_asset");
+    var present = atlas && atlas.frames ? atlas.frames : {};
+    var frames = {};
+    var any = false;
+    for (var fname in extra.frames) {
+      if (present[fname.replace(/\u2024/g, ".")]) continue;
+      frames[fname] = extra.frames[fname];
+      any = true;
+    }
+    if (!any) {
+      done();
+      return;
+    }
+    var img = new Image();
+    img.onload = function() {
+      try {
+        mergeAtlasIntoGameAsset(scene, img, frames);
+      } catch (err) {
+        console.warn("Failed to merge the bonus stage's atlas:", err);
+      }
+      done();
+    };
+    img.onerror = function() {
+      console.warn("The bonus stage's atlas failed to load");
+      done();
+    };
+    img.src = extra.image;
+  }
   function parseStageId2(value) {
     return clampStageId(value);
   }
@@ -4275,6 +4382,8 @@
       var game = this.game;
       var stageParam = readStageParam();
       fetchFirebaseLevel(levelName).then(function(data) {
+        return withOwnBonusStage(levelName, data, self.cache.json.get("recipe"));
+      }).then(function(data) {
         var baseRecipe = self.cache.json.get("recipe") || {};
         var localEnemyData = baseRecipe.enemyData ? JSON.parse(JSON.stringify(baseRecipe.enemyData)) : {};
         var stageKey = data.stageKey || "stage0";
@@ -4488,6 +4597,9 @@
             }
           });
         }
+        var finishWithBonusAtlas = function() {
+          mergeBonusAtlas(self, data, finishLevelLoad);
+        };
         if (data.atlasImageDataURL && data.atlasFrames) {
           var fbImg = new Image();
           fbImg.onload = function() {
@@ -4496,15 +4608,15 @@
             } catch (atlasErr) {
               console.warn("Failed to merge Firebase atlas:", atlasErr);
             }
-            finishLevelLoad();
+            finishWithBonusAtlas();
           };
           fbImg.onerror = function() {
             console.warn("Firebase atlas image failed to load, using local");
-            finishLevelLoad();
+            finishWithBonusAtlas();
           };
           fbImg.src = data.atlasImageDataURL;
         } else {
-          finishLevelLoad();
+          finishWithBonusAtlas();
         }
       }).catch(function(err) {
         console.warn("Firebase level load failed for '" + levelName + "':", err);
