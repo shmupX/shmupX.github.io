@@ -6766,9 +6766,11 @@ a level open.
 
 `hellophaser` is RonaGun, the Phaser 3 shooter at
 [easierbycode.com/hellophaser/v4](https://easierbycode.com/hellophaser/v4/)
-(Lincoln against the virus, the sentinels and the Seductress), rebuilt as a
-cloud game by `scripts/hellophaser/build-level.ts`. The record it builds is
-committed as `static/games/hellophaser/game.json`:
+(one ship against the virus, the sentinels and the Seductress), rebuilt as a
+cloud game by `scripts/hellophaser/build-level.ts`. Its ship is ship-boy, the
+Player of the build before
+([v3](https://easierbycode.com/hellophaser/v3/)), in place of v4's Lincoln.
+The record it builds is committed as `static/games/hellophaser/game.json`:
 
 ```sh
 deno run -A --node-modules-dir=none scripts/hellophaser/build-level.ts --out static/games/hellophaser/game.json
@@ -6797,10 +6799,15 @@ rows, and ends on the Seductress as its boss.
   `speed`, `lifespan` and `angle` (a number or `[min, max]`), `scale` (a number
   or `{start, end}`), `blendMode` (default ADD), and optional `frequency`,
   `offsetX` and `offsetY`. It stops emitting while the sprite is hidden, and
-  fades out and is removed when the sprite goes. Low mode draws none. Lincoln
+  fades out and is removed when the sprite goes. Low mode draws none. The ship
   wears the source's blue thruster and the Asteroid its red trail.
   `validateGameJson` requires a `trail` to name a texture.
-- **What differs from the source.** The SmilEye power-up and its boost, each
+- **The ship.** v3's Player draws its 117x142 `ship-boy` sheet at
+  `setScale(.25)`, so the converter bakes frame 0 at 29x36 (`PLAYER_SCALE` in
+  source.ts). The thruster, the 200 px/s speed and the 100 ms fire rate are
+  the same in v3 and v4. It fires v4's Lincoln fireballs, not v3's beam.
+- **What differs from the source.** The SmilEye power-up and its boost,
+  ship-boy's death and power-up frames (1 to 15 of its sheet), each
   enemy's own explosion sheet, and the Seductress's morph after her defeat are
   not ported. The runtime's blasts and stage clear stand in. The Seductress
   fires nothing in the source, but a shmupX boss runs a stock routine, so hers
@@ -6835,7 +6842,7 @@ whichever ending the run reached: the normal one, or the secret stage.
   and the ending plays after the last. Each stage plays `stageRecipe`, the
   game's recipe with the level's enemies and stage rules. The ship stays the
   game's own and wears the level's ship trail where it has none (foo's duke
-  wears Lincoln's blue thruster). Each boss flies the stock routine of its
+  wears RonaGun's blue thruster). Each boss flies the stock routine of its
   stage number in its own game (`ownStageId`). The stage opens on the black
   "another challenger" card with the level's logo, and plays the level's own
   music.

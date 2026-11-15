@@ -1,6 +1,6 @@
 // The cloud game hellophaser: RonaGun (easierbycode.com/hellophaser/v4/)
 // converted by scripts/hellophaser/build-level.ts, with its music and its
-// particle trails.
+// particle trails, flown by v3's ship-boy.
 //
 // Checked here: the record names every sprite the source's lanes and
 // sentinels fly, packs every frame (trails included), passes the schema,
@@ -52,7 +52,7 @@ Deno.test("hellophaser: scripts fly straight down and straight across", () => {
 
 Deno.test("hellophaser: music and trails", () => {
   assertEquals(rec.customAudioURLs, { boss_bison_bgm: MUSIC_URL });
-  assertEquals(rec.playerData.trail.speed, EMITTERS.lincoln.speed);
+  assertEquals(rec.playerData.trail.speed, EMITTERS.shipBoy.speed);
   assertEquals(rec.playerData.trail.blendMode, "ADD");
   const asteroid = Object.values(rec.enemyData).find((e: any) =>
     e.name === "asteroid"
@@ -61,6 +61,16 @@ Deno.test("hellophaser: music and trails", () => {
   for (const t of [rec.playerData.trail, asteroid.trail]) {
     for (const f of t.texture) assert(rec.atlasFrames[f], `${f} not packed`);
   }
+});
+
+Deno.test("hellophaser: the ship is v3's ship-boy, at the size v3 draws it", () => {
+  assertEquals(rec.playerData.name, "shipBoy");
+  // The source rests the ship on frame 0 of its sheet.
+  assertEquals(rec.playerData.texture, ["hpShipBoyx0p25_0"]);
+  // 117x142 at setScale(.25), in whole pixels.
+  const { w, h } = rec.atlasFrames.hpShipBoyx0p25_0.frame;
+  assertEquals([w, h], [29, 36]);
+  assertEquals(rec.playerData.shootNormal.interval, 12); // 100 ms at 120 Hz
 });
 
 Deno.test("hellophaser: the boss is the Seductress", () => {

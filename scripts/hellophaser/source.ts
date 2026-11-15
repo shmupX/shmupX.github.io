@@ -11,6 +11,10 @@
  * and Asteroid. The art lives beside this file in art/, copied byte for byte
  * from the site (the Parcel hash dropped from each name).
  *
+ * The ship is the one piece from the build before: v3's Player, ship-boy
+ * (SHIP_SOURCE), flies in place of v4's Lincoln. It still fires Lincoln's
+ * fireballs.
+ *
  * The source plays on a 256x272 field; shmupX on 256x480. Nothing in this file
  * is scaled. The converter does that, in one place.
  */
@@ -20,6 +24,16 @@ export const SOURCE = {
   site: "https://easierbycode.com/hellophaser/v4/",
   bundle: "https://easierbycode.com/hellophaser/v4/js.02c97bae.js",
   title: "RonaGun",
+} as const;
+
+/**
+ * Where the ship comes from: v3, whose Player is ship-boy. The sheet's frame
+ * size is from v3's Scene1.preload; the scale, the animations and the emitter
+ * from the Player constructor in the tail of this bundle.
+ */
+export const SHIP_SOURCE = {
+  site: "https://easierbycode.com/hellophaser/v3/",
+  bundle: "https://easierbycode.com/hellophaser/v3/js.dd7b2b2f.js",
 } as const;
 
 // --- config.ts ---------------------------------------------------------------
@@ -40,7 +54,8 @@ export interface SheetArt {
 }
 
 export const SHEETS = {
-  lincoln: { file: "lincoln.png", frameW: 27, frameH: 58 },
+  // v3's ship (SHIP_SOURCE), which the Player draws at PLAYER_SCALE.
+  shipBoy: { file: "ship-boy.png", frameW: 117, frameH: 142 },
   lincolnFireball: { file: "lincoln-fireball.png", frameW: 9, frameH: 22 },
   blueAngel: { file: "blue-angel.png", frameW: 70, frameH: 55 },
   asteroid: { file: "asteroid-face.png", frameW: 33, frameH: 32 },
@@ -98,8 +113,16 @@ export interface AnimDef {
 }
 
 export const ANIMS = {
-  // Lincoln: "lincoln-fly" (frames 0, 1 at 2 fps); "lincoln-shoot" (2, 3).
-  lincolnFly: { sheet: "lincoln", frames: [0, 1], fps: 2 },
+  // Player (v3): the sprite rests on frame 0. Hit, it plays "ship-boy-death"
+  // (1..13 over one second); on a power-up, "ship-boy-powerup" (15, 14, 15, 14
+  // at 4 fps), then frame 0 again.
+  shipBoy: { sheet: "shipBoy", frames: [0], fps: 1 },
+  shipBoyDeath: {
+    sheet: "shipBoy",
+    frames: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    fps: 13,
+  },
+  shipBoyPowerup: { sheet: "shipBoy", frames: [15, 14, 15, 14], fps: 4 },
   lincolnFireball: { sheet: "lincolnFireball", frames: [0, 1, 2, 3], fps: 30 },
   blueAngel: { sheet: "blueAngel", frames: [0, 1], fps: 4 },
   asteroid: { sheet: "asteroid", frames: [0, 1], fps: 20 },
@@ -225,13 +248,15 @@ export const CROSSERS: CrosserDef[] = [
  */
 export const SEDUCTRESS = { right: -3850, top: 0, health: 20, speed: 50 };
 
-// --- Lincoln -------------------------------------------------------------------
+// --- the ship: v3's Player ------------------------------------------------------
 
-/** game-settings.ts: playerSpeed 200 px/s on the arrow keys. */
+/** Player: setScale(.25), so a 117x142 frame is drawn 29.25 x 35.5. */
+export const PLAYER_SCALE = 0.25;
+/** game-settings.ts: playerSpeed 200 px/s on the arrow keys (v3 and v4). */
 export const PLAYER_SPEED = 200;
-/** Lincoln.shoot: nextShotAt = now + 100 ms. */
+/** Player.shoot, and v4's Lincoln.shoot: nextShotAt = now + 100 ms. */
 export const PLAYER_FIRE_RATE_MS = 100;
-/** LincolnFireball: body.velocity.y -250. */
+/** v4's LincolnFireball: body.velocity.y -250, as v3's Beam. */
 export const FIREBALL_SPEED = 250;
 
 // --- the emitters ----------------------------------------------------------------
@@ -252,13 +277,12 @@ export interface EmitterDef {
 
 export const EMITTERS = {
   /**
-   * Lincoln's thruster: add.particles("blue"), speed 125, lifespan
-   * Between(200, 300), angle `this.angle - 270 + Between(-15, 15)`. The ship
-   * never turns, so that is 90 ± 15, straight down. Scale .275 to 0, ADD.
-   * boost() raises the speed to 375 for the spin; the record keeps the
-   * cruising speed.
+   * The ship's thruster, the same on v3's Player and v4's Lincoln:
+   * add.particles("blue"), speed 125, lifespan Between(200, 300), angle
+   * `this.angle - 270 + Between(-15, 15)`. The ship never turns, so that is
+   * 90 ± 15, straight down. Scale .275 to 0, ADD.
    */
-  lincoln: {
+  shipBoy: {
     image: "blue",
     speed: 125,
     lifespan: [200, 300],

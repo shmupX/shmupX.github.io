@@ -24,8 +24,9 @@
  *   source fires, so no record does. The Asteroid carries the source's red
  *   particle trail as `trail`.
  * - `bossData/boss0`: the Seductress, 20 hp as in the source.
- * - `playerData`: Lincoln, his fireballs every 100 ms, and his blue thruster
- *   trail as `trail`.
+ * - `playerData`: ship-boy, the Player of the build before (hellophaser v3),
+ *   at the quarter scale that build draws it, firing Lincoln's fireballs
+ *   every 100 ms, with the blue thruster trail as `trail`.
  * - `customAudioURLs.boss_bison_bgm`: the source's title song. The runtime
  *   plays stage 0's music under that key (playBossBgm), through the boss, as
  *   the source loops it through the whole scene.
@@ -75,6 +76,7 @@ import {
   LANES,
   MUSIC_URL,
   PLAYER_FIRE_RATE_MS,
+  PLAYER_SCALE,
   SEDUCTRESS,
   type SheetKey,
   SHEETS,
@@ -124,11 +126,15 @@ async function loadArt(file: string): Promise<Raster> {
 
 // --- art ---------------------------------------------------------------------
 
-/** Frame names: `hp` + the sheet + the frame index (and the draw scale). */
+/**
+ * Frame names: `hp` + the sheet + the frame index (and the draw scale). A
+ * frame name is a database key, so the scale's dot is written "p": the
+ * goblin's frames are x2, the ship's x0p25.
+ */
 const F = {
   sheet: (k: SheetKey, i: number, scale = 1) =>
     `hp${k[0].toUpperCase()}${k.slice(1)}${
-      scale === 1 ? "" : `x${scale}`
+      scale === 1 ? "" : `x${String(scale).replace(".", "p")}`
     }_${i}`,
   image: (k: keyof typeof IMAGES) => `hp${k[0].toUpperCase()}${k.slice(1)}`,
 };
@@ -168,7 +174,7 @@ export async function buildArt(): Promise<Art> {
     ),
     ...CROSSERS.map((c) => ({ key: c.anim, scale: 1 })),
     { key: "seductressDefault", scale: 1 },
-    { key: "lincolnFly", scale: 1 },
+    { key: "shipBoy", scale: PLAYER_SCALE },
     { key: "lincolnFireball", scale: 1 },
   ];
   const sheets = new Map<SheetKey, Raster>();
@@ -178,7 +184,16 @@ export async function buildArt(): Promise<Art> {
     if (!sheets.has(sk)) sheets.set(sk, await loadArt(def.file));
     for (const i of ANIMS[key].frames) {
       let r = gridFrame(sheets.get(sk)!, def.frameW, def.frameH, i);
-      if (scale !== 1) r = resample(r, r.width * scale, r.height * scale, true);
+      // A draw scale is baked in. The sheet takes whole pixels, so the ship's
+      // 29.25 x 35.5 becomes 29x36.
+      if (scale !== 1) {
+        r = resample(
+          r,
+          Math.round(r.width * scale),
+          Math.round(r.height * scale),
+          true,
+        );
+      }
       // The runtime draws a player shot pointing right and turns it to fly
       // up; the source's fireball is drawn pointing up.
       if (key === "lincolnFireball") r = rotateCcw(rotateCcw(rotateCcw(r)));
@@ -503,15 +518,15 @@ export function seductressRecord(): Json {
 }
 
 export function playerRecord(): Json {
-  // The runtime plays a ship at 6 fps; lincoln-fly is 2 fps.
-  const fly = animFrames("lincolnFly").flatMap((f) => [f, f, f]);
+  // The source rests the ship on one frame; that frame is the whole loop.
+  const fly = animFrames("shipBoy", PLAYER_SCALE);
   const shot = {
     texture: animFrames("lincolnFireball"),
     frameRate: ANIMS.lincolnFireball.fps,
   };
   const interval = ticks(PLAYER_FIRE_RATE_MS);
   return {
-    name: "lincoln",
+    name: "shipBoy",
     texture: fly,
     maxHp: 3,
     spDamage: 10,
@@ -521,7 +536,7 @@ export function playerRecord(): Json {
     shootNormal: { name: "normal", ...shot, damage: 1, hp: 1, interval },
     shootBig: { name: "big", ...shot, damage: 2, hp: 100, interval },
     shoot3way: { name: "3way", ...shot, damage: 1, hp: 1, interval },
-    trail: trailRecord(EMITTERS.lincoln),
+    trail: trailRecord(EMITTERS.shipBoy),
   };
 }
 

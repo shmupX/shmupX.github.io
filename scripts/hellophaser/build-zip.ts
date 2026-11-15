@@ -25,6 +25,7 @@ import {
   ART_DIR,
   buildArt,
   buildLevel,
+  playerRecord,
   TITLE,
   titleArt,
 } from "./build-level.ts";
@@ -67,7 +68,7 @@ const grow = (r: Raster, k: number) =>
 
 /**
  * The shop's box art, 256x384: the menu's star backdrop, the RonaGun logo,
- * a rank of the lanes' first sprites, and Lincoln below.
+ * a rank of the lanes' first sprites, and the ship below.
  */
 export async function iconArt(): Promise<Raster> {
   const W = 256, H = 384;
@@ -100,14 +101,14 @@ export async function iconArt(): Promise<Raster> {
     parts.push({ art: r, x, y: 158 + Math.floor((rankH - r.height) / 2) });
     x += r.width + gap;
   }
-  // Lincoln on his blue thruster
+  // The ship on its blue thruster
   const glow = resample(
     await decodePng(await Deno.readFile(new URL("blue.png", ART_DIR))),
     40,
     40,
     false,
   );
-  const ship = grow(art("hpLincoln_0"), 2);
+  const ship = grow(art(playerRecord().texture[0]), 2);
   const sx = Math.floor((W - ship.width) / 2);
   const sy = H - 24 - ship.height;
   parts.push({

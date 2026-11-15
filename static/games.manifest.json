@@ -1,7 +1,7 @@
 {
-  "version": "ff71410",
+  "version": "2941044",
   "versionSource": "git",
-  "generatedAt": "2026-11-07T00:03:21.531Z",
+  "generatedAt": "2026-11-15T22:21:33.863Z",
   "games": [
     {
       "id": "shmupx",
@@ -82,7 +82,7 @@
       "kind": "web",
       "name": "RONAGUN",
       "title": "RONAGUN",
-      "sub": "PHASER 3 // Lincoln vs the virus, the sentinels and the Seductress · hellophaser v4, the original",
+      "sub": "PHASER 3 // Ship-Boy vs the virus, the sentinels and the Seductress · hellophaser v4, the original",
       "icon": "/icons/hellophaser-icon.png",
       "source": "url",
       "downloadUrl": "/games/hellophaser-web.zip",

@@ -66,7 +66,7 @@ function ronagun(): Json {
     },
     bossData: { boss0: { name: "seductress", hp: 20 } },
     enemyData: { enemyAAA: { name: "blueAngel" } },
-    playerData: { name: "lincoln", trail: { texture: ["hpBlue"], speed: 125 } },
+    playerData: { name: "shipBoy", trail: { texture: ["hpBlue"], speed: 125 } },
     endsOnClear: false,
   };
 }
