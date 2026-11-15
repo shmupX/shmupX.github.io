@@ -68,16 +68,7 @@
     if (src.background) stage.background = src.background;
     if (src.items) stage.items = src.items;
     if (src.scroll) stage.scroll = src.scroll;
-    copyBonusStageFields(src, stage);
     return stage;
-  }
-  // A bonus stage's own fields (isBonusStage): `bonus` marks it, `playerTrail`
-  // is a trail the ship wears on that stage alone, and `backdrop` is its own
-  // scrolling picture, { loop, end } as PNG data URLs.
-  function copyBonusStageFields(src, stage) {
-    if (src.bonus === true) stage.bonus = true;
-    if (src.playerTrail && typeof src.playerTrail === "object") stage.playerTrail = src.playerTrail;
-    if (src.backdrop && typeof src.backdrop === "object") stage.backdrop = src.backdrop;
   }
   function readParam(name) {
     if (typeof globalThis === "undefined" || !globalThis.location) {
@@ -1349,12 +1340,7 @@
           // part of it. Left in, a two-stage game ran on into the base game's
           // stages 2-4 here, where the editor's own PLAY — which hands over the
           // record alone — ended it after its second.
-          // A record whose `stages` holds only bonus stages (foo's, after the
-          // secret stage) adds them to the base game's rather than standing
-          // for the whole game.
-          const onlyBonus = Object.keys(levelData.stages).every((k) => !/^stage\d+$/.test(k) || (levelData.stages[k] && levelData.stages[k].bonus === true));
           for (const key of Object.keys(recipe)) {
-            if (onlyBonus) break;
             if (/^stage\d+$/.test(key) && key !== stageKey && !levelData.stages[key]) delete recipe[key];
           }
         }
@@ -1899,13 +1885,7 @@
         // 2028.Ai's frame for frame, so its atlas's copy would read as a stock
         // copy (_withoutStockCutins) and lose to rando's.
         const exportedApp = o.exportedApp !== void 0 ? !!o.exportedApp : isExportedApp();
-        // A game may amend the record it fetched before anything reads it
-        // (`amendLevel(levelKey, data)`, resolving the record to play): 2028.Ai
-        // gives the cloud foo the bonus stage its baked foo.json has. A hook
-        // that fails leaves the record as it came.
-        return this.fetchLevel(levelName, o).then((data) => typeof o.amendLevel === "function"
-          ? Promise.resolve(o.amendLevel(this.resolvedLevelName || levelName, data)).then((amended) => amended || data, () => data)
-          : data).then((data) => {
+        return this.fetchLevel(levelName, o).then((data) => {
           const levelKey = this.resolvedLevelName || levelName;
           if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
           return this.applyCabinet(data).then(() => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
@@ -3686,21 +3666,9 @@
     });
     return ids.length ? ids : [0];
   }
-  // A bonus stage (its record's `bonus: true`) is played after the stage
-  // before it and is not one of the game's own: the last stage, the story's
-  // stages and the endings are counted without it. foo's is stage 5, RonaGun's
-  // stage, after the secret stage (stage 4); it has no story of its own and
-  // goes on to the ending when it is cleared.
-  function isBonusStage(recipe, stageId) {
-    var rec = recipe && recipe["stage" + String(stageId)];
-    return !!(rec && rec.bonus === true);
-  }
   function lastStageId(recipe) {
     var ids = recipeStageIds(recipe);
-    for (var i = ids.length - 1; i > 0; i--) {
-      if (!isBonusStage(recipe, ids[i])) return ids[i];
-    }
-    return ids[0];
+    return ids[ids.length - 1];
   }
   // ---- A stage's music, by how long the stage runs -----------------------
   // A level's custom audio may name its stage music by the stage's length
@@ -3842,113 +3810,6 @@
       }
       return data;
     });
-  }
-  // foo.codemonkey.games (?level=foo) plays 2028.Ai from the cloud record,
-  // shmupX/levels/foo, which was saved before foo had its bonus stage. The
-  // baked foo.json is the record of 2028.Ai's own game, so a cloud foo with no
-  // bonus stage of its own takes foo.json's: the stage, the enemies and boss it
-  // fields, its music, and the atlas frames those draw from. Nothing the cloud
-  // record already has is replaced; if foo.json can't be read, the cloud
-  // record plays as it is.
-  var OWN_BONUS_LEVEL = "foo";
-  function hasBonusStage(data) {
-    var stages = data && data.stages && typeof data.stages === "object" ? data.stages : null;
-    if (!stages) return false;
-    for (var k in stages) {
-      if (/^stage\d+$/.test(k) && stages[k] && stages[k].bonus === true) return true;
-    }
-    return false;
-  }
-  function graftBonusStages(data, baked, baseRecipe) {
-    if (!data || !hasBonusStage(baked)) return data;
-    var out = Object.assign({}, data);
-    out.stages = Object.assign({}, data.stages && typeof data.stages === "object" ? data.stages : {});
-    for (var k in baked.stages) {
-      var rec = baked.stages[k];
-      if (/^stage\d+$/.test(k) && rec && rec.bonus === true && !out.stages[k]) out.stages[k] = rec;
-    }
-    var base = baseRecipe || {};
-    function addMissing(field) {
-      var have = Object.assign({}, data[field] || base[field] || {});
-      var from = baked[field] || {};
-      var added = false;
-      for (var key in from) {
-        if (!(key in have)) {
-          have[key] = from[key];
-          added = true;
-        }
-      }
-      if (added || data[field]) out[field] = have;
-    }
-    addMissing("enemyData");
-    addMissing("bossData");
-    var audio = Object.assign({}, data.customAudioURLs || {});
-    var bakedAudio = baked.customAudioURLs || {};
-    for (var sk in out.stages) {
-      var bgm = sk + "_bgm";
-      if (out.stages[sk] && out.stages[sk].bonus === true && bakedAudio[bgm] && !audio[bgm]) audio[bgm] = bakedAudio[bgm];
-    }
-    out.customAudioURLs = audio;
-    if (baked.atlasImageDataURL && baked.atlasFrames) {
-      var have = data.atlasFrames || {};
-      var missing = {};
-      var any = false;
-      for (var fname in baked.atlasFrames) {
-        if (!(fname in have)) {
-          missing[fname] = baked.atlasFrames[fname];
-          any = true;
-        }
-      }
-      if (any) out.bonusAtlas = { image: baked.atlasImageDataURL, frames: missing };
-    }
-    return out;
-  }
-  function withOwnBonusStage(levelName, data, baseRecipe) {
-    if (!data || String(levelName || "").toLowerCase() !== OWN_BONUS_LEVEL || hasBonusStage(data)) {
-      return Promise.resolve(data);
-    }
-    return fetchLevel2(LEVEL_DATA_URL).catch(function() {
-      return fetchLevel2(LEVEL_DATA_FALLBACK_URL);
-    }).then(function(baked) {
-      return graftBonusStages(data, baked, baseRecipe);
-    }).catch(function(err) {
-      console.warn("[2028.Ai] no bonus stage for the cloud foo:", err);
-      return data;
-    });
-  }
-  function mergeBonusAtlas(scene, data, done) {
-    var extra = data && data.bonusAtlas;
-    if (!extra) {
-      done();
-      return;
-    }
-    var atlas = scene.textures.get("game_asset");
-    var present = atlas && atlas.frames ? atlas.frames : {};
-    var frames = {};
-    var any = false;
-    for (var fname in extra.frames) {
-      if (present[fname.replace(/\u2024/g, ".")]) continue;
-      frames[fname] = extra.frames[fname];
-      any = true;
-    }
-    if (!any) {
-      done();
-      return;
-    }
-    var img = new Image();
-    img.onload = function() {
-      try {
-        mergeAtlasIntoGameAsset(scene, img, frames);
-      } catch (err) {
-        console.warn("Failed to merge the bonus stage's atlas:", err);
-      }
-      done();
-    };
-    img.onerror = function() {
-      console.warn("The bonus stage's atlas failed to load");
-      done();
-    };
-    img.src = extra.image;
   }
   function parseStageId2(value) {
     return clampStageId(value);
@@ -4169,7 +4030,6 @@
     if (src.scroll) {
       stage.scroll = src.scroll;
     }
-    copyBonusStageFields(src, stage);
     return stage;
   }
   function primeGameStateForStage(recipe, stageId) {
@@ -4588,7 +4448,6 @@
             };
             startTextImg.src = data.titleStartTextDataURL;
           }
-          loadStageBackdrops(self, baseRecipe);
           gameState._phaserRecipe = baseRecipe;
           gameState.hasCustomEnemies = !!data.enemyData;
           var stageId = stageParam != null ? parseStageId2(stageParam) : parseStageId2(stageKey.replace("stage", ""));
@@ -10343,7 +10202,6 @@
   }
   function decideEnding(recipe) {
     var finalStage = recipe ? lastStageId(recipe) : 4;
-    if (isBonusStage(recipe, gameState.stageId)) return false;
     if (gameState.stageId > finalStage) return true;
     // 2028.Ai's true ending: its stage 4 is only fought after four akebono
     // finishes without a continue. That is the base game's rule, not a cart's
@@ -10361,17 +10219,6 @@
     }
     create() {
       var recipe = gameState._phaserRecipe;
-      // A bonus stage has no story: it follows the stage before it straight
-      // away (isBonusStage).
-      if (recipe && isBonusStage(recipe, gameState.stageId)) {
-        this.endingFlg = false;
-        var gameB = this.game;
-        setTimeout(function() {
-          gameB.scene.stop("PhaserAdvScene");
-          gameB.scene.start("PhaserGameScene");
-        }, 50);
-        return;
-      }
       // A cart with no story of its own must never be dressed in 2028.Ai's.
       // noStory normally catches that a step earlier, but it is gated on
       // !__advSceneScripted, and ScriptedAdvScene sets that from
@@ -11703,9 +11550,6 @@
     p.shadow = createShadow(scene, p.sprite, firstFrame, true, 5, "game_asset");
     p.shadow.play(p.animKey);
     updateShadowPosition(p.shadow, p.sprite);
-    // A bonus stage may hang a trail of its own on the ship (playerTrail).
-    var stageRecT = scene.recipe && scene.recipe["stage" + String(gameState.stageId || 0)];
-    if (stageRecT && stageRecT.playerTrail) pd = Object.assign({}, pd, { trail: stageRecT.playerTrail });
     attachTrail(scene, p.sprite, pd && pd.trail);
     p.barrierActive = false;
     p.barrierTimer = 0;
@@ -12263,64 +12107,7 @@
   // and play the whole reveal as a black band. Anything that does not resolve
   // now falls back to the shipped backdrop — the same trade
   // bulletFramesInAtlas makes just above, for the same reason.
-  // A stage's own backdrop (its record's `backdrop`, { loop, end } as PNG data
-  // URLs), as the textures stage_loop_s<N> and stage_end_s<N>. GameScene draws
-  // them in place of the stock stage art where they are loaded.
-  function stageBackdropKeys(stageId) {
-    return { loop: "stage_loop_s" + String(stageId), end: "stage_end_s" + String(stageId) };
-  }
-  function loadStageBackdrops(scene, recipe) {
-    if (!recipe) return;
-    for (var key in recipe) {
-      var m = /^stage(\d+)$/.exec(key);
-      var rec = recipe[key];
-      if (!m || !rec || !rec.backdrop || typeof rec.backdrop !== "object") continue;
-      var keys = stageBackdropKeys(Number(m[1]));
-      ["loop", "end"].forEach(function(part) {
-        var url = rec.backdrop[part];
-        if (typeof url !== "string" || !url) return;
-        var img = new Image();
-        img.onload = function() {
-          try {
-            if (scene.textures.exists(keys[part])) scene.textures.remove(keys[part]);
-            scene.textures.addImage(keys[part], img);
-          } catch (e) {
-            console.warn("Failed to load stage backdrop " + keys[part] + ":", e);
-          }
-        };
-        img.src = url;
-      });
-    }
-  }
-  function awaitStageBackdrop(scene, stageId, stageData) {
-    var keys = stageBackdropKeys(stageId);
-    var url = stageData.backdrop && stageData.backdrop.loop;
-    if (typeof url !== "string" || !url) return;
-    var img = new Image();
-    img.onload = function() {
-      try {
-        if (!scene.sys || !scene.sys.isActive() || !scene.stageBg) return;
-        if (!scene.textures.exists(keys.loop)) scene.textures.addImage(keys.loop, img);
-        scene.stageBg.setTexture(keys.loop);
-        scene.ownBackdrop = true;
-        if (scene.stageBgOverlay) {
-          scene.stageBgOverlay.destroy();
-          scene.stageBgOverlay = null;
-        }
-      } catch (e) {
-        console.warn("Failed to put up stage backdrop " + keys.loop + ":", e);
-      }
-    };
-    img.src = url;
-  }
   function resolveStageBgEnd(scene, stageId, fallbackKey) {
-    // A stage with a backdrop of its own ends on its own end picture.
-    var ownStage = scene.recipe && scene.recipe["stage" + String(stageId)];
-    var ownEnd = stageBackdropKeys(stageId).end;
-    try {
-      if (ownStage && ownStage.backdrop && scene.textures.exists(ownEnd)) fallbackKey = ownEnd;
-    } catch (e) {
-    }
     var fallback = { key: fallbackKey, frame: null, alpha: null };
     var bossData = scene.recipe && scene.recipe.bossData;
     var rec = bossData && bossData["boss" + String(stageId)];
@@ -18186,9 +17973,7 @@
       var assetStage = assetStageId(stageId);
       var bgSuffix = gameState.hasCustomEnemies ? "stage_loop_c" : "stage_loop";
       var bgEndSuffix = gameState.hasCustomEnemies ? "stage_end_c" : "stage_end";
-      var ownBackdrop = stageBackdropKeys(stageId);
-      this.ownBackdrop = !!stageData.backdrop && this.textures.exists(ownBackdrop.loop);
-      this.stageBg = this.add.tileSprite(0, 0, GW13, GH11, this.ownBackdrop ? ownBackdrop.loop : bgSuffix + assetStage);
+      this.stageBg = this.add.tileSprite(0, 0, GW13, GH11, bgSuffix + assetStage);
       this.stageBg.setOrigin(0, 0);
       var bgEnd = resolveStageBgEnd(this, stageId, bgEndSuffix + assetStage);
       this.stageEndBg = bgEnd.frame === null
@@ -18256,14 +18041,11 @@
         }
       }
       this.stageBgOverlay = null;
-      if (gameState.hasCustomEnemies && !this.dezaBg && !this.ownBackdrop && this.textures.exists("stage_over_c")) {
+      if (gameState.hasCustomEnemies && !this.dezaBg && this.textures.exists("stage_over_c")) {
         this.stageBgOverlay = this.add.tileSprite(0, 0, GW13, GH11, "stage_over_c");
         this.stageBgOverlay.setOrigin(0, 0);
         this.stageBgOverlay.setAlpha(0.6);
       }
-      // A stage straight out of the boot (?stage=) can open before its
-      // backdrop's picture has decoded: put it up as soon as it has.
-      if (stageData.backdrop && !this.ownBackdrop) awaitStageBackdrop(this, stageId, stageData);
       this.unitGroup = this.add.group();
       this.bulletGroup = this.add.group();
       this.enemyBulletGroup = this.add.group();
@@ -18740,36 +18522,6 @@
       if (isImportedLevel()) {
         this.time.delayedCall(0, function() {
           self.startGame();
-        });
-        return;
-      }
-      // A bonus stage's card names it, in place of the ROUND card.
-      if (isBonusStage(this.recipe, stageId)) {
-        var bonusText = this.add.text(GCX6, GCY3, "BONUS STAGE", {
-          fontFamily: "sans-serif",
-          fontSize: "24px",
-          fontStyle: "bold",
-          color: "#ffe14d",
-          stroke: "#000000",
-          strokeThickness: 4
-        });
-        bonusText.setOrigin(0.5);
-        bonusText.setDepth(201);
-        bonusText.setAlpha(0);
-        this.tweens.add({ targets: bonusText, alpha: 1, duration: 300 });
-        this.time.delayedCall(300, function() {
-          self.playSound("voice_fight", 0.7);
-        });
-        this.time.delayedCall(1800, function() {
-          self.tweens.add({
-            targets: bonusText,
-            alpha: 0,
-            duration: 200,
-            onComplete: function() {
-              bonusText.destroy();
-              self.startGame();
-            }
-          });
         });
         return;
       }
@@ -22334,10 +22086,6 @@
         defaultLevel: "foo",
         lowMode: !!gameState.lowModeFlg,
         audio: { stockPaths: RESOURCE_PATHS, wants: stagePlaysAudioKey },
-        // foo.codemonkey.games plays the cloud foo: give it the bonus stage.
-        amendLevel: (levelKey, data) => withOwnBonusStage(levelKey, data, this.cache.json.get("recipe")).then((amended) => new Promise((resolve) => {
-          mergeBonusAtlas(this, amended, () => resolve(amended));
-        })),
         onPrimeState: (recipe, info) => {
           gameState._phaserRecipe = recipe;
           gameState.hasCustomEnemies = info.hasCustomEnemies;
@@ -22436,7 +22184,7 @@
           if (this.__ssAdvanced) return;
           this.__ssAdvanced = true;
           if (this.endingFlg === void 0) {
-            this.endingFlg = !isBonusStage(gameState._phaserRecipe, gameState.stageId) && (gameState.stageId >= 5 || gameState.stageId === 4 && !(gameState.akebonoCnt >= 4 && gameState.continueCnt === 0));
+            this.endingFlg = gameState.stageId === 5 || gameState.stageId === 4 && !(gameState.akebonoCnt >= 4 && gameState.continueCnt === 0);
           }
           super.goToNextScene();
         }

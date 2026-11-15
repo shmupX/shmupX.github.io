@@ -143,18 +143,7 @@ function stageRecordFromLevel(src) {
   }
   if (src.background) stage.background = src.background;
   if (src.items) stage.items = src.items;
-  copyBonusStageFields(src, stage);
   return stage;
-}
-
-// A bonus stage's own fields: `bonus` marks it (the game plays it after the
-// stage before it, with no story, and counts it as none of its own stages),
-// `playerTrail` is a trail the ship wears on that stage alone, and `backdrop`
-// is its own scrolling picture, { loop, end } as PNG data URLs.
-function copyBonusStageFields(src, stage) {
-  if (src.bonus === true) stage.bonus = true;
-  if (src.playerTrail && typeof src.playerTrail === "object") stage.playerTrail = src.playerTrail;
-  if (src.backdrop && typeof src.backdrop === "object") stage.backdrop = src.backdrop;
 }
 
 function readParam(name) {
@@ -1534,14 +1523,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
         // part of it. Left in, a two-stage game ran on into the base game's
         // stages 2-4 here, where the editor's own PLAY — which hands over the
         // record alone — ended it after its second.
-        // A record whose `stages` holds only bonus stages (foo's, after the
-        // secret stage) adds them to the base game's rather than standing for
-        // the whole game.
-        const onlyBonus = Object.keys(levelData.stages).every((k) =>
-          !/^stage\d+$/.test(k) || (levelData.stages[k] && levelData.stages[k].bonus === true)
-        );
         for (const key of Object.keys(recipe)) {
-          if (onlyBonus) break;
           if (/^stage\d+$/.test(key) && key !== stageKey && !levelData.stages[key]) delete recipe[key];
         }
       }
@@ -2181,13 +2163,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       // copy (_withoutStockCutins) and lose to rando's.
       const exportedApp = o.exportedApp !== undefined ? !!o.exportedApp : isExportedApp();
 
-      // A game may amend the record it fetched before anything reads it
-      // (`amendLevel(levelKey, data)`, resolving the record to play): 2028.Ai
-      // gives the cloud foo the bonus stage its baked foo.json has. A hook
-      // that fails leaves the record as it came.
-      return this.fetchLevel(levelName, o).then((data) => typeof o.amendLevel === "function"
-        ? Promise.resolve(o.amendLevel(this.resolvedLevelName || levelName, data)).then((amended) => amended || data, () => data)
-        : data).then((data) => {
+      return this.fetchLevel(levelName, o).then((data) => {
         const levelKey = this.resolvedLevelName || levelName;
         if ((explicitLevel || exportedApp) && !(data && data.ownCutin)) this.applyCustomCutin(o.atlasKey, o.customCutinKey);
         return this.applyCabinet(data).then(() => this.applyUiAtlases(data).then(() => this.mergeAtlas(data, o.atlasKey)).then(() => this.applyStageBackgrounds(data)).then(() => {
