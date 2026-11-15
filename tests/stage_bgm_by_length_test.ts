@@ -59,6 +59,7 @@ async function helpers(): Promise<Helpers> {
   const js = await read(BUNDLE);
   const names = [
     "clampStageId",
+    "secretSpan",
     "recipeStageIds",
     "stageRunSeconds",
     "stageBgmMinutes",
@@ -222,6 +223,7 @@ Deno.test("a stage's own track, stage<N>_bgm, wins over the length cuts", async 
   const js = await read(BUNDLE);
   const names = [
     "clampStageId",
+    "secretSpan",
     "recipeStageIds",
     "stageRunSeconds",
     "stageBgmMinutes",
@@ -386,6 +388,10 @@ Deno.test("a boss with a track of his own takes the music over as he arrives", a
       "stageId",
       "gameState",
       functionSource(js, "sameBgmTrack") +
+        // A secret level's stage plays that level's own boss track.
+        functionSource(js, "secretSpan") +
+        functionSource(js, "isSecretStage") +
+        functionSource(js, "recipeData") +
         functionSource(js, "playBossFightBgm") +
         "\nreturn playBossFightBgm(scene, stageId);",
     )(scene, opts.stageId, {

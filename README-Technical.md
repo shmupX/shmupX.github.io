@@ -6775,6 +6775,38 @@ scripts, the music, the trails, the boss), checks that the committed
 game.json matches what the converter builds, and checks that attachTrail is
 wired into the player, the zako and the boss.
 
+### A secret level: RonaGun after foo's ending
+
+A level record may name another cloud level as its `secretLevel` (its key, an
+alias, or `{ level }`). foo names `hellophaser`, in the cloud record and in the
+baked `static/games/2028-ai/foo.json`, so RonaGun plays once foo is beaten,
+whichever ending the run reached: the normal one, or the secret stage.
+
+- **Loading.** The level loader's `applySecretLevel` (level-loader.js, and its
+  copy inlined in game.bundle.js) reads the named level off the database at
+  boot, beside the story pictures, and gives up after
+  `secretLevelTimeoutMs` (10 s) or offline. It stacks the level's art under the
+  game's, keeping the game's pixels for any frame both have, and
+  `installSecretLevel` puts the level's stages and bosses past the game's last
+  stage (RonaGun's stage 0 is foo's stage 5). The level's own enemy records stay
+  on `recipe.secretLevel`, never among the game's. Its backdrops become
+  `secret_loop<N>` / `secret_end<N>`, its logo `secret_logo`, and its sounds
+  `secret:<key>`, fetched behind the game.
+- **Playing.** `secretSpan` marks those stages, and none of them is one of the
+  game's: `lastStageId`, the endings and the hidden boss count without them.
+  `sceneAfterStory` sends a beaten game to the first one instead of the ending,
+  and the ending plays after the last. Each stage plays `stageRecipe`, the
+  game's recipe with the level's enemies and stage rules. The ship stays the
+  game's own and wears the level's ship trail where it has none (foo's duke
+  wears Lincoln's blue thruster). Each boss flies the stock routine of its
+  stage number in its own game (`ownStageId`). The stage opens on the black
+  "another challenger" card with the level's logo, and plays the level's own
+  music.
+- **Editing.** The editor keeps `secretLevel` through a cloud load and SAVE.
+
+It replaced the bonus stage of PRs 99-102, which played RonaGun only after the
+secret stage. `tests/secret_level_test.ts` pins it.
+
 ## Evil Invaders as a cloud game
 
 

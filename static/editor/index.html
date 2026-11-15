@@ -15694,6 +15694,9 @@ function GAME3D_RUNTIME(DATA) {
                 // A game whose stages end on their last kill (level-loader's
                 // endsOnClear, GameScene's wave block): 95-demo's formations.
                 payload.endsOnClear = !!(gameData && gameData.endsOnClear);
+                // The level that plays after the game's ending (level-loader's
+                // secretLevel): foo names hellophaser, RonaGun.
+                payload.secretLevel = (gameData && gameData.secretLevel) || null;
                 payload.godMode = godModeOn;
                 // Save audio URL overrides
                 var urlEntries = {};
@@ -15946,6 +15949,10 @@ function GAME3D_RUNTIME(DATA) {
                 // under another name keep it.
                 if (d.endsOnClear) gameData.endsOnClear = true;
                 else delete gameData.endsOnClear;
+                // ...and the level that plays after its ending (level-loader's
+                // secretLevel), so a SAVE does not drop it and PLAY reaches it.
+                if (d.secretLevel) gameData.secretLevel = d.secretLevel;
+                else delete gameData.secretLevel;
                 syncNoStoryKnob();
                 if (typeof d.godMode === 'boolean') applyGodMode(d.godMode);
                 titleBgDataURL = d.titleBgDataURL || null;
