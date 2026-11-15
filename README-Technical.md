@@ -5375,6 +5375,25 @@ Everything else in the export is data, produced by `lib/ps2/`:
   (512px by default), with a `meta.ps2DisplayScale` telling the runtime how far
   to scale each frame back up. Sprites keep their original on-screen size and
   lose texture resolution — `--atlas-max 1024` trades VRAM for sharpness.
+  **Frames that are the same picture are packed once** and share a rectangle
+  ([`lib/ps2/atlas.ts`](packages/shmup-harbor/lib/ps2/atlas.ts)): a Dezaemon
+  zako that does not animate is still four frames of one drawing, and Master
+  Arena Mod's 447 frames are 187 pictures — a frame at a time they overflowed
+  the level's sheet and went on at half size; once each they fit at full size.
+- **A frame that is only a dot or a hairline is drawn texel for pixel.** The
+  port draws every frame at 448/480 of its size through the GS's bilinear
+  filter, which blends a texel's colour with its transparent neighbours and
+  then its alpha as well, so a texel on its own is dimmed twice over. Master
+  Arena Mod opens on a starfield made of enemies — a few hundred zako whose
+  whole picture is one grey pixel — and on the console each drew as a smudge a
+  shade off the backdrop: the ship scored off enemies nobody could see. The
+  packer lists every frame whose opaque texels fit a box no more than two wide
+  or two tall in the sheet's `meta.ps2Exact` (`isPinpoint`), and keeps such a
+  frame's texels whole when a sheet is reduced; the port's atlas manager is
+  patched to draw those unfiltered, on whole pixels, at the nearest whole
+  multiple of their size (`runtime-patches.ts`, "pinpoint frames";
+  `tests/ps2_pinpoint_test.ts` in shmup-harbor). Checked in PCSX2, where each
+  star reads back as the grey it was painted.
 - The level's custom atlas is merged over the base one exactly as the browser
   player composites it, and the result is made **self-sufficient**: a frame the
   level names but never customised is pulled from the base sheet, because the

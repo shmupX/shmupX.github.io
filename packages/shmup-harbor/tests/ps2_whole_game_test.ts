@@ -44,13 +44,21 @@ type Json = Record<string, any>;
 // The level atlas's sheet
 // ---------------------------------------------------------------------------
 
+// `count` frames of `size`, each its own picture — a square in a colour no
+// other has — since frames that are the same picture share one place on the
+// sheet (atlas_test.ts) and would not fill it.
 function squares(count: number, size: number): SourceFrame[] {
-  const sheet = newRaster(size, size);
-  return Array.from({ length: count }, (_, i) => ({
-    name: `frame${i}.gif`,
-    sheet,
-    entry: { frame: { x: 0, y: 0, w: size, h: size } },
-  }));
+  return Array.from({ length: count }, (_, i) => {
+    const sheet = newRaster(size, size);
+    for (let p = 0; p < size * size; p++) {
+      sheet.data.set([i & 255, i >> 8, 128, 255], p * 4);
+    }
+    return {
+      name: `frame${i}.gif`,
+      sheet,
+      entry: { frame: { x: 0, y: 0, w: size, h: size } },
+    };
+  });
 }
 
 Deno.test("a set that fits the usual sheet packs exactly as it always did", () => {
@@ -337,14 +345,16 @@ async function play(
       return null;
     }
   };
-  // "x,y,w,h" -> frame name, per sheet the port opens.
-  const byRect = new Map<string, Map<string, string>>();
+  // "x,y,w,h" -> the frame names drawn from there, per sheet the port opens:
+  // frames that are the same picture share a rectangle (lib/ps2/atlas.ts).
+  const byRect = new Map<string, Map<string, string[]>>();
   for (const name of ["game_asset", "game_ui", "level_atlas"]) {
     const atlas = JSON.parse(decoder.decode(read(`assets/${name}.json`)!));
-    const rects = new Map<string, string>();
+    const rects = new Map<string, string[]>();
     for (const [frame, entry] of Object.entries<Json>(atlas.frames)) {
       const f = entry.frame;
-      rects.set(`${f.x},${f.y},${f.w},${f.h}`, frame);
+      const key = `${f.x},${f.y},${f.w},${f.h}`;
+      rects.set(key, [...rects.get(key) ?? [], frame]);
     }
     byRect.set(`assets/${name}.png`, rects);
   }
@@ -394,12 +404,12 @@ async function play(
       const y = Math.min(this.starty, this.endy);
       const w = Math.abs(this.endx - this.startx);
       const h = Math.abs(this.endy - this.starty);
-      const frame = byRect.get(this.#path)?.get(`${x},${y},${w},${h}`);
-      if (!frame) return;
+      const frames = byRect.get(this.#path)?.get(`${x},${y},${w},${h}`);
+      if (!frames) return;
       const sheet = this.#path.slice("assets/".length, -".png".length);
       let seen = out.drawn.get(stage);
       if (!seen) out.drawn.set(stage, seen = new Set());
-      seen.add(`${sheet}:${frame}`);
+      for (const frame of frames) seen.add(`${sheet}:${frame}`);
     }
   };
   g.Font = class {

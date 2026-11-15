@@ -6,7 +6,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import { patchRuntime } from "../lib/ps2/runtime-patches.ts";
 import { repoRoot } from "../lib/repo-root.ts";
-import { ENEMY_ANCHORS } from "./support/port_anchors.ts";
+import { ATLAS_ANCHORS, ENEMY_ANCHORS } from "./support/port_anchors.ts";
 
 /** Enough of the port for every patch's anchor, as the bundler writes it. */
 const STAND_IN = [
@@ -33,6 +33,8 @@ const STAND_IN = [
   // What a Dezaemon zako, enemy contact and the ship's blink anchor on
   // (tests/ps2_deza_zako_test.ts, tests/ps2_enemy_contact_test.ts).
   ...ENEMY_ANCHORS,
+  // What a pinpoint frame anchors on (ps2_pinpoint_test.ts).
+  ...ATLAS_ANCHORS,
   "function createGameFont(rt, vp) {",
   '  const font = new rt.Font("default");',
   "  font.scale = vp.scale;",

@@ -15,7 +15,7 @@ import { stageAssets } from "../lib/ps2/assets.ts";
 import { buildRuntimeBundle } from "../lib/ps2/build.ts";
 import { patchRuntime } from "../lib/ps2/runtime-patches.ts";
 import { repoRoot } from "../lib/repo-root.ts";
-import { ENEMY_ANCHORS } from "./support/port_anchors.ts";
+import { ATLAS_ANCHORS, ENEMY_ANCHORS } from "./support/port_anchors.ts";
 
 const ROOT = repoRoot();
 const GAME_DIR = join(ROOT, "static", "games", "2028-ai");
@@ -49,6 +49,8 @@ Deno.test("the god-mode guard goes in at the top of playerOnDamage", () => {
     "}",
     // What a Dezaemon zako, enemy contact and the ship's blink anchor on.
     ...ENEMY_ANCHORS,
+    // What a pinpoint frame anchors on (ps2_pinpoint_test.ts).
+    ...ATLAS_ANCHORS,
     // What the text face and the game scene's handle anchor on
     // (tests/ps2_scene_handle_test.ts).
     "function createGameFont(rt, vp) {",

@@ -9,6 +9,13 @@
 // sheet: every frame is cut out, padded to a multiple of the scale factor so
 // the downscale lands on exact texel boundaries, reduced, and shelf-packed
 // into the smallest power-of-two sheet that holds the set.
+//
+// Two things keep small art alive on the way. Frames that are the same
+// picture are packed once and share a rectangle, so a cart whose animations
+// repeat cells does not pay for the repeats with its resolution. And a frame
+// that is nothing but a dot or a hairline is listed in `meta.ps2Exact`, which
+// the runtime draws texel for pixel instead of through the GS's filter
+// (runtime-patches.ts, "pinpoint frames").
 
 import { type Raster } from "./png.ts";
 import { blit, cut, downscale, type Rect, rotateCcw } from "./raster.ts";
@@ -30,6 +37,11 @@ export interface AtlasJson {
     size: { w: number; h: number };
     scale: string;
     ps2DisplayScale: number;
+    /**
+     * The frames to draw texel for pixel (isPinpoint), by name, sorted; left
+     * out when the sheet has none.
+     */
+    ps2Exact?: string[];
   };
 }
 
@@ -125,8 +137,59 @@ function extract(frame: SourceFrame): Raster {
   );
 }
 
+// A bucket key for a cutout: its size and an FNV-1a hash of its texels. Two
+// cutouts in one bucket are still compared texel for texel (samePicture).
+function pictureDigest(raster: Raster): string {
+  let hash = 0x811c9dc5;
+  const data = raster.data;
+  for (let i = 0; i < data.length; i++) {
+    hash = Math.imul(hash ^ data[i], 0x01000193);
+  }
+  return `${raster.width}x${raster.height}:${hash >>> 0}`;
+}
+
+// The widest a picture may be, one way, and still count as a pinpoint.
+const PINPOINT_TEXELS = 2;
+
+/**
+ * Whether a frame's whole picture is a dot or a hairline: its opaque texels
+ * fit a box no more than two wide or two tall.
+ *
+ * The port draws frames at 448/480 of their size through a bilinear filter,
+ * and the GS filters colour and alpha separately, so a texel with transparent
+ * neighbours is dimmed by its coverage twice. Art with a body survives that
+ * as a soft edge; art that is only an edge does not — a one-pixel star comes
+ * out a shade off the backdrop. These frames are drawn unfiltered instead.
+ * An empty frame is not one: there is nothing to keep.
+ */
+export function isPinpoint(raster: Raster): boolean {
+  let minX = raster.width, minY = raster.height, maxX = -1, maxY = -1;
+  for (let y = 0; y < raster.height; y++) {
+    for (let x = 0; x < raster.width; x++) {
+      if (raster.data[(y * raster.width + x) * 4 + 3] === 0) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0) return false;
+  return Math.min(maxX - minX, maxY - minY) < PINPOINT_TEXELS;
+}
+
+function samePicture(a: Raster, b: Raster): boolean {
+  if (a.width !== b.width || a.height !== b.height) return false;
+  for (let i = 0; i < a.data.length; i++) {
+    if (a.data[i] !== b.data[i]) return false;
+  }
+  return true;
+}
+
 /**
  * Repack `frames` into a single PS2-sized sheet.
+ *
+ * Frames that are the same picture share one rectangle: the sheet holds each
+ * distinct image once, and every name that draws it points there.
  *
  * `maxSheet` caps both dimensions of the result (512 by default, matching the
  * PS2 port's own atlases — a 512x512 RGBA texture is 1MB of the console's 4MB
@@ -147,12 +210,38 @@ export function buildPs2Atlas(
   if (frames.length === 0) {
     throw new Error(`atlas ${imageName}: no frames to pack`);
   }
+  // One cutout per distinct picture. A cart's animations repeat cells — four
+  // frames of one drawing is the usual Dezaemon zako — and every repeat used to
+  // take its own place on the sheet, which is what pushed a large cart to half
+  // size, where a one-pixel star is a quarter-opaque smudge. `sharers` lists
+  // the frame names that draw each cutout; they all get its rectangle.
   const cutouts = new Map<string, Raster>();
+  const sharers = new Map<string, string[]>();
+  const pictures = new Map<string, string[]>();
+  const named = new Set<string>();
   for (const frame of frames) {
-    if (cutouts.has(frame.name)) continue;
-    const cutout = extract(frame);
-    cutouts.set(frame.name, frame.rotate ? rotateCcw(cutout) : cutout);
+    if (named.has(frame.name)) continue;
+    named.add(frame.name);
+    const extracted = extract(frame);
+    const cutout = frame.rotate ? rotateCcw(extracted) : extracted;
+    const digest = pictureDigest(cutout);
+    const candidates = pictures.get(digest) ?? [];
+    const twin = candidates.find((name) =>
+      samePicture(cutouts.get(name)!, cutout)
+    );
+    if (twin) {
+      sharers.get(twin)!.push(frame.name);
+      continue;
+    }
+    pictures.set(digest, [...candidates, frame.name]);
+    cutouts.set(frame.name, cutout);
+    sharers.set(frame.name, [frame.name]);
   }
+  const pinpoints = new Set<string>();
+  for (const [name, raster] of cutouts) {
+    if (isPinpoint(raster)) pinpoints.add(name);
+  }
+  const exact = [...pinpoints].flatMap((name) => sharers.get(name)!).sort();
   const sheetSteps = SHEET_STEPS.filter((size) => size <= maxSheet);
   if (sheetSteps.length === 0) {
     throw new Error(`atlas ${imageName}: maxSheet ${maxSheet} is below 64`);
@@ -178,7 +267,9 @@ export function buildPs2Atlas(
           Math.floor((h - raster.height) / 2),
         );
       }
-      const reduced = downscale(source, scale);
+      // A pinpoint keeps every texel it touches whole: averaged, a dot at
+      // half size is a quarter-opaque texel, which is the dot gone.
+      const reduced = downscale(source, scale, pinpoints.has(name));
       padded.set(name, reduced);
       sizes.push({ name, w: reduced.width, h: reduced.height });
     }
@@ -203,18 +294,20 @@ export function buildPs2Atlas(
     for (const placement of best.placements) {
       const raster = padded.get(placement.name)!;
       blit(image, raster, placement.x, placement.y);
-      out[placement.name] = {
-        frame: {
-          x: placement.x,
-          y: placement.y,
-          w: placement.w,
-          h: placement.h,
-        },
-        rotated: false,
-        trimmed: false,
-        spriteSourceSize: { x: 0, y: 0, w: placement.w, h: placement.h },
-        sourceSize: { w: placement.w, h: placement.h },
-      };
+      for (const name of sharers.get(placement.name)!) {
+        out[name] = {
+          frame: {
+            x: placement.x,
+            y: placement.y,
+            w: placement.w,
+            h: placement.h,
+          },
+          rotated: false,
+          trimmed: false,
+          spriteSourceSize: { x: 0, y: 0, w: placement.w, h: placement.h },
+          sourceSize: { w: placement.w, h: placement.h },
+        };
+      }
     }
     return {
       image,
@@ -227,6 +320,7 @@ export function buildPs2Atlas(
           size: { w: best.w, h: best.h },
           scale: "1",
           ps2DisplayScale: scale,
+          ...(exact.length > 0 ? { ps2Exact: exact } : {}),
         },
       },
     };

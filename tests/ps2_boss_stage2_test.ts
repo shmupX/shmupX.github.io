@@ -32,7 +32,10 @@ import {
 import type { FrameEntry } from "../packages/shmup-harbor/lib/ps2/atlas.ts";
 import { buildRuntimeBundle } from "../packages/shmup-harbor/lib/ps2/build.ts";
 import { newRaster } from "../packages/shmup-harbor/lib/ps2/png.ts";
-import { ENEMY_ANCHORS } from "../packages/shmup-harbor/tests/support/port_anchors.ts";
+import {
+  ATLAS_ANCHORS,
+  ENEMY_ANCHORS,
+} from "../packages/shmup-harbor/tests/support/port_anchors.ts";
 import {
   BOSS_RUNTIME,
   patchRuntime,
@@ -341,6 +344,8 @@ const STAND_IN = [
   "}",
   // What a Dezaemon zako, enemy contact and the ship's blink anchor on.
   ...ENEMY_ANCHORS,
+  // What a pinpoint frame anchors on.
+  ...ATLAS_ANCHORS,
   "function createGameFont(rt, vp) {",
   '  const font = new rt.Font("default");',
   "  font.scale = vp.scale;",

@@ -66,6 +66,101 @@ Deno.test("the packer honours the rotate flag per frame", () => {
   assertEquals(shot.h, wing.w);
 });
 
+// --- one place on the sheet per picture ---
+//
+// A Dezaemon cart's animations repeat cells: a zako that does not animate is
+// still four frames, of one drawing. Packed a frame at a time, Master Arena
+// Mod's 447 frames (187 pictures) overflowed the level's sheet and went on at
+// half size, where its one-pixel stars were a quarter-opaque smudge.
+
+/** A sheet of 64px cells side by side, each one flat colour of its own. */
+function cells(count: number, size = 64) {
+  const sheet = newRaster(size * count, size);
+  for (let i = 0; i < count; i++) {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        sheet.data.set(
+          [i & 255, 40 + (i >> 8), 200, 255],
+          (y * sheet.width + i * size + x) * 4,
+        );
+      }
+    }
+  }
+  const cell = (i: number) => ({
+    frame: { x: i * size, y: 0, w: size, h: size },
+  });
+  return { sheet, cell };
+}
+
+Deno.test("frames that are the same picture share one place on the sheet", () => {
+  const { sheet, cell } = cells(2, 32);
+  const frames: SourceFrame[] = [
+    ...[0, 1, 2, 3].map((n) => ({
+      name: `zako_${n}.gif`,
+      sheet,
+      entry: cell(0),
+    })),
+    { name: "other_0.gif", sheet, entry: cell(1) },
+  ];
+  const built = buildPs2Atlas(frames, "test.png", 512);
+  // Every name is still a frame the port can ask for.
+  assertEquals(
+    Object.keys(built.json.frames).sort(),
+    frames.map((frame) => frame.name).sort(),
+  );
+  const place = (name: string) => JSON.stringify(built.json.frames[name].frame);
+  assertEquals(
+    new Set([0, 1, 2, 3].map((n) => place(`zako_${n}.gif`))).size,
+    1,
+    "four cells of one drawing took more than one place",
+  );
+  assert(place("other_0.gif") !== place("zako_0.gif"));
+  // And the sheet is the size two pictures need, not five.
+  assert(
+    built.image.width * built.image.height <= 128 * 64,
+    `${built.image.width}x${built.image.height}`,
+  );
+  // The picture is where the frames say it is.
+  const zako = built.json.frames["zako_0.gif"].frame;
+  assertEquals(pixel(built.image, zako.x, zako.y), [0, 40, 200, 255]);
+  const other = built.json.frames["other_0.gif"].frame;
+  assertEquals(pixel(built.image, other.x, other.y), [1, 40, 200, 255]);
+});
+
+Deno.test("a cart whose cells repeat keeps full size where it used to halve", () => {
+  // Thirty 64px pictures, four frames of each: a frame at a time that is
+  // half a million texels, twice what a 512 sheet holds; once each it is an
+  // eighth of a megabyte.
+  const { sheet, cell } = cells(30);
+  const frames: SourceFrame[] = [];
+  for (let i = 0; i < 30; i++) {
+    for (let n = 0; n < 4; n++) {
+      frames.push({ name: `enemy${i}_${n}.gif`, sheet, entry: cell(i) });
+    }
+  }
+  const built = buildPs2Atlas(frames, "test.png", 512);
+  assertEquals(built.displayScale, 1);
+  assertEquals(Object.keys(built.json.frames).length, 120);
+});
+
+Deno.test("a frame turned as it is packed is not the picture it was", () => {
+  // The same strip, one copy turned upright for a shot: two pictures.
+  const sheet = newRaster(16, 4);
+  for (let i = 0; i < 16 * 4; i++) sheet.data.set([9, 9, 9, 255], i * 4);
+  const entry = { frame: { x: 0, y: 0, w: 16, h: 4 } };
+  const built = buildPs2Atlas(
+    [
+      { name: "shot.png", sheet, entry, rotate: true },
+      { name: "wing.png", sheet, entry },
+    ],
+    "test.png",
+    512,
+  );
+  const shot = built.json.frames["shot.png"].frame;
+  const wing = built.json.frames["wing.png"].frame;
+  assertEquals([shot.w, shot.h, wing.w, wing.h], [4, 16, 16, 4]);
+});
+
 // --- a Dezaemon save's own title screen ---
 //
 // mapSaveToGame records the save's drawn TITLE 1/2 and credit strips as

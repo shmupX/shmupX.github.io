@@ -70,8 +70,13 @@ export function blit(dst: Raster, src: Raster, x: number, y: number): void {
  * Box-downscale by an exact integer factor. `src` dimensions must already be
  * multiples of `factor` — the atlas builder pads frames to guarantee that, so
  * every output texel averages a full factor x factor block.
+ *
+ * `solid` keeps coverage instead of averaging it: a block with anything in it
+ * comes out as opaque as its most opaque texel, in the same averaged colour.
+ * For art that is only a dot or a line, where a quarter of a texel's alpha is
+ * the picture gone.
  */
-export function downscale(src: Raster, factor: number): Raster {
+export function downscale(src: Raster, factor: number, solid = false): Raster {
   if (factor <= 1) return src;
   const w = Math.floor(src.width / factor);
   const h = Math.floor(src.height / factor);
@@ -79,7 +84,7 @@ export function downscale(src: Raster, factor: number): Raster {
   const area = factor * factor;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      let r = 0, g = 0, b = 0, a = 0;
+      let r = 0, g = 0, b = 0, a = 0, most = 0;
       for (let by = 0; by < factor; by++) {
         const row = (y * factor + by) * src.width;
         for (let bx = 0; bx < factor; bx++) {
@@ -90,6 +95,7 @@ export function downscale(src: Raster, factor: number): Raster {
           g += src.data[s + 1] * alpha;
           b += src.data[s + 2] * alpha;
           a += alpha;
+          if (alpha > most) most = alpha;
         }
       }
       const d = (y * w + x) * 4;
@@ -102,7 +108,7 @@ export function downscale(src: Raster, factor: number): Raster {
         out.data[d] = Math.round(r / a);
         out.data[d + 1] = Math.round(g / a);
         out.data[d + 2] = Math.round(b / a);
-        out.data[d + 3] = Math.round(a / area);
+        out.data[d + 3] = solid ? most : Math.round(a / area);
       }
     }
   }

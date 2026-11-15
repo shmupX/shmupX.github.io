@@ -1031,6 +1031,48 @@ export const RUNTIME_PATCHES: readonly RuntimePatch[] = [
       "$3$4}",
   },
   {
+    // A pinpoint frame, 1 of 2: marked as its sheet loads. The port draws
+    // every frame at the viewport's scale (448/480 of the field's height)
+    // through the GS's bilinear filter, and the filter blends a texel's colour
+    // with its transparent neighbours' before alpha is applied — so a texel on
+    // its own is dimmed twice over. Master Arena's starfield is a few hundred
+    // zako whose whole picture is one grey pixel: at full size each drew as a
+    // smudge a shade off the backdrop, and the ship scored off enemies nobody
+    // could see. The exporter lists such frames — a dot, a hairline, anything
+    // no wider than two texels one way — in the sheet's `meta.ps2Exact`
+    // (lib/ps2/atlas.ts, isPinpoint).
+    name: "pinpoint frames: marked",
+    find:
+      /(const (\w+) = JSON\.parse\(\w+\);\r?\n\s*const \w+ = new this\.#rt\.Image\(\w+\);[\s\S]*?\r?\n)(\s*)(console\.log\("\[Atlas\] Loaded " \+ \w+ \+ " with " \+ Object\.keys\((\w+)\)\.length)/,
+    replace: "$1$3if ($2.meta && Array.isArray($2.meta.ps2Exact)) {\n" +
+      "$3  for (const exactName of $2.meta.ps2Exact) {\n" +
+      "$3    if ($5[exactName]) $5[exactName].exact = true;\n" +
+      "$3  }\n" +
+      "$3}\n" +
+      "$3$4",
+  },
+  {
+    // 2 of 2: and drawn texel for pixel — at the nearest whole multiple of its
+    // size, on whole pixels, unfiltered — so the one pixel lands on one pixel
+    // in the colour it was painted. A sixteenth larger than its neighbours,
+    // which a dot cannot show. Flips still come from the crop, and the sheet's
+    // filter is put back for the next frame.
+    name: "pinpoint frames: drawn texel for pixel",
+    find:
+      /const (\w+) = (\w+)\.dw \* Math\.abs\((\w+)\);(\r?\n)(\s*)const (\w+) = \2\.dh \* Math\.abs\((\w+)\);([\s\S]{0,600}?)(\w+)\.draw\((\w+) - \1 \/ 2, (\w+) - \6 \/ 2\);/,
+    replace:
+      "const $1 = $2.exact ? $2.dw * Math.max(1, Math.round(Math.abs($3))) : $2.dw * Math.abs($3);" +
+      "$4$5const $6 = $2.exact ? $2.dh * Math.max(1, Math.round(Math.abs($7))) : $2.dh * Math.abs($7);" +
+      "$8if ($2.exact) {" +
+      "$4$5  const keptFilter = $9.filter;" +
+      "$4$5  $9.filter = this.#rt.NEAREST;" +
+      "$4$5  $9.draw(Math.round($10 - $1 / 2), Math.round($11 - $6 / 2));" +
+      "$4$5  $9.filter = keptFilter;" +
+      "$4$5} else {" +
+      "$4$5  $9.draw($10 - $1 / 2, $11 - $6 / 2);" +
+      "$4$5}",
+  },
+  {
     // The game scene's state — the ship, the enemies, the boss, the shots in
     // flight, the items — lives in createGameScene's own closure, where
     // nothing outside the scene can see it. A pilot that flies the web build
