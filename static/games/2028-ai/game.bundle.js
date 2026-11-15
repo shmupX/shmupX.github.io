@@ -21,6 +21,10 @@
     // plays. Only five sets of per-stage backgrounds and voices exist, so stage
     // 5 and up reuse them (stageId % 5); see 2019-es7 src/phaser/stages.js.
     maxStage: 9,
+    // How long a boot waits on a game's secret level (applySecretLevel) before
+    // it starts without one. The database's once() never settles while a page
+    // is offline, and the game itself must still open.
+    secretLevelTimeoutMs: 1e4,
     editorRecipeKey: "__editorPhaserRecipe__",
     editorStageKey: "__editorPhaserStageId__",
     fallbackOnError: true,
@@ -131,6 +135,84 @@
     const text = (v) => (typeof v === "string" ? v.trim() : "");
     const own = data ? text(data.title) || text(data.name) : "";
     return own || (typeof levelName === "string" ? levelName : "") || null;
+  }
+
+  // ---- A secret level ---------------------------------------------------------
+
+  // A game may name another cloud level as its secret level: `secretLevel`, that
+  // level's key or one of its aliases (or { level } for the same). Once the game
+  // is beaten, by whichever of its endings, the run goes on into that level's
+  // stages and its boss before the game's own ending plays: applySecretLevel
+  // below, and secretSpan in game.bundle.js. foo names hellophaser, RonaGun.
+
+  // The secret level's sounds, in the audio cache: its keys are the game's own
+  // keys (boss_bison_bgm), so they cannot share a name with them.
+  const SECRET_AUDIO_PREFIX = "secret:";
+
+  // The level a record names as its secret level, or null.
+  function secretLevelName(levelData) {
+    const raw = levelData && levelData.secretLevel;
+    const name = typeof raw === "string" ? raw : raw && typeof raw.level === "string" ? raw.level : "";
+    return sanitizeLevelName(name) || null;
+  }
+
+  // A recipe's stage numbers, ascending.
+  function recipeStageNumbers(recipe) {
+    const ids = [];
+    for (const key in recipe || {}) {
+      const m = /^stage(\d+)$/.exec(key);
+      if (m) ids.push(Number(m[1]));
+    }
+    return ids.sort((a, b) => a - b);
+  }
+
+  // Put a secret level's stages into a game's merged recipe, past the game's own
+  // last stage. The stage and boss records are renumbered to follow it, and
+  // `recipe.secretLevel` becomes where they sit and what else the level brought:
+  //
+  //   { level, title, first, count, stages, enemyData, trail, endsOnClear,
+  //     ownItems, audioKeys }
+  //
+  // `stages` is each stage's number in its own game, which decides the stock
+  // routine, voices and backdrop it plays with there. The level's enemy records
+  // stay on the descriptor instead of joining the game's own: two games letter
+  // their enemies independently, and one record with a Dezaemon script among a
+  // web game's would have the runtime take the whole game for a cart
+  // (isImportedLevel). `trail` is the level's own ship's, which the visiting
+  // ship wears there. Returns the descriptor, or null (and no secretLevel on the
+  // recipe) when the level has no stage or the game no room for one: stage
+  // numbers stop at maxStage.
+  function installSecretLevel(recipe, secretRecipe, opts) {
+    const o = opts || {};
+    const maxStage = o.maxStage != null ? o.maxStage : DEFAULTS.maxStage;
+    delete recipe.secretLevel;
+    const own = recipeStageNumbers(recipe);
+    const theirs = recipeStageNumbers(secretRecipe);
+    const first = (own.length ? own[own.length - 1] : 0) + 1;
+    const count = Math.min(theirs.length, maxStage - first + 1);
+    if (count < 1) return null;
+    if (!recipe.bossData || typeof recipe.bossData !== "object") recipe.bossData = {};
+    const bosses = secretRecipe.bossData || {};
+    for (let k = 0; k < count; k++) {
+      recipe["stage" + (first + k)] = secretRecipe["stage" + theirs[k]];
+      const boss = bosses["boss" + theirs[k]];
+      if (boss) recipe.bossData["boss" + (first + k)] = boss;
+      else delete recipe.bossData["boss" + (first + k)];
+    }
+    const player = secretRecipe.playerData || {};
+    recipe.secretLevel = {
+      level: o.level || null,
+      title: o.title || null,
+      first: first,
+      count: count,
+      stages: theirs.slice(0, count),
+      enemyData: secretRecipe.enemyData || {},
+      trail: player.trail && typeof player.trail === "object" ? player.trail : null,
+      endsOnClear: !!secretRecipe.endsOnClear,
+      ownItems: !!secretRecipe.ownItems,
+      audioKeys: []
+    };
+    return recipe.secretLevel;
   }
 
   // Does a level record carry a whole game's framing, or one stage's grid? A
@@ -816,19 +898,70 @@
   // The canvas and frame map for `image` stacked under `localSource`, the way
   // _stackAtlas has always laid it out, unless that is over atlasSideLimit and
   // the frames repack into a sheet that is not.
+  // What each stacking did, for the atlasInfo=1 readout (armAtlasInfo in
+  // game.bundle.js). Kept short and only ever read by that readout.
+  function atlasInfoNote(kind, data) {
+    try {
+      const list = globalThis.__atlasInfoLog || (globalThis.__atlasInfoLog = []);
+      if (list.length < 40) list.push(Object.assign({ kind }, data));
+    } catch (_e) {
+      // The readout is a diagnostic; a page without globalThis just has none.
+    }
+  }
+  // How much of `src` (an image or canvas) is not transparent, as a percentage,
+  // from a 256 x 256 reduction of it: a sheet whose sprites came through reads
+  // well above 0%, one drawn blank reads 0%. Only with the atlasInfo=1 readout
+  // on, since it reads pixels back.
+  function atlasInfoOpaque(src) {
+    if (readParam("atlasInfo") !== "1" || !src) return undefined;
+    try {
+      const c = document.createElement("canvas");
+      c.width = 256;
+      c.height = 256;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(src, 0, 0, 256, 256);
+      const d = ctx.getImageData(0, 0, 256, 256).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
+      return (n / 655.36).toFixed(1) + "%";
+    } catch (_e) {
+      return "unreadable";
+    }
+  }
   function stackedAtlasCanvas(scene, localSource, image, frameMap) {
     const localH = localSource.height;
     const width = Math.max(localSource.width, image.width);
     const height = localH + image.height;
     const limit = atlasSideLimit(scene);
+    const info = {
+      local: localSource.width + "x" + localH,
+      incoming: image.width + "x" + image.height,
+      incomingOpaque: atlasInfoOpaque(image),
+      stacked: width + "x" + height,
+      limit,
+    };
     if (width > limit || height > limit) {
       const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
-      if (packed) return packed;
+      if (packed) {
+        atlasInfoNote("stack", Object.assign(info, {
+          result: "packed",
+          out: packed.canvas.width + "x" + packed.canvas.height,
+          outOpaque: atlasInfoOpaque(packed.canvas),
+        }));
+        return packed;
+      }
+      info.result = "repack failed, stacked";
+    } else {
+      info.result = "stacked";
     }
     const canvas = stableCanvas(width, height);
     const ctx = canvas.getContext("2d");
     ctx.drawImage(localSource, 0, 0);
     ctx.drawImage(image, 0, localH);
+    atlasInfoNote("stack", Object.assign(info, {
+      out: canvas.width + "x" + canvas.height,
+      outOpaque: atlasInfoOpaque(canvas),
+    }));
     return { canvas, frames: frameMap };
   }
   // Is this page an app built around one game? The export's shell says so
@@ -904,7 +1037,7 @@
           tx.oncomplete = () => {
             const record = recordReq.result;
             resolve(
-              record && record.frames && record.blob ? { frames: record.frames, blob: record.blob } : null
+              record && record.frames && record.blob ? { frames: record.frames, blob: record.blob, diag: record.diag || null } : null
             );
           };
           tx.onerror = () => resolve(null);
@@ -1290,9 +1423,18 @@
         const bridge = Object.assign({}, DEFAULTS.editorAtlas, o.editorAtlas || {});
         return readEditorAtlasBridge(atlasKey, bridge).then((record) => {
           if (!record) return false;
-          return loadImage(record.blob).then(
-            (img) => img ? this._stackAtlas(img, this._withoutStockCutins(img, record.frames), atlasKey) : false
-          );
+          // What the editor measured as it built and published the sheet
+          // (its editorAtlasDiag), for the readout beside what arrived here.
+          if (record.diag && typeof record.diag === "object") atlasInfoNote("editor", record.diag);
+          return loadImage(record.blob).then((img) => {
+            atlasInfoNote("handoff", img ? {
+              atlas: img.naturalWidth + "x" + img.naturalHeight,
+              frames: Object.keys(record.frames).length,
+              bytes: record.blob.size,
+              opaque: atlasInfoOpaque(img)
+            } : { atlas: "image did not decode", bytes: record.blob.size });
+            return img ? this._stackAtlas(img, this._withoutStockCutins(img, record.frames), atlasKey) : false;
+          });
         }).catch((err) => {
           console.warn("Editor atlas bridge unavailable, using on-disk art:", err);
           return false;
@@ -1618,6 +1760,190 @@
           return any;
         });
       }
+      // ---- A secret level ---------------------------------------------------
+
+      // The record of a level, by its key or one of its aliases, read off the
+      // database and nowhere else: the offline record answers fetchLevel for
+      // whatever name is asked, and a secret level is another level than the
+      // page's own. Resolves { key, data }, or null when there is no such level
+      // or no database to ask.
+      readLevelRecord(levelName, opts) {
+        const o = opts || {};
+        let db;
+        try {
+          const sdk = o.firebase || (typeof globalThis !== "undefined" ? globalThis.firebase : null);
+          const config = o.firebaseConfig ||
+            (typeof globalThis !== "undefined" ? (globalThis.firebaseConfig || globalThis.__FIREBASE_CONFIG__) : null);
+          db = getFirebaseDatabase(sdk, config);
+        } catch (_e) {
+          return Promise.resolve(null);
+        }
+        const levelsPath = o.levelsPath || DEFAULTS.levelsPath;
+        const aliasesPath = o.aliasesPath || DEFAULTS.aliasesPath;
+        const read = (key) => db.ref(levelsPath + "/" + key).once("value").then((snapshot) => snapshot.val());
+        const isLevel = (data) => !!(data && data.enemylist);
+        return read(levelName).then((data) => {
+          if (isLevel(data)) return { key: levelName, data: data };
+          return db.ref(aliasesPath + "/" + String(levelName).toLowerCase()).once("value").then((snapshot) => {
+            const key = snapshot.val();
+            if (typeof key !== "string" || !key || key === levelName) return null;
+            return read(key).then((aliased) => (isLevel(aliased) ? { key: key, data: aliased } : null));
+          });
+        }).catch(() => null);
+      }
+
+      // The level a game names as its secret level (secretLevelName), fetched
+      // and put past the game's own last stage: its art under the game's in the
+      // one atlas, its stages and bosses in the recipe (installSecretLevel), its
+      // backdrops and logo as textures of their own, and its sounds decoded
+      // behind the game. Resolves true once the recipe carries it. A level that
+      // does not load in time, or at all, resolves false and the game ends
+      // where it always did. Never rejects.
+      applySecretLevel(recipe, levelData, baseRecipe, opts) {
+        const o = opts || {};
+        const name = secretLevelName(levelData);
+        if (recipe) delete recipe.secretLevel;
+        if (!name || !recipe) return Promise.resolve(false);
+        if (typeof navigator !== "undefined" && navigator.onLine === false) return Promise.resolve(false);
+        const atlasKey = o.atlasKey || DEFAULTS.atlasKey;
+        const wait = o.secretLevelTimeoutMs != null ? o.secretLevelTimeoutMs : DEFAULTS.secretLevelTimeoutMs;
+        const late = new Promise((resolve) => setTimeout(() => resolve(null), wait));
+        return Promise.race([this.readLevelRecord(name, o), late]).then((found) => {
+          if (!found) {
+            console.warn('Secret level "' + name + '" did not load; the game ends without it');
+            return false;
+          }
+          const secret = found.data;
+          return this.mergeSecretAtlas(secret, atlasKey).then(() => {
+            const span = installSecretLevel(recipe, this.mergeRecipe(baseRecipe, secret, atlasKey), {
+              level: found.key,
+              title: titleNameOf(secret, found.key),
+              maxStage: o.maxStage
+            });
+            if (!span) return false;
+            this.loadSecretAudio(secret, span, o.audio, o.lowMode);
+            return Promise.all([
+              this.applySecretBackgrounds(secret, span),
+              this.applySecretLogo(secret)
+            ]).then(() => true);
+          });
+        }).catch((err) => {
+          console.warn("Secret level failed to load:", err);
+          delete recipe.secretLevel;
+          return false;
+        });
+      }
+
+      // The secret level's art, stacked under the atlas the game's own is
+      // already in. A frame the atlas has keeps the game's pixels: a level saved
+      // by the editor carries the stock frames back, and the game may have
+      // redrawn the ones it was handed.
+      mergeSecretAtlas(secret, atlasKey) {
+        if (!secret || !secret.atlasImageDataURL || !secret.atlasFrames) return Promise.resolve(false);
+        return loadImage(secret.atlasImageDataURL).then((img) => {
+          if (!img) {
+            console.warn("Secret level atlas image failed to load");
+            return false;
+          }
+          const scene = this.scene;
+          const have = scene.textures.exists(atlasKey) ? scene.textures.get(atlasKey) : null;
+          const frames = {};
+          let any = false;
+          for (const fname in secret.atlasFrames) {
+            const name = decodeFirebaseKey(fname);
+            const alt = altFrameName(name);
+            if (have && (have.has(name) || (alt && have.has(alt)))) continue;
+            frames[fname] = secret.atlasFrames[fname];
+            any = true;
+          }
+          return any ? this._stackAtlas(img, frames, atlasKey) : false;
+        });
+      }
+
+      // The secret level's own backdrops, as "secret_loop<N>" and
+      // "secret_end<N>", N the stage's number in the game it joined. They are
+      // textures of their own: stage_loop<N % 5> is the game's, which goes on
+      // drawing it on the stages it has.
+      applySecretBackgrounds(secret, span) {
+        const scene = this.scene;
+        const bgs = secret && secret.stageBackgrounds;
+        if (!bgs || typeof bgs !== "object") return Promise.resolve(false);
+        const jobs = [];
+        for (let k = 0; k < span.count; k++) {
+          const rec = bgs["stage" + span.stages[k]];
+          if (!rec || typeof rec !== "object") continue;
+          for (const part of ["loop", "end"]) {
+            const dataURL = rec[part];
+            if (typeof dataURL !== "string" || !dataURL) continue;
+            const textureKey = "secret_" + part + (span.first + k);
+            jobs.push(loadImage(dataURL).then((img) => {
+              if (!img) return false;
+              try {
+                if (scene.textures.exists(textureKey)) scene.textures.remove(textureKey);
+                scene.textures.addImage(textureKey, img);
+              } catch (e) {
+                console.warn('Failed to load secret level background "' + textureKey + '":', e);
+                return false;
+              }
+              return true;
+            }));
+          }
+        }
+        return Promise.all(jobs).then((done) => done.some(Boolean));
+      }
+
+      // The secret level's logo, as "secret_logo": the card the stage opens on
+      // names the level with it (the bundle's showTitle).
+      applySecretLogo(secret) {
+        const scene = this.scene;
+        const dataURL = secret && secret.logoDataURL;
+        if (typeof dataURL !== "string" || !dataURL) return Promise.resolve(false);
+        return loadImage(dataURL).then((img) => {
+          if (!img) return false;
+          try {
+            if (scene.textures.exists("secret_logo")) scene.textures.remove("secret_logo");
+            scene.textures.addImage("secret_logo", img);
+          } catch (e) {
+            console.warn("Failed to load the secret level's logo:", e);
+            return false;
+          }
+          return true;
+        });
+      }
+
+      // The secret level's own sounds, decoded behind the game instead of with
+      // its own: the run needs them minutes from now, if at all, and a song is
+      // megabytes. Each lands in the audio cache as "secret:<key>", and
+      // span.audioKeys lists the keys that are in or still coming, which is
+      // what the stage picks its music from. One that fails leaves the list,
+      // and the stage plays the game's own track for it.
+      loadSecretAudio(secret, span, opts, lowMode) {
+        const o = opts || {};
+        const urls = secret && secret.customAudioURLs;
+        if (lowMode || o.enabled === false || !urls || typeof urls !== "object") return;
+        const game = this.game || (this.scene && this.scene.sys && this.scene.sys.game);
+        const ctx = game && game.sound && game.sound.context;
+        if (!ctx || typeof ctx.decodeAudioData !== "function" || typeof fetch !== "function") return;
+        const byUrl = {};
+        for (const key in urls) {
+          const url = urls[key];
+          if (typeof url !== "string" || !url) continue;
+          (byUrl[url] = byUrl[url] || []).push(key);
+          span.audioKeys.push(key);
+        }
+        for (const url in byUrl) {
+          fetch(url).then((res) => {
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return res.arrayBuffer();
+          }).then((bytes) => ctx.decodeAudioData(bytes)).then((buffer) => {
+            for (const key of byUrl[url]) game.cache.audio.add(SECRET_AUDIO_PREFIX + key, buffer);
+          }).catch((err) => {
+            console.warn("Secret level audio failed to load (" + url + "):", err);
+            span.audioKeys = span.audioKeys.filter((k) => byUrl[url].indexOf(k) < 0);
+          });
+        }
+      }
+
       // ---- Custom audio -----------------------------------------------------
       // Gather custom audio blobs from IndexedDB (browser/editor flow) and, when
       // present, the Electron filesystem bridge (disk wins over IndexedDB).
@@ -1832,6 +2158,9 @@
             delete recipe.cabinet;
             delete recipe.uiAtlases;
             for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
+            // The game's secret level, if it names one: under the editor's
+            // atlas, which is in by now, and awaited with the story pictures.
+            const secretLevel = this.applySecretLevel(recipe, recipe, baseRecipe, o);
             prime(recipe, info);
             return this.applyStoryImages(recipe).then(() => ({
               recipe,
@@ -1847,7 +2176,7 @@
               // board.
               gameId: gameIdForLevel({ gameId: recipe.gameId }),
               bgmSourceURLs: {}
-            }));
+            })).then((result) => secretLevel.then(() => result));
           }));
         }
         const explicitLevel = this.readLevelParam();
@@ -1887,7 +2216,10 @@
             prime(recipe, { stageId, bossRush, source, hasCustomEnemies });
             return Promise.all([
               this._loadAudio(data, o.audio, o.lowMode, recipe),
-              this.applyStoryImages(data)
+              this.applyStoryImages(data),
+              // The game's secret level, if it names one (applySecretLevel):
+              // its stages join the recipe before the first scene reads it.
+              this.applySecretLevel(recipe, data, baseRecipe, o)
             ]).then(([bgmSourceURLs]) => ({
               recipe,
               stageId,
@@ -3626,16 +3958,44 @@
     if (!Number.isFinite(id)) return 0;
     return Math.max(0, Math.min(MAX_STAGE_ID, Math.floor(id)));
   }
+  // A game's secret level, once the level loader has put it in the recipe
+  // (installSecretLevel): the stages `first`..`last`, past the game's own.
+  // They are not the game's stages. Its last stage, its length and its ending
+  // are counted without them (recipeStageIds), and each plays with the stock
+  // routine, voices and backdrop of its number in its OWN game (ownStageId).
+  // Null for a recipe that carries none.
+  function secretSpan(recipe) {
+    var s = recipe && recipe.secretLevel;
+    if (!s || typeof s !== "object") return null;
+    var first = Number(s.first);
+    var count = Number(s.count);
+    if (!(first >= 1) || !(count >= 1) || first !== Math.floor(first) || count !== Math.floor(count)) return null;
+    return { first: first, last: first + count - 1, level: s };
+  }
+  function isSecretStage(recipe, stageId) {
+    var s = secretSpan(recipe);
+    return !!s && stageId >= s.first && stageId <= s.last;
+  }
+  // A stage's number in the game it came from: its own number, or for a
+  // stage of the running game's secret level, the number it has there.
+  function ownStageId(stageId) {
+    var s = secretSpan(typeof gameState !== "undefined" && gameState ? gameState._phaserRecipe : null);
+    if (!s || !(stageId >= s.first && stageId <= s.last)) return stageId;
+    var own = s.level.stages ? Number(s.level.stages[stageId - s.first]) : NaN;
+    return own >= 0 ? own : stageId - s.first;
+  }
   function assetStageId(stageId) {
-    return clampStageId(stageId) % ASSET_STAGES;
+    return clampStageId(ownStageId(clampStageId(stageId))) % ASSET_STAGES;
   }
   function recipeStageIds(recipe) {
     if (!recipe) return [0];
     var ids = [];
+    var secret = secretSpan(recipe);
     for (var key in recipe) {
       var m = /^stage(\d+)$/.exec(key);
       if (!m) continue;
       var id = Number(m[1]);
+      if (secret && id >= secret.first && id <= secret.last) continue;
       if (id >= 0 && id <= MAX_STAGE_ID) ids.push(id);
     }
     ids.sort(function(a, b) {
@@ -3909,7 +4269,7 @@
               resolve(null);
               return;
             }
-            resolve({ frames: record.frames, blob: record.blob });
+            resolve({ frames: record.frames, blob: record.blob, diag: record.diag || null });
           };
           tx.onerror = function() {
             resolve(null);
@@ -4226,10 +4586,21 @@
       if (editorPlay) {
         readEditorAtlasBridge2().then(function(bridge) {
           if (!bridge) {
+            atlasInfoNote("handoff", { atlas: "none stored" });
             return null;
           }
+          if (bridge.diag && typeof bridge.diag === "object") atlasInfoNote("editor", bridge.diag);
           return blobToImage(bridge.blob).then(function(img) {
-            if (!img) return null;
+            if (!img) {
+              atlasInfoNote("handoff", { atlas: "image did not decode", bytes: bridge.blob.size });
+              return null;
+            }
+            atlasInfoNote("handoff", {
+              atlas: img.naturalWidth + "x" + img.naturalHeight,
+              frames: Object.keys(bridge.frames).length,
+              bytes: bridge.blob.size,
+              opaque: atlasInfoOpaque(img)
+            });
             return mergeAtlasIntoGameAsset(self, img, bridge.frames);
           });
         }).catch(function(err) {
@@ -10181,12 +10552,40 @@
     }
     return false;
   }
+  // Where the story scene hands the run once a game is beaten: its ending, or
+  // first its secret level (secretSpan), by whichever road the ending came.
+  // 2028.Ai's hidden stage is one of its own five, so a run that earned it
+  // arrives here a stage past it and a run that did not a stage short of it,
+  // and both go on at the secret level's first stage. Past that, the ending.
+  function sceneAfterStory(scene) {
+    if (!scene.endingFlg) return "PhaserGameScene";
+    var secret = secretSpan(gameState._phaserRecipe);
+    if (secret && gameState.stageId <= secret.first) {
+      gameState.stageId = secret.first;
+      return "PhaserGameScene";
+    }
+    return "PhaserEndingScene";
+  }
   var PhaserAdvScene = class extends Phaser.Scene {
     constructor() {
       super({ key: "PhaserAdvScene" });
     }
     create() {
       var recipe = gameState._phaserRecipe;
+      // A secret level has no story between its stages and none after them:
+      // past its first stage the run goes straight on, and past its last
+      // straight to the game's ending.
+      var secret = secretSpan(recipe);
+      if (secret && gameState.stageId > secret.first) {
+        this.endingFlg = gameState.stageId > secret.last;
+        var secretNext = this.endingFlg ? "PhaserEndingScene" : "PhaserGameScene";
+        var secretGame = this.game;
+        setTimeout(function() {
+          secretGame.scene.stop("PhaserAdvScene");
+          secretGame.scene.start(secretNext);
+        }, 50);
+        return;
+      }
       // A cart with no story of its own must never be dressed in 2028.Ai's.
       // noStory normally catches that a step earlier, but it is gated on
       // !__advSceneScripted, and ScriptedAdvScene sets that from
@@ -10211,7 +10610,7 @@
         ((storyOff(recipe) && (advImported || !this.__advSceneScripted)) || advNoOwnStory)
       ) {
         this.endingFlg = decideEnding(recipe);
-        var nextScene = this.endingFlg ? "PhaserEndingScene" : "PhaserGameScene";
+        var nextScene = sceneAfterStory(this);
         var game = this.game;
         setTimeout(function() {
           game.scene.stop("PhaserAdvScene");
@@ -10227,10 +10626,11 @@
       // game's own epilogue is its hardcoded stage5, which stays.
       if (recipe && recipe.storyData && gameState.stageId > lastStageId(recipe) && !authoredEpilogue(recipe.storyData, gameState.stageId)) {
         this.endingFlg = true;
+        var afterEpilogue = sceneAfterStory(this);
         var game0 = this.game;
         setTimeout(function() {
           game0.scene.stop("PhaserAdvScene");
-          game0.scene.start("PhaserEndingScene");
+          game0.scene.start(afterEpilogue);
         }, 50);
         return;
       }
@@ -10467,7 +10867,7 @@
       if (!gameState.bgmContinuityActive) {
         this.stopSound("adventure_bgm");
       }
-      var nextScene = this.endingFlg ? "PhaserEndingScene" : "PhaserGameScene";
+      var nextScene = sceneAfterStory(this);
       var game = this.game;
       setTimeout(function() {
         game.scene.stop("PhaserAdvScene");
@@ -15572,7 +15972,7 @@
     if (ap === "bossExtra") return GOKI_PATTERN;
     var m = ap ? ap.match(/boss(\d+)/) : null;
     if (m) return Number(m[1]);
-    return !ap && isGokiRecord(bossData) ? GOKI_PATTERN : stageId;
+    return !ap && isGokiRecord(bossData) ? GOKI_PATTERN : ownStageId(stageId);
   }
   // Whether a ship touching the boss is caught in Akuma's Shun Goku Satsu
   // rather than scraped for 1 hp. The grab is part of his routine, so it goes
@@ -16272,7 +16672,7 @@
     // sequence without the record used to freeze the game: _startGokiSequence
     // stopped time, found nobody to bring on, and handed back to bossShootStart
     // with theWorldFlg still set.
-    var gokiRecord = !isImportedLevel() && scene.recipe.bossData ? scene.recipe.bossData.bossExtra : null;
+    var gokiRecord = !isImportedLevel() && !isSecretStage(scene.recipe, stageId) && scene.recipe.bossData ? scene.recipe.bossData.bossExtra : null;
     var isGokiStage = !!gokiRecord && (stageId === 3 && Number(gameState.continueCnt || 0) === 0 || gameState.forceBossName === "goki" && stageId === 3);
     if (isGokiStage) {
       scene.gokiFlg = true;
@@ -17754,9 +18154,30 @@
   function recipeData() {
     return gameState._phaserRecipe || null;
   }
-  // The key a stage's music plays under: the stage track its length calls
-  // for (stageBgmTrack), of the ones the level loaded, or else `themeKey`.
-  // Boss rush deals no waves, whatever the stage's list holds.
+  // The recipe a stage plays from. A game's own stages play the game's. A
+  // stage of its secret level (secretSpan) plays a view of it that carries
+  // that level's enemy records and stage rules in place of the game's, as the
+  // level has them played alone. The ship stays the game's own, and where it
+  // has no trail it wears the level's ship's.
+  function stageRecipe(recipe, stageId) {
+    var secret = secretSpan(recipe);
+    if (!secret || !(stageId >= secret.first && stageId <= secret.last)) return recipe;
+    var level = secret.level;
+    var view = Object.assign({}, recipe);
+    view.enemyData = level.enemyData || {};
+    view.endsOnClear = !!level.endsOnClear;
+    view.ownItems = !!level.ownItems;
+    if (level.trail && recipe.playerData && !recipe.playerData.trail) {
+      view.playerData = Object.assign({}, recipe.playerData, { trail: level.trail });
+    }
+    return view;
+  }
+  // The key a stage's music plays under: the stage's own track where the
+  // level names one (stage<N>_bgm, N numbered as bossData numbers the stage's
+  // boss), else the stage track its length calls for (stageBgmTrack), of the
+  // ones the level loaded, or else `themeKey`. 2028.Ai names one for its
+  // secret stage, stage4_bgm, reached by finishing every boss with the CA
+  // bomb. Boss rush deals no waves, whatever the stage's list holds.
   function stageBgmKey(scene, stageId, themeKey) {
     var keys = [];
     try {
@@ -17764,7 +18185,54 @@
     } catch (e) {
     }
     var seconds = gameState.shortFlg ? 0 : stageRunSeconds(scene.recipe || recipeData(), stageId);
+    // A secret level's stage picks from that level's own music, the way it
+    // does played alone: neither the game's stage tracks nor a stage<N>_bgm
+    // the game names for that number are its.
+    var secret = secretSpan(scene.recipe || recipeData());
+    if (secret && stageId >= secret.first && stageId <= secret.last) {
+      var secretKeys = Array.isArray(secret.level.audioKeys) ? secret.level.audioKeys : [];
+      var secretTrack = stageBgmTrack(secretKeys, seconds) || (secretKeys.indexOf(themeKey) >= 0 ? themeKey : null);
+      if (secretTrack) return SECRET_AUDIO_PREFIX + secretTrack;
+    }
+    var own = "stage" + String(stageId) + "_bgm";
+    if (keys.indexOf(own) >= 0) return own;
     return stageBgmTrack(keys, seconds) || themeKey;
+  }
+  // The key a secret level's own sound is cached under (the loader's
+  // loadSecretAudio), for a key that level names. Null for a key it does not
+  // name, and outside its stages.
+  function secretAudioKey(scene, stageId, key) {
+    var secret = secretSpan(scene.recipe || recipeData());
+    if (!secret || !(stageId >= secret.first && stageId <= secret.last)) return null;
+    var keys = secret.level.audioKeys;
+    return Array.isArray(keys) && keys.indexOf(key) >= 0 ? SECRET_AUDIO_PREFIX + key : null;
+  }
+  // A secret level's music is decoded behind the game, so a run that opens on
+  // its stage (?stage=) can be there before the song is. The stage waits and
+  // starts it when it lands. If it never does, the loader drops the key and
+  // the stage plays the game's own track.
+  function awaitSecretBgm(scene, stageId, key) {
+    if (String(key).indexOf(SECRET_AUDIO_PREFIX) !== 0) return;
+    try {
+      if (scene.cache.audio.exists(key)) return;
+    } catch (e) {
+      return;
+    }
+    var timer = scene.time.addEvent({
+      delay: 250,
+      loop: true,
+      callback: function() {
+        if (scene.stageCleared || scene.stageBgmName !== key) {
+          timer.remove();
+        } else if (scene.cache.audio.exists(key)) {
+          timer.remove();
+          scene.playBgm(key, 0.4);
+        } else if (!secretAudioKey(scene, stageId, key.slice(SECRET_AUDIO_PREFIX.length))) {
+          timer.remove();
+          scene.playBossBgm(stageId);
+        }
+      }
+    });
   }
   // A boss's own music. boss<N>_bgm in a level's custom audio is the fight
   // with stage N's boss, numbered as the record's bossData numbers him, and
@@ -17775,6 +18243,11 @@
   function playBossFightBgm(scene, stageId) {
     if (scene._dezaBgm || gameState.lowModeFlg) return false;
     var key = "boss" + String(stageId) + "_bgm";
+    // On a secret level's stage, that level's own track for its boss, under
+    // the number the stage has there.
+    if (isSecretStage(scene.recipe || recipeData(), stageId)) {
+      key = secretAudioKey(scene, stageId, "boss" + String(ownStageId(stageId)) + "_bgm") || "";
+    }
     try {
       if (!scene.cache.audio.exists(key)) return false;
     } catch (e) {
@@ -17866,7 +18339,7 @@
     // create
     // =================================================================
     create() {
-      this.recipe = recipeData();
+      this.recipe = stageRecipe(recipeData(), gameState.stageId || 0);
       if (!this.recipe) {
         var game = this.game;
         setTimeout(function() {
@@ -17936,9 +18409,13 @@
       var assetStage = assetStageId(stageId);
       var bgSuffix = gameState.hasCustomEnemies ? "stage_loop_c" : "stage_loop";
       var bgEndSuffix = gameState.hasCustomEnemies ? "stage_end_c" : "stage_end";
-      this.stageBg = this.add.tileSprite(0, 0, GW13, GH11, bgSuffix + assetStage);
+      // A secret level's stage draws the backdrops that level brought (the
+      // loader's applySecretBackgrounds), not the game's for the same slot.
+      var secretLoop = isSecretStage(this.recipe, stageId) && this.textures.exists("secret_loop" + stageId) ? "secret_loop" + stageId : null;
+      var secretEnd = secretLoop && this.textures.exists("secret_end" + stageId) ? "secret_end" + stageId : null;
+      this.stageBg = this.add.tileSprite(0, 0, GW13, GH11, secretLoop || bgSuffix + assetStage);
       this.stageBg.setOrigin(0, 0);
-      var bgEnd = resolveStageBgEnd(this, stageId, bgEndSuffix + assetStage);
+      var bgEnd = resolveStageBgEnd(this, stageId, secretEnd || bgEndSuffix + assetStage);
       this.stageEndBg = bgEnd.frame === null
         ? this.add.image(0, 0, bgEnd.key)
         : this.add.image(0, 0, bgEnd.key, bgEnd.frame);
@@ -18004,7 +18481,7 @@
         }
       }
       this.stageBgOverlay = null;
-      if (gameState.hasCustomEnemies && !this.dezaBg && this.textures.exists("stage_over_c")) {
+      if (gameState.hasCustomEnemies && !this.dezaBg && !secretLoop && this.textures.exists("stage_over_c")) {
         this.stageBgOverlay = this.add.tileSprite(0, 0, GW13, GH11, "stage_over_c");
         this.stageBgOverlay.setOrigin(0, 0);
         this.stageBgOverlay.setAlpha(0.6);
@@ -18497,7 +18974,47 @@
         this.playSound("voice_another_fighter", 0.7);
         preDelay = 3e3;
       }
+      // A secret level opens the way the game's hidden stage does, on the
+      // black card and the challenger's call, and the card names it: the
+      // level's own logo (the loader's applySecretLogo), or its title where
+      // it drew none.
+      var secret = secretSpan(this.recipe);
+      var secretCard = null;
+      if (secret && stageId === secret.first) {
+        preOverlay = this.add.rectangle(GCX6, GCY3, GW13, GH11, 0);
+        preOverlay.setDepth(202);
+        preOverlay.setAlpha(1);
+        this.playSound("voice_another_fighter", 0.7);
+        preDelay = 3e3;
+        if (this.textures.exists("secret_logo")) {
+          secretCard = this.add.image(GCX6, GCY3, "secret_logo");
+          secretCard.setScale(Math.min(1, (GW13 - 16) / secretCard.width));
+        } else {
+          secretCard = this.add.text(GCX6, GCY3, String(secret.level.title || secret.level.level || "SECRET LEVEL").toUpperCase(), {
+            fontFamily: "Arial",
+            fontSize: "22px",
+            fontStyle: "bold",
+            color: "#ffffff",
+            stroke: "#000000",
+            strokeThickness: 3
+          });
+        }
+        secretCard.setOrigin(0.5);
+        secretCard.setDepth(203);
+        secretCard.setAlpha(0);
+        this.tweens.add({ targets: secretCard, alpha: 1, duration: 300, delay: 300 });
+      }
       this.time.delayedCall(preDelay, function() {
+        if (secretCard) {
+          self.tweens.add({
+            targets: secretCard,
+            alpha: 0,
+            duration: 300,
+            onComplete: function() {
+              secretCard.destroy();
+            }
+          });
+        }
         if (preOverlay) {
           self.tweens.add({
             targets: preOverlay,
@@ -19160,6 +19677,7 @@
         gameState.currentBgmKey = null;
       }
       this.playBgm(key, 0.4);
+      awaitSecretBgm(this, stageId, key);
     }
     playSound(key, volume) {
       if (gameState.lowModeFlg) return;
@@ -19174,6 +19692,9 @@
       }
       try {
         var vol = cmgSfxVol(typeof volume === "number" ? volume : 0.7);
+        // A secret level's own take on the sound, on its stages, once it is in.
+        var own = secretAudioKey(this, gameState.stageId || 0, key);
+        if (own && this.cache.audio.exists(own)) key = own;
         if (this.cache.audio.exists(key)) playSfxVoice(this.sound, key, vol, now);
       } catch (e) {
       }
@@ -22219,6 +22740,7 @@
     cmgWrapLoop(game);
     retypeTextsAfterGpuReset(game);
     armCanvasRepaint(game);
+    armAtlasInfo(game);
     console.log("[2028.Ai] Phaser game started");
     if (typeof window !== "undefined") {
       if (typeof window.__fitCanvas === "function") window.__fitCanvas();
@@ -22234,6 +22756,183 @@
   // label) stays invisible. So once the context is back, every Text on a
   // running scene is typed again: now if its canvas is back already, else on
   // the canvas's own contextrestored.
+  // ?atlasInfo=1: a readout over the game of what the GPU was handed and
+  // what it kept. Image Seal drew nothing from its sprite sheet on a Pixel 9
+  // in Chrome, while Brave, Canary and a MacBook drew the stock game, and the
+  // project's cloud browser has no WebGL to look with. The readout lists the
+  // renderer and its texture limit, what the editor handed over, how the sheet
+  // was stacked (atlasInfoNote), and for the largest textures whether a pixel
+  // the source has is also in the GPU's copy, read back through a framebuffer.
+  // "EMPTY" there means the upload failed. Nothing runs without the parameter.
+  function armAtlasInfo(game) {
+    let wanted = false;
+    try {
+      wanted = typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("atlasInfo") === "1";
+    } catch (_e) {
+      wanted = false;
+    }
+    if (!wanted || typeof document === "undefined") return;
+    const box = document.createElement("pre");
+    box.id = "atlas-info";
+    box.style.cssText = "position:fixed;left:0;top:0;z-index:2147483647;margin:0;padding:4px 6px;" +
+      "max-width:100vw;max-height:70vh;overflow:auto;white-space:pre-wrap;word-break:break-all;" +
+      "font:10px/1.3 monospace;color:#fff;background:rgba(0,0,0,0.78);pointer-events:none;";
+    const mount = () => {
+      if (!box.isConnected && document.body) document.body.appendChild(box);
+    };
+    let lost = 0;
+    let restored = 0;
+    const glErrors = [];
+    let armedCanvas = null;
+    const sourceAlpha = (img, x, y) => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = 1;
+        c.height = 1;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, x, y, 1, 1, 0, 0, 1, 1);
+        return ctx.getImageData(0, 0, 1, 1).data[3];
+      } catch (_e) {
+        return -1;
+      }
+    };
+    const glAlpha = (gl, tex, x, y, h) => {
+      if (!gl || !tex) return "no tex";
+      let prev = null;
+      let fb = null;
+      try {
+        prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+        fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) return "fb " + status.toString(16);
+        const px = new Uint8Array(4);
+        gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        const a = px[3];
+        gl.readPixels(x, h - 1 - y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        return Math.max(a, px[3]);
+      } catch (e) {
+        return "err " + (e && e.message ? e.message : e);
+      } finally {
+        try {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+          if (fb) gl.deleteFramebuffer(fb);
+        } catch (_e) {
+          // Readout only; the game's next frame binds what it needs.
+        }
+      }
+    };
+    const checkTexture = (gl, key, texture) => {
+      const source = texture.source && texture.source[0];
+      if (!source) return key + ": no source";
+      const img = source.image;
+      const w = source.width;
+      const h = source.height;
+      const kind = img && img.tagName ? img.tagName.toLowerCase() : typeof img;
+      const tex = source.glTexture ? source.glTexture.webGLTexture || null : null;
+      const names = Object.keys(texture.frames || {}).filter((n) => n !== "__BASE");
+      const picks = names.length
+        ? [0, 0.25, 0.5, 0.75, 0.999].map((p) => names[Math.floor(p * (names.length - 1))])
+        : ["__BASE"];
+      let ok = 0;
+      let empty = 0;
+      let blank = 0;
+      for (const name of Array.from(new Set(picks))) {
+        const f = texture.frames[name];
+        if (!f) continue;
+        let hit = null;
+        for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.75], [0.25, 0.75], [0.75, 0.25]]) {
+          const x = Math.floor(f.cutX + f.cutWidth * fx);
+          const y = Math.floor(f.cutY + f.cutHeight * fy);
+          if (sourceAlpha(img, x, y) > 0) {
+            hit = [x, y];
+            break;
+          }
+        }
+        if (!hit) {
+          blank++;
+          continue;
+        }
+        if (!gl) continue;
+        const a = glAlpha(gl, tex, hit[0], hit[1], h);
+        if (typeof a === "number" && a > 0) ok++;
+        else if (typeof a === "number") empty++;
+        else return key + " " + w + "x" + h + " " + kind + ": " + a;
+      }
+      const share = atlasInfoOpaque(img);
+      const verdict = !gl ? "" : empty ? " EMPTY on GPU (" + empty + " of " + (ok + empty) + ")" : ok ? " ok on GPU" : " no pixels to test";
+      return key + " " + w + "x" + h + " " + kind + (share ? " opaque " + share : "") + verdict +
+        (blank ? ", " + blank + " blank in source" : "");
+    };
+    const render = () => {
+      mount();
+      const lines = ["atlasInfo v2  " + new Date().toLocaleTimeString()];
+      const renderer = game.renderer;
+      const gl = renderer && renderer.gl ? renderer.gl : null;
+      if (game.canvas && game.canvas !== armedCanvas) {
+        armedCanvas = game.canvas;
+        armedCanvas.addEventListener("webglcontextlost", () => lost++);
+        armedCanvas.addEventListener("webglcontextrestored", () => restored++);
+      }
+      if (gl) {
+        const two = typeof WebGL2RenderingContext !== "undefined" && gl instanceof WebGL2RenderingContext;
+        let gpu = "";
+        try {
+          const ext = gl.getExtension("WEBGL_debug_renderer_info");
+          gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+        } catch (_e) {
+          gpu = "?";
+        }
+        lines.push("WebGL" + (two ? "2" : "1") + " " + gpu);
+        lines.push("MAX_TEXTURE_SIZE " + gl.getParameter(gl.MAX_TEXTURE_SIZE) +
+          "  phaser max " + (typeof renderer.getMaxTextureSize === "function" ? renderer.getMaxTextureSize() : "?") +
+          "  context lost " + (gl.isContextLost() ? "NOW" : "no"));
+        for (let i = 0; i < 4; i++) {
+          const e = gl.getError();
+          if (!e) break;
+          if (glErrors.length < 8) glErrors.push("0x" + e.toString(16));
+        }
+      } else {
+        lines.push("Canvas renderer (no WebGL)");
+      }
+      lines.push("contextlost " + lost + "  restored " + restored + "  gl errors " + (glErrors.join(" ") || "none"));
+      for (const n of globalThis.__atlasInfoLog || []) {
+        const rest = Object.keys(n).filter((k) => k !== "kind").map((k) => k + " " + n[k]).join(", ");
+        lines.push(n.kind + ": " + rest);
+      }
+      const list = game.textures && game.textures.list ? game.textures.list : {};
+      const big = Object.keys(list)
+        .filter((k) => k !== "__DEFAULT" && k !== "__MISSING" && k !== "__WHITE" && k !== "__NORMAL")
+        .map((k) => {
+          const s = list[k] && list[k].source && list[k].source[0];
+          return { k, area: s ? s.width * s.height : 0 };
+        })
+        .sort((a, b) => b.area - a.area)
+        .slice(0, 7);
+      for (const { k } of big) {
+        try {
+          lines.push(checkTexture(gl, k, list[k]));
+        } catch (e) {
+          lines.push(k + ": check failed " + (e && e.message ? e.message : e));
+        }
+      }
+      box.textContent = lines.join("\n");
+    };
+    let ticks = 0;
+    const tick = () => {
+      try {
+        render();
+      } catch (e) {
+        box.textContent = "atlasInfo failed: " + (e && e.message ? e.message : e);
+        mount();
+      }
+      ticks++;
+      setTimeout(tick, ticks < 10 ? 2000 : 5000);
+    };
+    setTimeout(tick, 1500);
+  }
   function retypeTextsAfterGpuReset(game) {
     var hook = function() {
       var renderer = game.renderer;

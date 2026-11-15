@@ -40,6 +40,7 @@ async function patternSlot() {
   assert(js.includes('\n  var GOKI_PATTERN = "goki";\n'), "no GOKI_PATTERN");
   return new Function(
     'var GOKI_PATTERN = "goki";' + functionSource(js, "isGokiRecord") +
+      functionSource(js, "secretSpan") + functionSource(js, "ownStageId") +
       functionSource(js, "bossPatternSlot") + "\nreturn bossPatternSlot;",
   )() as (bossData: unknown, stageId: number) => number | string;
 }
@@ -87,6 +88,7 @@ async function shootStart() {
     "scene",
     'var GOKI_PATTERN = "goki";' +
       functionSource(js, "isGokiRecord") +
+      functionSource(js, "secretSpan") + functionSource(js, "ownStageId") +
       functionSource(js, "bossPatternSlot") +
       functionSource(js, "bossStage2Due") +
       functionSource(js, "bossShootStart") +
@@ -132,6 +134,7 @@ async function grabs() {
     'var GOKI_PATTERN = "goki"; var BOSS_STAGE2_HP_BELOW = 0.5;' +
       ' var BOSS_WEAPON_SUFFIXES = ["", "A", "B", "C"];' +
       functionSource(js, "isGokiRecord") +
+      functionSource(js, "secretSpan") + functionSource(js, "ownStageId") +
       functionSource(js, "bossPatternSlot") +
       functionSource(js, "bossStage2Record") +
       functionSource(js, "bossGrabs") +

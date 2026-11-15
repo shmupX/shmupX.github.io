@@ -8,7 +8,7 @@
 // (game.bundle.js, a vendored artifact patched by hand — README) plays each
 // stage the longest one it fills, from the top, and downloads only the cuts
 // some stage of the game will play. title_bgm is the title's, the hidden
-// boss's theme is the four-minute cut, and boss<N>_bgm is the fight with
+// boss has a theme of his own, and boss<N>_bgm is the fight with
 // stage N's boss, which takes over from the stage's music as he arrives.
 //
 // The helpers are run out of the real bundle; the database script
@@ -59,6 +59,7 @@ async function helpers(): Promise<Helpers> {
   const js = await read(BUNDLE);
   const names = [
     "clampStageId",
+    "secretSpan",
     "recipeStageIds",
     "stageRunSeconds",
     "stageBgmMinutes",
@@ -198,9 +199,13 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
   assertEquals(SOUNDTRACK.stage_bgm, "https://easierbycode.com/1.mp3");
   assertEquals(SOUNDTRACK.stage_bgm_2min, "https://easierbycode.com/2.mp3");
   assertEquals(SOUNDTRACK.stage_bgm_4min, "https://easierbycode.com/4.mp3");
-  assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm);
-  // The hidden boss has the long cut, whatever the stage's length.
-  assertEquals(SOUNDTRACK.boss_goki_bgm, SOUNDTRACK.stage_bgm_4min);
+  // The title plays the four-minute cut.
+  assertEquals(SOUNDTRACK.title_bgm, SOUNDTRACK.stage_bgm_4min);
+  // The hidden boss has Diamond Eyes, whatever the stage's length.
+  assertEquals(
+    SOUNDTRACK.boss_goki_bgm,
+    "https://easierbycode.com/diamond-eyes.mp3",
+  );
   // The third boss, and only he, has a track of his own.
   assertEquals(SOUNDTRACK.boss2_bgm, "https://easierbycode.com/boss.mp3");
   assertEquals(
@@ -212,6 +217,60 @@ Deno.test("2028.Ai's baked record names the soundtrack, and no tone-bank one", a
     if (/bgm/.test(key)) assert(key in SOUNDTRACK, key + ": " + url);
   }
   assertEquals(foo.dezaemonBgm, undefined);
+});
+
+Deno.test("a stage's own track, stage<N>_bgm, wins over the length cuts", async () => {
+  const js = await read(BUNDLE);
+  const names = [
+    "clampStageId",
+    "secretSpan",
+    "recipeStageIds",
+    "stageRunSeconds",
+    "stageBgmMinutes",
+    "stageBgmTrack",
+    "stagePlaysAudioKey",
+    "recipeData",
+    "stageBgmKey",
+  ];
+  const consts = [
+    "MAX_STAGE_ID",
+    "SATURN_TICKS_PER_FRAME",
+    "STAGE_TICKS_PER_SECOND",
+    "STAGE_WAVE_TICKS",
+    "STAGE_BOSS_SECONDS",
+    "STAGE_BGM_KEY",
+  ];
+  const { stageBgmKey, stagePlaysAudioKey } = new Function(
+    "gameState",
+    consts.map((c) => constSource(js, c)).join("") +
+      names.map((n) => functionSource(js, n)).join("") +
+      "\nreturn { stageBgmKey, stagePlaysAudioKey };",
+  )({ shortFlg: false }) as {
+    stageBgmKey(scene: unknown, stageId: number, theme: string): string;
+    stagePlaysAudioKey(key: string, recipe: Recipe, keys: string[]): boolean;
+  };
+  const recipe = {
+    stage0: { enemylist: rows(40) },
+    stage4: { enemylist: rows(40) },
+  };
+  const scene = (keys: string[]) => ({
+    recipe,
+    cache: { audio: { getKeys: () => keys } },
+  });
+  const keys = ["stage_bgm", "stage_bgm_4min", "stage4_bgm"];
+  // The secret stage plays its own track; the others their length's cut.
+  assertEquals(stageBgmKey(scene(keys), 4, "boss_fang_bgm"), "stage4_bgm");
+  assertEquals(stageBgmKey(scene(keys), 0, "boss_bison_bgm"), "stage_bgm");
+  // Without one loaded, the stage falls back as before.
+  assertEquals(
+    stageBgmKey(scene(["stage_bgm"]), 4, "boss_fang_bgm"),
+    "stage_bgm",
+  );
+  assertEquals(stageBgmKey(scene([]), 4, "boss_fang_bgm"), "boss_fang_bgm");
+  // The loader downloads it: it is no length cut.
+  assert(stagePlaysAudioKey("stage4_bgm", recipe, keys));
+  // 2028.Ai's secret stage, the fifth, has the two-minute cut as its own.
+  assertEquals(SOUNDTRACK.stage4_bgm, SOUNDTRACK.stage_bgm_2min);
 });
 
 Deno.test("the game scene plays the stage track, starts it over each stage, and gives the hidden boss his own", async () => {
@@ -276,15 +335,15 @@ Deno.test("sameBgmTrack: one key, or two keys the level gave one source", async 
   // Stock themes have no source in the map: two of them are two tracks.
   assertEquals(same("boss_vega_bgm", "boss_goki_bgm"), false);
   assert(same("stage_bgm", "stage_bgm"));
-  // 2028.Ai's hidden boss: his theme is the four-minute cut, so it takes
-  // over from the first cut and plays on over a four-minute stage's.
+  // 2028.Ai's hidden boss: his theme, Diamond Eyes, is no stage's cut, so it
+  // takes over from whichever cut the stage plays.
   const foo = new Function(
     "gameState",
     functionSource(js, "sameBgmTrack") + "\nreturn sameBgmTrack;",
   )({ bgmSourceURLs: SOUNDTRACK }) as (a: string, b: string) => boolean;
   assertEquals(foo("stage_bgm", "boss_goki_bgm"), false);
   assertEquals(foo("stage_bgm_2min", "boss_goki_bgm"), false);
-  assert(foo("stage_bgm_4min", "boss_goki_bgm"));
+  assertEquals(foo("stage_bgm_4min", "boss_goki_bgm"), false);
   assertEquals(same("", ""), false);
   assertEquals(same("boss_bison_bgm", ""), false);
 });
@@ -329,6 +388,10 @@ Deno.test("a boss with a track of his own takes the music over as he arrives", a
       "stageId",
       "gameState",
       functionSource(js, "sameBgmTrack") +
+        // A secret level's stage plays that level's own boss track.
+        functionSource(js, "secretSpan") +
+        functionSource(js, "isSecretStage") +
+        functionSource(js, "recipeData") +
         functionSource(js, "playBossFightBgm") +
         "\nreturn playBossFightBgm(scene, stageId);",
     )(scene, opts.stageId, {

@@ -63,6 +63,9 @@ async function rig(path: string) {
     limitDecl[0],
     functionSource(js, "atlasSideLimit"),
     functionSource(js, "packStackedFrames"),
+    functionSource(js, "readParam"),
+    functionSource(js, "atlasInfoNote"),
+    functionSource(js, "atlasInfoOpaque"),
     functionSource(js, "stackedAtlasCanvas"),
     "return { atlasSideLimit, stackedAtlasCanvas };",
   ].join("\n");

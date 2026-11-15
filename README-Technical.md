@@ -207,7 +207,10 @@ they are written out in full.
     (`sameBgmTrack`). A boss of the stage list can have a track of his own
     too: `boss<N>_bgm`, numbered as `bossData` numbers him, takes over from
     the stage's music as he arrives (`playBossFightBgm`, from `bossAdd`), and
-    a level that names none keeps the stage's music through the fight. A
+    a level that names none keeps the stage's music through the fight. One
+    stage can have a track of its own as well: `stage<N>_bgm`, numbered the
+    same way, wins over the length cuts for that stage alone (`stageBgmKey`),
+    and is downloaded like any key that is no cut. A
     stage's length (`stageRunSeconds`) is its wave list at
     80 ticks a row of the 120 Hz step, or an import's last row on its scroll,
     plus half a minute where the stage has a boss, so 2028.Ai's own stages
@@ -216,7 +219,7 @@ they are written out in full.
     and `_queueAudioOverrides` still names a skipped track in the level's
     source map. That is in the plugin and the inlined copy alike. `title_bgm`
     is the title's music where the level has no title tape (`playTitleBgm`).
-    2028.Ai uses all four: see
+    2028.Ai uses all five: see
     [the soundtrack converter](#a-soundtrack-off-the-tone-bank).
     `tests/stage_bgm_by_length_test.ts` runs the helpers out of the bundle.
   - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
@@ -304,7 +307,38 @@ they are written out in full.
     name. Frames too big to fit even then are stacked as before. The cloud
     browser this was written in has no WebGL (the game runs on Phaser's
     canvas renderer there), so only a phone can show it works.
-    `tests/atlas_side_limit_test.ts` pins it.
+    `tests/atlas_side_limit_test.ts` pins it. It did not bring Image Seal
+    back in Chrome on the Pixel 9 either (Brave and Canary there draw the
+    stock game, which has no editor hand-off to stack).
+  - `armAtlasInfo` (game.bundle.js) and `atlasInfoNote` (the loader, both
+    copies): a readout over the game, only with `?atlasInfo=1`, for a device
+    this cloud browser cannot stand in for. It lists the WebGL renderer and
+    `MAX_TEXTURE_SIZE`, context losses and GL errors, what the editor handed
+    over (`handoff`: the atlas's size, or that none was stored or it did not
+    decode), how each sheet was stacked (`stack`: sizes, the limit, stacked,
+    packed or repack failed), and for the seven largest textures whether a
+    pixel the source has is also in the GPU's copy, read back through a
+    throwaway framebuffer: `EMPTY on GPU` means the upload failed. It never
+    takes input and puts the game's framebuffer back after each read.
+    `tests/atlas_info_readout_test.ts` pins it. Version 2 adds how much of
+    each sheet is drawn (`atlasInfoOpaque`, the non-transparent share of a
+    256 x 256 reduction): the editor's hand-off image, the incoming and the
+    stacked or packed sheet, and every texture listed. On the Pixel 9 in
+    Chrome the v1 readout showed MAX_TEXTURE_SIZE 8192, no context loss and
+    no GL errors, but Image Seal's game_asset and its Dezaemon scenery strips
+    blank in the source itself, so the art is lost before the GPU sees it.
+    The v2 readout there put it in the editor: the sheet it handed over
+    (2048 x 2056, 1682 frames) was 0% drawn, where the same hand-off from
+    the cloud browser is 62% drawn. So the editor now builds and publishes
+    its atlas on canvases the CPU draws (`atlasWorkCanvas`, with
+    `willReadFrequently`), copies a stock frame by its rect instead of
+    through a canvas of its own, checks the sheet it built
+    (`atlasOpaquePercent`) and builds it once more when it came out blank,
+    and redraws the published copy once when that reads blank. What it
+    measured (`editorAtlasDiag`: the stock atlas, a sample of the cart's
+    sprite canvases, the built and the stored sheet) rides with the sheet
+    in the bridge record as `diag`, and the readout lists it as `editor`.
+    `tests/editor_atlas_cpu_canvas_test.ts` pins it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
@@ -3606,12 +3640,16 @@ for one of four minutes or longer. The runtime picks between them per stage
 and starts the cut over with each stage (the bundle's hand edits, above); foo's
 own five stages run about a minute, so they all play the first and the
 two-minute cut is not downloaded. The hidden boss's theme (`boss_goki_bgm`) is
-the four-minute cut, whatever the stage's length, and the third boss has a
+Diamond Eyes (`https://easierbycode.com/diamond-eyes.mp3`, 4:13), whatever the
+stage's length, and the third boss has a
 track of his own from the moment he arrives (`boss2_bgm`,
 `https://easierbycode.com/boss.mp3`, 1:29: an MP4 with a 720x720 video stream
-beside its audio, of which the runtime decodes only the audio). `title_bgm` is
-the first cut too, where the title played the transcription's opening tape, and the five
-stage themes name it as well for what reads a level's music by its boss (the
+beside its audio, of which the runtime decodes only the audio). The secret
+stage, the fifth (reached by finishing every boss with the CA bomb and no
+continue), plays the two-minute cut as its own track (`stage4_bgm`). `title_bgm` is
+the four-minute cut too, where the title played the transcription's opening
+tape, and the five stage themes name the first cut for what reads a level's
+music by its boss (the
 exporters, a runtime from before the stage tracks). The files are AAC in an MP4 container under an
 `.mp3` name, which Chrome, Safari, Firefox and Edge decode; a browser that
 cannot plays the stock themes.
@@ -6773,6 +6811,38 @@ rows, and ends on the Seductress as its boss.
 scripts, the music, the trails, the boss), checks that the committed
 game.json matches what the converter builds, and checks that attachTrail is
 wired into the player, the zako and the boss.
+
+### A secret level: RonaGun after foo's ending
+
+A level record may name another cloud level as its `secretLevel` (its key, an
+alias, or `{ level }`). foo names `hellophaser`, in the cloud record and in the
+baked `static/games/2028-ai/foo.json`, so RonaGun plays once foo is beaten,
+whichever ending the run reached: the normal one, or the secret stage.
+
+- **Loading.** The level loader's `applySecretLevel` (level-loader.js, and its
+  copy inlined in game.bundle.js) reads the named level off the database at
+  boot, beside the story pictures, and gives up after
+  `secretLevelTimeoutMs` (10 s) or offline. It stacks the level's art under the
+  game's, keeping the game's pixels for any frame both have, and
+  `installSecretLevel` puts the level's stages and bosses past the game's last
+  stage (RonaGun's stage 0 is foo's stage 5). The level's own enemy records stay
+  on `recipe.secretLevel`, never among the game's. Its backdrops become
+  `secret_loop<N>` / `secret_end<N>`, its logo `secret_logo`, and its sounds
+  `secret:<key>`, fetched behind the game.
+- **Playing.** `secretSpan` marks those stages, and none of them is one of the
+  game's: `lastStageId`, the endings and the hidden boss count without them.
+  `sceneAfterStory` sends a beaten game to the first one instead of the ending,
+  and the ending plays after the last. Each stage plays `stageRecipe`, the
+  game's recipe with the level's enemies and stage rules. The ship stays the
+  game's own and wears the level's ship trail where it has none (foo's duke
+  wears Lincoln's blue thruster). Each boss flies the stock routine of its
+  stage number in its own game (`ownStageId`). The stage opens on the black
+  "another challenger" card with the level's logo, and plays the level's own
+  music.
+- **Editing.** The editor keeps `secretLevel` through a cloud load and SAVE.
+
+It replaced the bonus stage of PRs 99-102, which played RonaGun only after the
+secret stage. `tests/secret_level_test.ts` pins it.
 
 ## Evil Invaders as a cloud game
 

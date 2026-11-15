@@ -334,7 +334,8 @@ Deno.test("the stage-end backdrop override is still wired into the bundle", asyn
   );
   assert(
     src.includes(
-      "var bgEnd = resolveStageBgEnd(this, stageId, bgEndSuffix + assetStage)",
+      // A secret level's stage falls back on its own backdrop (secretEnd).
+      "var bgEnd = resolveStageBgEnd(this, stageId, secretEnd || bgEndSuffix + assetStage)",
     ),
     "resolveStageBgEnd is no longer called where stageEndBg is created",
   );

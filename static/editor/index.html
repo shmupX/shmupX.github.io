@@ -2506,14 +2506,37 @@
             const atlasKey = currentAtlasKey;
             const frames = atlasData.frames;
             // Snapshot the pixels NOW (drawImage is synchronous); only the
-            // encode + write are queued.
-            let cv = null;
+            // encode + write are queued. On a CPU-drawn canvas
+            // (atlasWorkCanvas), for the reason buildAtlasWithReplacements
+            // gives.
+            let cv = null, cvx = null;
+            const source = atlasImage;
             try {
-                cv = document.createElement('canvas');
-                cv.width = atlasImage.naturalWidth; cv.height = atlasImage.naturalHeight;
-                cv.getContext('2d').drawImage(atlasImage, 0, 0);
+                ({ canvas: cv, ctx: cvx } = atlasWorkCanvas(source.naturalWidth, source.naturalHeight));
+                cvx.drawImage(source, 0, 0);
             } catch (e) { return Promise.resolve(false); }
+            const diag = Object.assign({}, editorAtlasDiag);
             const run = () => new Promise((resolve) => {
+                // A sheet with frames on it that reads as blank is drawn once
+                // more from its image before it is encoded; either way what
+                // was measured rides with it to the game's readout.
+                let stored = atlasOpaquePercent(cv);
+                const settle = () => {
+                    if (stored === 0 && !diag.redrawn) {
+                        diag.redrawn = 'yes';
+                        const again = () => {
+                            try { cvx.clearRect(0, 0, cv.width, cv.height); cvx.drawImage(source, 0, 0); } catch (e) {}
+                            stored = atlasOpaquePercent(cv);
+                            settle();
+                        };
+                        if (typeof source.decode === 'function') source.decode().then(again, again);
+                        else again();
+                        return;
+                    }
+                    diag.stored = atlasPercentText(stored);
+                    encode();
+                };
+                const encode = () => {
                 try {
                     cv.toBlob(function (blob) {
                         if (!blob) { resolve(false); return; }
@@ -2526,13 +2549,15 @@
                                 // viewers already read — they follow whichever
                                 // atlas is open, so this keeps tracking it.
                                 store.put(blob, 'atlasImage');
-                                store.put({ atlasKey, frames, blob }, VIEWER_BRIDGE_ATLAS_PREFIX + atlasKey);
+                                store.put({ atlasKey, frames, blob, diag }, VIEWER_BRIDGE_ATLAS_PREFIX + atlasKey);
                                 tx.oncomplete = function () { resolve(true); };
                                 tx.onerror = function () { resolve(false); };
                             } catch (e2) { resolve(false); }
                         });
                     }, 'image/png');
                 } catch (e) { resolve(false); }
+                };
+                settle();
             });
             const chained = atlasPublishChain.then(run, run);
             atlasPublishChain = chained;
@@ -8532,8 +8557,51 @@
             }
         }
 
+        // A canvas drawn by the CPU: willReadFrequently keeps Chrome from
+        // backing it with the GPU. The atlas sheets are built and published on
+        // these (see buildAtlasWithReplacements).
+        function atlasWorkCanvas(w, h) {
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, w); canvas.height = Math.max(1, h);
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            return { canvas, ctx };
+        }
+
+        // How much of `src` (an image or canvas) is drawn, as a percentage,
+        // from a 256 x 256 reduction of it: a sheet with sprites on it reads
+        // well above 0, one that came out blank reads 0. Null where it cannot
+        // be read. The game's atlasInfo=1 readout shows what the editor
+        // measured here (editorAtlasDiag), beside what the game received.
+        function atlasOpaquePercent(src) {
+            try {
+                const w = src && (src.naturalWidth || src.width), h = src && (src.naturalHeight || src.height);
+                if (!w || !h) return null;
+                const { ctx } = atlasWorkCanvas(256, 256);
+                ctx.drawImage(src, 0, 0, 256, 256);
+                const d = ctx.getImageData(0, 0, 256, 256).data;
+                let n = 0;
+                for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
+                return n / 655.36;
+            } catch (e) { return null; }
+        }
+        function atlasPercentText(v) { return v == null ? 'unreadable' : v.toFixed(1) + '%'; }
+        // What the last atlas build and publish measured, handed to the game
+        // with the sheet (storeAtlasForViewers) for its readout. A var: the
+        // publish can run before the script has come this far.
+        var editorAtlasDiag = {};
+
         // `state` (see levelAtlasState) packs a stashed atlas; the live one
         // when omitted.
+        //
+        // The sheet is drawn on a canvas kept in CPU memory (atlasWorkCanvas),
+        // and a stock frame is copied straight out of the atlas image by its
+        // rect rather than through a canvas of its own. On a Pixel 9 the
+        // sheet this built for Image Seal (2048 x 2056, 1682 frames) came out
+        // with not one pixel drawn, the cart's sprites and the stock frames
+        // alike, while the same build on a desktop drew all of it: what failed
+        // there was the GPU-backed canvas the frames were drawn onto, not the
+        // frames. A canvas with willReadFrequently is drawn by the CPU, and
+        // one canvas per stock frame (a thousand of them) is no longer made.
         function buildAtlasWithReplacements(state) {
             const S = state || { atlasData, atlasImage, replacedFrames, extraSprites };
             const all = [];
@@ -8543,10 +8611,7 @@
                 if (S.replacedFrames[k]) {
                     all.push(S.replacedFrames[k]);
                 } else {
-                    const fc = document.createElement('canvas');
-                    fc.width = f.w; fc.height = f.h;
-                    fc.getContext('2d').drawImage(S.atlasImage, f.x, f.y, f.w, f.h, 0, 0, f.w, f.h);
-                    all.push({ key: k, canvas: fc, w: f.w, h: f.h });
+                    all.push({ key: k, src: S.atlasImage, sx: f.x, sy: f.y, w: f.w, h: f.h });
                 }
             }
             all.push(...S.extraSprites);
@@ -8559,9 +8624,12 @@
                 pos[s.key] = { x: cx, y: cy }; cx += s.w + P;
                 rh = Math.max(rh, s.h); fh = Math.max(fh, cy + s.h + P);
             });
-            const canvas = document.createElement('canvas'); canvas.width = MW; canvas.height = fh;
-            const nc = canvas.getContext('2d');
-            all.forEach(s => { const p = pos[s.key]; nc.drawImage(s.canvas, p.x, p.y); });
+            const { canvas, ctx: nc } = atlasWorkCanvas(MW, fh);
+            all.forEach(s => {
+                const p = pos[s.key];
+                if (s.src) nc.drawImage(s.src, s.sx, s.sy, s.w, s.h, p.x, p.y, s.w, s.h);
+                else nc.drawImage(s.canvas, p.x, p.y);
+            });
             const newFrames = {};
             all.forEach(s => {
                 const p = pos[s.key];
@@ -8586,10 +8654,37 @@
         // Deliberately NOT repackAtlas(): that routes through saveAtlasFiles(),
         // which downloads _game_asset.png/.json when no directory handle is open.
         // Importing a save should not spit files at the user.
-        function mergeExtraSpritesIntoAtlas() {
-            if (!atlasData || !atlasImage) return Promise.resolve(false);
-            if (!extraSprites.length && !Object.keys(replacedFrames).length) return Promise.resolve(false);
-            const result = buildAtlasWithReplacements();
+        //
+        // The build is checked before it replaces the atlas: a sheet that came
+        // out with nothing drawn on it is built once more after a moment, and
+        // what both builds measured goes to the game's readout.
+        async function mergeExtraSpritesIntoAtlas() {
+            if (!atlasData || !atlasImage) return false;
+            if (!extraSprites.length && !Object.keys(replacedFrames).length) return false;
+            // A stock atlas still loading draws as nothing.
+            if (typeof atlasImage.decode === 'function') { try { await atlasImage.decode(); } catch (e) {} }
+            const stock = atlasOpaquePercent(atlasImage);
+            let sampled = 0, drawn = 0;
+            for (const sp of extraSprites.slice(0, 60)) {
+                if (!sp || !sp.canvas) continue;
+                sampled++;
+                if (atlasOpaquePercent(sp.canvas)) drawn++;
+            }
+            let result = buildAtlasWithReplacements();
+            let built = atlasOpaquePercent(result.canvas);
+            let tries = 1;
+            if (built === 0) {
+                await new Promise((r) => setTimeout(r, 250));
+                result = buildAtlasWithReplacements();
+                built = atlasOpaquePercent(result.canvas);
+                tries = 2;
+            }
+            editorAtlasDiag = {
+                stock: atlasPercentText(stock),
+                sprites: drawn + ' of ' + sampled + ' drawn',
+                built: atlasPercentText(built),
+                tries,
+            };
             const cfg = ATLAS_CONFIGS[currentAtlasKey];
             const json = {
                 frames: result.frames,
@@ -12537,9 +12632,8 @@
                     retargetFrames(sp.key, key);
                 }
                 existing.add(key);
-                const c = document.createElement('canvas');
-                c.width = sp.w; c.height = sp.h;
-                c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(sp.rgba), sp.w, sp.h), 0, 0);
+                const { canvas: c, ctx: cx } = atlasWorkCanvas(sp.w, sp.h);
+                cx.putImageData(new ImageData(new Uint8ClampedArray(sp.rgba), sp.w, sp.h), 0, 0);
                 extraSprites.push({ key, canvas: c, w: sp.w, h: sp.h });
                 customFrameKeys.add(key);
             }
@@ -15694,6 +15788,9 @@ function GAME3D_RUNTIME(DATA) {
                 // A game whose stages end on their last kill (level-loader's
                 // endsOnClear, GameScene's wave block): 95-demo's formations.
                 payload.endsOnClear = !!(gameData && gameData.endsOnClear);
+                // The level that plays after the game's ending (level-loader's
+                // secretLevel): foo names hellophaser, RonaGun.
+                payload.secretLevel = (gameData && gameData.secretLevel) || null;
                 payload.godMode = godModeOn;
                 // Save audio URL overrides
                 var urlEntries = {};
@@ -15946,6 +16043,10 @@ function GAME3D_RUNTIME(DATA) {
                 // under another name keep it.
                 if (d.endsOnClear) gameData.endsOnClear = true;
                 else delete gameData.endsOnClear;
+                // ...and the level that plays after its ending (level-loader's
+                // secretLevel), so a SAVE does not drop it and PLAY reaches it.
+                if (d.secretLevel) gameData.secretLevel = d.secretLevel;
+                else delete gameData.secretLevel;
                 syncNoStoryKnob();
                 if (typeof d.godMode === 'boolean') applyGodMode(d.godMode);
                 titleBgDataURL = d.titleBgDataURL || null;
