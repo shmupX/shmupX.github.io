@@ -68,6 +68,10 @@ export const DEFAULTS = {
   // plays. Only five sets of per-stage backgrounds and voices exist, so stage
   // 5 and up reuse them (stageId % 5); see 2019-es7 src/phaser/stages.js.
   maxStage: 9,
+  // How long a boot waits on a game's secret level (applySecretLevel) before
+  // it starts without one. The database's once() never settles while a page
+  // is offline, and the game itself must still open.
+  secretLevelTimeoutMs: 10000,
   editorRecipeKey: "__editorPhaserRecipe__",
   editorStageKey: "__editorPhaserStageId__",
   fallbackOnError: true,
@@ -217,6 +221,84 @@ export function titleNameOf(data, levelName) {
   const text = (v) => (typeof v === "string" ? v.trim() : "");
   const own = data ? text(data.title) || text(data.name) : "";
   return own || (typeof levelName === "string" ? levelName : "") || null;
+}
+
+// ---- A secret level ---------------------------------------------------------
+
+// A game may name another cloud level as its secret level: `secretLevel`, that
+// level's key or one of its aliases (or { level } for the same). Once the game
+// is beaten, by whichever of its endings, the run goes on into that level's
+// stages and its boss before the game's own ending plays: applySecretLevel
+// below, and secretSpan in game.bundle.js. foo names hellophaser, RonaGun.
+
+// The secret level's sounds, in the audio cache: its keys are the game's own
+// keys (boss_bison_bgm), so they cannot share a name with them.
+export const SECRET_AUDIO_PREFIX = "secret:";
+
+// The level a record names as its secret level, or null.
+export function secretLevelName(levelData) {
+  const raw = levelData && levelData.secretLevel;
+  const name = typeof raw === "string" ? raw : raw && typeof raw.level === "string" ? raw.level : "";
+  return sanitizeLevelName(name) || null;
+}
+
+// A recipe's stage numbers, ascending.
+function recipeStageNumbers(recipe) {
+  const ids = [];
+  for (const key in recipe || {}) {
+    const m = /^stage(\d+)$/.exec(key);
+    if (m) ids.push(Number(m[1]));
+  }
+  return ids.sort((a, b) => a - b);
+}
+
+// Put a secret level's stages into a game's merged recipe, past the game's own
+// last stage. The stage and boss records are renumbered to follow it, and
+// `recipe.secretLevel` becomes where they sit and what else the level brought:
+//
+//   { level, title, first, count, stages, enemyData, trail, endsOnClear,
+//     ownItems, audioKeys }
+//
+// `stages` is each stage's number in its own game, which decides the stock
+// routine, voices and backdrop it plays with there. The level's enemy records
+// stay on the descriptor instead of joining the game's own: two games letter
+// their enemies independently, and one record with a Dezaemon script among a
+// web game's would have the runtime take the whole game for a cart
+// (isImportedLevel). `trail` is the level's own ship's, which the visiting
+// ship wears there. Returns the descriptor, or null (and no secretLevel on the
+// recipe) when the level has no stage or the game no room for one: stage
+// numbers stop at maxStage.
+export function installSecretLevel(recipe, secretRecipe, opts) {
+  const o = opts || {};
+  const maxStage = o.maxStage != null ? o.maxStage : DEFAULTS.maxStage;
+  delete recipe.secretLevel;
+  const own = recipeStageNumbers(recipe);
+  const theirs = recipeStageNumbers(secretRecipe);
+  const first = (own.length ? own[own.length - 1] : 0) + 1;
+  const count = Math.min(theirs.length, maxStage - first + 1);
+  if (count < 1) return null;
+  if (!recipe.bossData || typeof recipe.bossData !== "object") recipe.bossData = {};
+  const bosses = secretRecipe.bossData || {};
+  for (let k = 0; k < count; k++) {
+    recipe["stage" + (first + k)] = secretRecipe["stage" + theirs[k]];
+    const boss = bosses["boss" + theirs[k]];
+    if (boss) recipe.bossData["boss" + (first + k)] = boss;
+    else delete recipe.bossData["boss" + (first + k)];
+  }
+  const player = secretRecipe.playerData || {};
+  recipe.secretLevel = {
+    level: o.level || null,
+    title: o.title || null,
+    first: first,
+    count: count,
+    stages: theirs.slice(0, count),
+    enemyData: secretRecipe.enemyData || {},
+    trail: player.trail && typeof player.trail === "object" ? player.trail : null,
+    endsOnClear: !!secretRecipe.endsOnClear,
+    ownItems: !!secretRecipe.ownItems,
+    audioKeys: []
+  };
+  return recipe.secretLevel;
 }
 
 // Does a level record carry a whole game's framing, or one stage's grid? A
@@ -1882,6 +1964,190 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       });
     }
 
+    // ---- A secret level ---------------------------------------------------
+
+    // The record of a level, by its key or one of its aliases, read off the
+    // database and nowhere else: the offline record answers fetchLevel for
+    // whatever name is asked, and a secret level is another level than the
+    // page's own. Resolves { key, data }, or null when there is no such level
+    // or no database to ask.
+    readLevelRecord(levelName, opts) {
+      const o = opts || {};
+      let db;
+      try {
+        const sdk = o.firebase || (typeof globalThis !== "undefined" ? globalThis.firebase : null);
+        const config = o.firebaseConfig ||
+          (typeof globalThis !== "undefined" ? (globalThis.firebaseConfig || globalThis.__FIREBASE_CONFIG__) : null);
+        db = getFirebaseDatabase(sdk, config);
+      } catch (_e) {
+        return Promise.resolve(null);
+      }
+      const levelsPath = o.levelsPath || DEFAULTS.levelsPath;
+      const aliasesPath = o.aliasesPath || DEFAULTS.aliasesPath;
+      const read = (key) => db.ref(levelsPath + "/" + key).once("value").then((snapshot) => snapshot.val());
+      const isLevel = (data) => !!(data && data.enemylist);
+      return read(levelName).then((data) => {
+        if (isLevel(data)) return { key: levelName, data: data };
+        return db.ref(aliasesPath + "/" + String(levelName).toLowerCase()).once("value").then((snapshot) => {
+          const key = snapshot.val();
+          if (typeof key !== "string" || !key || key === levelName) return null;
+          return read(key).then((aliased) => (isLevel(aliased) ? { key: key, data: aliased } : null));
+        });
+      }).catch(() => null);
+    }
+
+    // The level a game names as its secret level (secretLevelName), fetched
+    // and put past the game's own last stage: its art under the game's in the
+    // one atlas, its stages and bosses in the recipe (installSecretLevel), its
+    // backdrops and logo as textures of their own, and its sounds decoded
+    // behind the game. Resolves true once the recipe carries it. A level that
+    // does not load in time, or at all, resolves false and the game ends
+    // where it always did. Never rejects.
+    applySecretLevel(recipe, levelData, baseRecipe, opts) {
+      const o = opts || {};
+      const name = secretLevelName(levelData);
+      if (recipe) delete recipe.secretLevel;
+      if (!name || !recipe) return Promise.resolve(false);
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return Promise.resolve(false);
+      const atlasKey = o.atlasKey || DEFAULTS.atlasKey;
+      const wait = o.secretLevelTimeoutMs != null ? o.secretLevelTimeoutMs : DEFAULTS.secretLevelTimeoutMs;
+      const late = new Promise((resolve) => setTimeout(() => resolve(null), wait));
+      return Promise.race([this.readLevelRecord(name, o), late]).then((found) => {
+        if (!found) {
+          console.warn('Secret level "' + name + '" did not load; the game ends without it');
+          return false;
+        }
+        const secret = found.data;
+        return this.mergeSecretAtlas(secret, atlasKey).then(() => {
+          const span = installSecretLevel(recipe, this.mergeRecipe(baseRecipe, secret, atlasKey), {
+            level: found.key,
+            title: titleNameOf(secret, found.key),
+            maxStage: o.maxStage
+          });
+          if (!span) return false;
+          this.loadSecretAudio(secret, span, o.audio, o.lowMode);
+          return Promise.all([
+            this.applySecretBackgrounds(secret, span),
+            this.applySecretLogo(secret)
+          ]).then(() => true);
+        });
+      }).catch((err) => {
+        console.warn("Secret level failed to load:", err);
+        delete recipe.secretLevel;
+        return false;
+      });
+    }
+
+    // The secret level's art, stacked under the atlas the game's own is
+    // already in. A frame the atlas has keeps the game's pixels: a level saved
+    // by the editor carries the stock frames back, and the game may have
+    // redrawn the ones it was handed.
+    mergeSecretAtlas(secret, atlasKey) {
+      if (!secret || !secret.atlasImageDataURL || !secret.atlasFrames) return Promise.resolve(false);
+      return loadImage(secret.atlasImageDataURL).then((img) => {
+        if (!img) {
+          console.warn("Secret level atlas image failed to load");
+          return false;
+        }
+        const scene = this.scene;
+        const have = scene.textures.exists(atlasKey) ? scene.textures.get(atlasKey) : null;
+        const frames = {};
+        let any = false;
+        for (const fname in secret.atlasFrames) {
+          const name = decodeFirebaseKey(fname);
+          const alt = altFrameName(name);
+          if (have && (have.has(name) || (alt && have.has(alt)))) continue;
+          frames[fname] = secret.atlasFrames[fname];
+          any = true;
+        }
+        return any ? this._stackAtlas(img, frames, atlasKey) : false;
+      });
+    }
+
+    // The secret level's own backdrops, as "secret_loop<N>" and
+    // "secret_end<N>", N the stage's number in the game it joined. They are
+    // textures of their own: stage_loop<N % 5> is the game's, which goes on
+    // drawing it on the stages it has.
+    applySecretBackgrounds(secret, span) {
+      const scene = this.scene;
+      const bgs = secret && secret.stageBackgrounds;
+      if (!bgs || typeof bgs !== "object") return Promise.resolve(false);
+      const jobs = [];
+      for (let k = 0; k < span.count; k++) {
+        const rec = bgs["stage" + span.stages[k]];
+        if (!rec || typeof rec !== "object") continue;
+        for (const part of ["loop", "end"]) {
+          const dataURL = rec[part];
+          if (typeof dataURL !== "string" || !dataURL) continue;
+          const textureKey = "secret_" + part + (span.first + k);
+          jobs.push(loadImage(dataURL).then((img) => {
+            if (!img) return false;
+            try {
+              if (scene.textures.exists(textureKey)) scene.textures.remove(textureKey);
+              scene.textures.addImage(textureKey, img);
+            } catch (e) {
+              console.warn('Failed to load secret level background "' + textureKey + '":', e);
+              return false;
+            }
+            return true;
+          }));
+        }
+      }
+      return Promise.all(jobs).then((done) => done.some(Boolean));
+    }
+
+    // The secret level's logo, as "secret_logo": the card the stage opens on
+    // names the level with it (the bundle's showTitle).
+    applySecretLogo(secret) {
+      const scene = this.scene;
+      const dataURL = secret && secret.logoDataURL;
+      if (typeof dataURL !== "string" || !dataURL) return Promise.resolve(false);
+      return loadImage(dataURL).then((img) => {
+        if (!img) return false;
+        try {
+          if (scene.textures.exists("secret_logo")) scene.textures.remove("secret_logo");
+          scene.textures.addImage("secret_logo", img);
+        } catch (e) {
+          console.warn("Failed to load the secret level's logo:", e);
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // The secret level's own sounds, decoded behind the game instead of with
+    // its own: the run needs them minutes from now, if at all, and a song is
+    // megabytes. Each lands in the audio cache as "secret:<key>", and
+    // span.audioKeys lists the keys that are in or still coming, which is
+    // what the stage picks its music from. One that fails leaves the list,
+    // and the stage plays the game's own track for it.
+    loadSecretAudio(secret, span, opts, lowMode) {
+      const o = opts || {};
+      const urls = secret && secret.customAudioURLs;
+      if (lowMode || o.enabled === false || !urls || typeof urls !== "object") return;
+      const game = this.game || (this.scene && this.scene.sys && this.scene.sys.game);
+      const ctx = game && game.sound && game.sound.context;
+      if (!ctx || typeof ctx.decodeAudioData !== "function" || typeof fetch !== "function") return;
+      const byUrl = {};
+      for (const key in urls) {
+        const url = urls[key];
+        if (typeof url !== "string" || !url) continue;
+        (byUrl[url] = byUrl[url] || []).push(key);
+        span.audioKeys.push(key);
+      }
+      for (const url in byUrl) {
+        fetch(url).then((res) => {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.arrayBuffer();
+        }).then((bytes) => ctx.decodeAudioData(bytes)).then((buffer) => {
+          for (const key of byUrl[url]) game.cache.audio.add(SECRET_AUDIO_PREFIX + key, buffer);
+        }).catch((err) => {
+          console.warn("Secret level audio failed to load (" + url + "):", err);
+          span.audioKeys = span.audioKeys.filter((k) => byUrl[url].indexOf(k) < 0);
+        });
+      }
+    }
+
     // ---- Custom audio -----------------------------------------------------
 
     // Gather custom audio blobs from IndexedDB (browser/editor flow) and, when
@@ -2127,6 +2393,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           delete recipe.cabinet;
           delete recipe.uiAtlases;
           for (const dataKey in o.titleImageKeys) delete recipe[dataKey];
+          // The game's secret level, if it names one: under the editor's
+          // atlas, which is in by now, and awaited with the story pictures.
+          const secretLevel = this.applySecretLevel(recipe, recipe, baseRecipe, o);
           prime(recipe, info);
           return this.applyStoryImages(recipe).then(() => ({
             recipe,
@@ -2142,7 +2411,7 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
             // board.
             gameId: gameIdForLevel({ gameId: recipe.gameId }),
             bgmSourceURLs: {},
-          }));
+          })).then((result) => secretLevel.then(() => result));
         }));
       }
 
@@ -2195,6 +2464,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           return Promise.all([
             this._loadAudio(data, o.audio, o.lowMode, recipe),
             this.applyStoryImages(data),
+            // The game's secret level, if it names one (applySecretLevel):
+            // its stages join the recipe before the first scene reads it.
+            this.applySecretLevel(recipe, data, baseRecipe, o),
           ]).then(([bgmSourceURLs]) => ({
             recipe,
             stageId,
