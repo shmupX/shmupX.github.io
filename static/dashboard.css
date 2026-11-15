@@ -1193,6 +1193,8 @@ body.theme-nintendo .lib-art-scan { background: repeating-linear-gradient(180deg
   background: rgba(0, 0, 0, .78); border: 1px solid oklch(0.891 0.242 calc(var(--h) + 9) / 0.5);
   white-space: pre-wrap; word-break: break-all; pointer-events: none;
 }
+/* ?debug=1 status line: top-left, clear of the ?paddebug=1 monitor below. */
+.pad-debug.debug-osd { bottom: auto; top: 8px; top: calc(8px + env(safe-area-inset-top, 0px)); }
 
 /* ═══ Nintendo theme (Settings → THEME) ═══════════════════════════════════
    Palette ported from codemonkey-games-launcher: NES cabinet grays

@@ -7306,6 +7306,24 @@
   const padDebugOn = typeof location !== 'undefined' && /[?&]paddebug=1/.test(location.search);
   let padDebugText = $state('');
 
+  // ?debug=1 — one on-screen line saying whether a Backbone is plugged in.
+  // Matched on the pad's id: Android's WebView/Chrome puts the device name
+  // and "Vendor: 358a" (Backbone Labs) in it, iOS the GameController name.
+  // Polled rather than left to gamepadconnected, so a Backbone that was
+  // already in the port at launch shows as soon as the browser exposes it
+  // (which, on every browser, is its first button press).
+  const isBackbonePad = (p) =>
+    !!p && p.connected !== false &&
+    (/backbone/i.test(p.id || '') || /vendor:\s*358a/i.test(p.id || ''));
+  let debugBackbone = $state(false);
+  function debugBackboneTick() {
+    if (!debugOn) return;
+    let on = false;
+    try { on = Array.prototype.some.call(navigator.getGamepads?.() || [], isBackbonePad); }
+    catch (_) { /* ignore */ }
+    if (on !== debugBackbone) debugBackbone = on;
+  }
+
   function padDebugTick() {
     if (!padDebugOn) return;
     const fmt = (p, tag) => {
@@ -7691,6 +7709,7 @@
   function pollPad() {
     padRaf = requestAnimationFrame(pollPad);
     padDebugTick();
+    debugBackboneTick();
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     let pad = pickActivePad(pads);
     noteTwoPlayers(pads, performance.now());
@@ -9930,6 +9949,10 @@
 
 {#if padDebugOn}
   <pre class="pad-debug">{padDebugText}</pre>
+{/if}
+
+{#if debugOn}
+  <pre class="pad-debug debug-osd">Backbone 🎮 {debugBackbone ? 'connected' : 'not connected'}</pre>
 {/if}
 
 {#if toastMsg}
