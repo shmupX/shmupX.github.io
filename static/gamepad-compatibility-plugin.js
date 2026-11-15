@@ -646,7 +646,9 @@
   // The launcher (Dashboard.svelte, applyBackbone) applies it to a
   // same-origin game frame itself. Any game page that loads this plugin also
   // hears { type: 'cmg-backbone-set', value } from the window that embeds it
-  // and turns its own pads, which is what reaches a cross-origin frame.
+  // and turns its own pads, which is what reaches a cross-origin frame. A
+  // page with no launcher around it — an exported app, a direct visit —
+  // switches it through api.setBackbone, from its own PAUSE panel.
   let backboneOn = false;
   try {
     if (root.parent && root.parent !== root && typeof root.addEventListener === "function") {
@@ -1139,7 +1141,7 @@
   }
 
   const api = {
-    version: "1.7.0",
+    version: "1.8.0",
     install,
     isSnesPad,
     isStadiaPad,
@@ -1159,6 +1161,15 @@
     // Backbone controls (see above): pads as a controller stood upright
     // reports them — right stick to steer, every direction turned with it.
     backbone: backbonePads,
+    // ...and the switch for this page's own pads, for a page with no
+    // launcher to tell it: an exported app or a direct visit, whose PAUSE
+    // panel carries the toggle (cmgSetBackbone in 2028-ai's bundle).
+    setBackbone(on) {
+      backboneOn = !!on;
+    },
+    backboneOn() {
+      return backboneOn;
+    },
     // Split Controller mode (see above): one pad as two half-pads, and
     // which pads it would split.
     splitPads,

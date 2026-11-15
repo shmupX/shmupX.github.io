@@ -6066,6 +6066,41 @@
       }
     }
   }
+  // cmg: Backbone controls — the Guide's switch for a controller stood
+  // upright (static/gamepad-compatibility-plugin.js: the right stick steers,
+  // every direction turned with it). Under the launcher the Guide tells the
+  // plugin itself; on a page with no Guide (an exported app, a direct visit)
+  // the PAUSE panel carries the switch, saved under the launcher's own key
+  // (cmg-backbone) so a later visit starts there. The plugin does the turn:
+  // every pad read in this bundle goes through navigator.getGamepads.
+  var cmgBackboneInput = null;
+  function cmgBackboneCompat() {
+    try {
+      var compat = window.CMGGamepadCompat;
+      return compat && typeof compat.setBackbone === "function" ? compat : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function cmgReadStoredBackbone() {
+    try {
+      return localStorage.getItem("cmg-backbone") === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+  function cmgSetBackbone(on, persist) {
+    on = !!on;
+    var compat = cmgBackboneCompat();
+    if (compat) compat.setBackbone(on);
+    if (cmgBackboneInput) cmgBackboneInput.checked = on;
+    if (persist) {
+      try {
+        localStorage.setItem("cmg-backbone", on ? "1" : "0");
+      } catch (e) {
+      }
+    }
+  }
   function cmgWrapLoop(game) {
     var loop = game && game.loop;
     if (!loop || loop.__cmgTurbo) return;
@@ -6180,6 +6215,18 @@
     });
     cmgHapticsInput = haptics.querySelector("input");
     card.appendChild(haptics);
+    // ...and its Backbone Controls row, where the pad plugin is on the page
+    // to do the turn (cmgSetBackbone), saved the same way.
+    var backboneCompat = cmgBackboneCompat();
+    if (backboneCompat) {
+      var backbone = cmgToggleRow("BACKBONE", backboneCompat.backboneOn(), function (on) {
+        return on ? "ON" : "OFF";
+      }, function (on) {
+        cmgSetBackbone(on, true);
+      });
+      cmgBackboneInput = backbone.querySelector("input");
+      card.appendChild(backbone);
+    }
     var btn = document.createElement("button");
     btn.textContent = "RESUME";
     btn.style.cssText = "margin-top:14px;padding:9px 26px;border-radius:6px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.12);color:#fff;font-family:inherit;font-size:16px;letter-spacing:.24em;text-indent:.24em;cursor:pointer;";
@@ -6266,6 +6313,9 @@
       }
       return;
     }
+    // No Guide to say so: Backbone controls start where the PAUSE panel's
+    // switch (or the launcher's, on this origin) last left them.
+    cmgSetBackbone(cmgReadStoredBackbone(), false);
     // ESC toggles the PAUSE panel. (Embedded builds never get here — the host
     // page's OSD_BRIDGE forwards ESC to the launcher instead.)
     window.addEventListener("keydown", function (ev) {

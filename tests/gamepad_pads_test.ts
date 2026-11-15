@@ -1633,6 +1633,100 @@ Deno.test("backbone: a game page turns its own pads when the window embedding it
   top.parent = top;
   new Function("globalThis", source)(top);
   assert(!topListener);
+
+  // ...so a page with no launcher around it (an exported app, a direct
+  // visit) is switched from its own PAUSE panel, through the API.
+  const api = top.CMGGamepadCompat;
+  assertStrictEquals(api.backboneOn(), false);
+  assertEquals(top.navigator.getGamepads()[0].axes, [0, 0, 0, -1]);
+  api.setBackbone(true);
+  assertStrictEquals(api.backboneOn(), true);
+  assertEquals(top.navigator.getGamepads()[0].axes, [1, 0, 0, 0]);
+  assertEquals(pressedSlots(top.navigator.getGamepads()[0]), [12]);
+  api.setBackbone(0);
+  assertStrictEquals(api.backboneOn(), false);
+  assertEquals(top.navigator.getGamepads()[0].axes, [0, 0, 0, -1]);
+});
+
+/** A top-level `function name(...) {...}` of 2028-ai's bundle, as source. */
+function liftFromBundle(js: string, name: string): string {
+  const start = js.indexOf(`\n  function ${name}(`);
+  assert(start > 0, `no function ${name} in the bundle`);
+  let depth = 0;
+  for (let i = js.indexOf("{", start); i < js.length; i++) {
+    if (js[i] === "{") depth++;
+    else if (js[i] === "}" && --depth === 0) return js.slice(start, i + 1);
+  }
+  throw new Error(`unterminated ${name}`);
+}
+
+Deno.test("backbone: with no Guide, 2028-ai's PAUSE panel carries the switch", async () => {
+  // An exported app (the APK) and a direct visit have no launcher, so no
+  // Guide row: the runtime's own PAUSE panel is where the mode is turned on.
+  const game = await Deno.readTextFile(
+    new URL("../static/games/2028-ai/game.bundle.js", import.meta.url),
+  );
+  const panel = liftFromBundle(game, "cmgEnsurePanel");
+  const haptics = panel.indexOf('cmgToggleRow("HAPTICS"');
+  const backbone = panel.indexOf(
+    'cmgToggleRow("BACKBONE", backboneCompat.backboneOn()',
+  );
+  const resume = panel.indexOf('btn.textContent = "RESUME"');
+  assert(
+    haptics > 0 && backbone > haptics && resume > backbone,
+    "BACKBONE is not between HAPTICS and RESUME",
+  );
+  assert(panel.includes("cmgSetBackbone(on, true);"));
+  assert(
+    panel.includes('cmgBackboneInput = backbone.querySelector("input");'),
+  );
+  // Only where the pad plugin is on the page to do the turn.
+  assert(panel.includes("if (backboneCompat) {"));
+
+  // Standalone, the saved choice is taken up at boot — after the embedded
+  // branch has returned: under the launcher the Guide tells the plugin.
+  const embedded = game.indexOf('type: "cmg-turbo", value: cmgTimeScale');
+  const boot = game.indexOf("cmgSetBackbone(cmgReadStoredBackbone(), false);");
+  const esc = game.indexOf("// ESC toggles the PAUSE panel.");
+  assert(embedded > 0 && boot > embedded && esc > boot);
+
+  // The switch itself, against the real plugin API's shape.
+  const store = new Map<string, string>();
+  const calls: boolean[] = [];
+  // deno-lint-ignore no-explicit-any
+  const win: any = {
+    CMGGamepadCompat: { setBackbone: (on: boolean) => calls.push(on) },
+  };
+  const localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+  };
+  const fns = new Function(
+    "window",
+    "localStorage",
+    `var cmgBackboneInput = { checked: false };
+     ${liftFromBundle(game, "cmgBackboneCompat")}
+     ${liftFromBundle(game, "cmgReadStoredBackbone")}
+     ${liftFromBundle(game, "cmgSetBackbone")}
+     return { set: cmgSetBackbone, stored: cmgReadStoredBackbone, input: cmgBackboneInput };`,
+  )(win, localStorage);
+  assertStrictEquals(fns.stored(), false);
+  // Flipped on the panel: the plugin turns the pads, and the choice is saved
+  // under the launcher's own key.
+  fns.set(true, true);
+  assertEquals(calls, [true]);
+  assertStrictEquals(fns.input.checked, true);
+  assertEquals(store.get("cmg-backbone"), "1");
+  assertStrictEquals(fns.stored(), true);
+  // Taken up at boot: applied, nothing written.
+  store.clear();
+  fns.set(false, false);
+  assertEquals(calls, [true, false]);
+  assertEquals(store.size, 0);
+  // A page without the plugin has nothing to switch, and nothing breaks.
+  win.CMGGamepadCompat = undefined;
+  fns.set(true, false);
+  assertEquals(calls, [true, false]);
 });
 
 Deno.test("the committed dashboard bundle carries Backbone Controls", async () => {
