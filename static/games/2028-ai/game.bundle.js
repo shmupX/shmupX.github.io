@@ -1037,7 +1037,7 @@
           tx.oncomplete = () => {
             const record = recordReq.result;
             resolve(
-              record && record.frames && record.blob ? { frames: record.frames, blob: record.blob } : null
+              record && record.frames && record.blob ? { frames: record.frames, blob: record.blob, diag: record.diag || null } : null
             );
           };
           tx.onerror = () => resolve(null);
@@ -1423,6 +1423,9 @@
         const bridge = Object.assign({}, DEFAULTS.editorAtlas, o.editorAtlas || {});
         return readEditorAtlasBridge(atlasKey, bridge).then((record) => {
           if (!record) return false;
+          // What the editor measured as it built and published the sheet
+          // (its editorAtlasDiag), for the readout beside what arrived here.
+          if (record.diag && typeof record.diag === "object") atlasInfoNote("editor", record.diag);
           return loadImage(record.blob).then((img) => {
             atlasInfoNote("handoff", img ? {
               atlas: img.naturalWidth + "x" + img.naturalHeight,
@@ -4266,7 +4269,7 @@
               resolve(null);
               return;
             }
-            resolve({ frames: record.frames, blob: record.blob });
+            resolve({ frames: record.frames, blob: record.blob, diag: record.diag || null });
           };
           tx.onerror = function() {
             resolve(null);
@@ -4586,6 +4589,7 @@
             atlasInfoNote("handoff", { atlas: "none stored" });
             return null;
           }
+          if (bridge.diag && typeof bridge.diag === "object") atlasInfoNote("editor", bridge.diag);
           return blobToImage(bridge.blob).then(function(img) {
             if (!img) {
               atlasInfoNote("handoff", { atlas: "image did not decode", bytes: bridge.blob.size });
