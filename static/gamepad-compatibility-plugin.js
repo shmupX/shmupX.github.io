@@ -606,15 +606,109 @@
 
   function normalizedGamepads() {
     const pads = sourcePads();
+    let out;
 
     if (options.preferSinglePad) {
       const preferred = selectPreferredPad(pads);
-      return preferred ? [wrapPad(preferred, options)] : [];
+      out = preferred ? [wrapPad(preferred, options)] : [];
+    } else {
+      out = new Array(pads.length);
+      for (let i = 0; i < pads.length; i++) {
+        out[i] = pads[i] ? wrapPad(pads[i], options) : pads[i];
+      }
     }
+    // Backbone controls, when the launcher this page is embedded in has
+    // asked for them (see backbonePads below).
+    return backboneOn ? backbonePads(out) : out;
+  }
 
-    const out = new Array(pads.length);
-    for (let i = 0; i < pads.length; i++) {
-      out[i] = pads[i] ? wrapPad(pads[i], options) : pads[i];
+  // ==== Backbone controls ====
+  //
+  // A Backbone (or any clamp-on phone pad) holds the phone in landscape, and
+  // a vertical shooter wants the screen upright. The phone's port sits in the
+  // right grip, so standing the phone up is a quarter turn clockwise: the
+  // right grip ends up at the bottom, with the right stick under the left
+  // thumb and ABXY under the right one — an arcade panel. backbonePads()
+  // re-expresses a pad for that hold:
+  //   - the RIGHT stick moves into the left-stick slot (axes 0/1, what a
+  //     game steers player 1 with), and the left stick takes the right
+  //     stick's slot;
+  //   - every direction turns with the controller, so "up" is the top of
+  //     the upright screen: the stick's own up/down reads as right/left and
+  //     its left/right as up/down. The D-pad's four buttons turn the same
+  //     way.
+  // Every other button keeps its slot. Returns plain snapshot objects, like
+  // twinStickPads, so they can cross into a same-origin game frame's realm;
+  // each carries __cmgBackbone so a pad that has been turned once — by the
+  // launcher's patch, or by the game page's own copy of this plugin — is
+  // never turned again.
+  //
+  // The launcher (Dashboard.svelte, applyBackbone) applies it to a
+  // same-origin game frame itself. Any game page that loads this plugin also
+  // hears { type: 'cmg-backbone-set', value } from the window that embeds it
+  // and turns its own pads, which is what reaches a cross-origin frame.
+  let backboneOn = false;
+  try {
+    if (root.parent && root.parent !== root && typeof root.addEventListener === "function") {
+      root.addEventListener("message", (e) => {
+        const d = e && e.data;
+        if (!d || d.type !== "cmg-backbone-set" || e.source !== root.parent) return;
+        backboneOn = !!d.value;
+      });
+    }
+  } catch (_) { /* no parent to hear from */ }
+
+  // One stick, turned with the controller: its up is the screen's right.
+  function backboneTurn(x, y) {
+    // "|| 0" keeps a centred stick at 0 rather than -0.
+    return [-y || 0, x || 0];
+  }
+
+  function backbonePads(pads) {
+    const out = [];
+    for (let i = 0; i < (pads ? pads.length : 0); i++) {
+      const p = pads[i];
+      if (!p || !p.connected) {
+        out.push(null);
+        continue;
+      }
+      if (p.__cmgBackbone) {
+        out.push(p);
+        continue;
+      }
+      const b = p.buttons || [];
+      const srcAxes = p.axes || [];
+      const axes = [];
+      for (let a = 0; a < Math.max(srcAxes.length, 4); a++) {
+        axes[a] = typeof srcAxes[a] === "number" ? srcAxes[a] : 0;
+      }
+      const move = backboneTurn(axes[2], axes[3]);
+      const other = backboneTurn(axes[0], axes[1]);
+      axes[0] = move[0];
+      axes[1] = move[1];
+      axes[2] = other[0];
+      axes[3] = other[1];
+      const buttons = Array.prototype.map.call(b, snapshotButton);
+      // The D-pad button now at the top of the upright screen is the one
+      // printed "left", and so on round: up ← left ← down ← right ← up.
+      if (buttons.length > 15) {
+        const up = buttons[12], down = buttons[13], left = buttons[14], right = buttons[15];
+        buttons[12] = left;
+        buttons[15] = up;
+        buttons[13] = right;
+        buttons[14] = down;
+      }
+      out.push({
+        id: p.id,
+        index: p.index,
+        connected: true,
+        mapping: p.mapping,
+        timestamp: p.timestamp || 0,
+        axes,
+        buttons,
+        vibrationActuator: p.vibrationActuator || null,
+        __cmgBackbone: true,
+      });
     }
     return out;
   }
@@ -1045,7 +1139,7 @@
   }
 
   const api = {
-    version: "1.6.0",
+    version: "1.7.0",
     install,
     isSnesPad,
     isStadiaPad,
@@ -1062,6 +1156,9 @@
       return merge({}, options);
     },
     twinStick: twinStickPads,
+    // Backbone controls (see above): pads as a controller stood upright
+    // reports them — right stick to steer, every direction turned with it.
+    backbone: backbonePads,
     // Split Controller mode (see above): one pad as two half-pads, and
     // which pads it would split.
     splitPads,

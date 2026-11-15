@@ -4186,6 +4186,78 @@
     }
   });
 
+  // ── Backbone controls ─────────────────────────────────────────────────────
+  // A Backbone clamps the phone in landscape; a vertical shooter wants it
+  // upright. Stood up — a quarter turn clockwise, the phone's port being in
+  // the right grip — the right stick sits under the left thumb with ABXY
+  // beside it. With the mode on, the game frame is handed each pad as that
+  // hold has it (CMGGamepadCompat.backbone): the right stick steers player 1
+  // from the left stick's slot, and every direction turns with the
+  // controller, so the stick's own up/down is the screen's right/left. The
+  // D-pad turns too, and so do the arrow keys gamepad-support.js sends for
+  // it (setBackboneActive). The Guide and its open chord read the turned pad
+  // as well, so the stick in hand is the one that moves the selection.
+  //
+  // It rides the same getGamepads patch as Twin-Stick and Split Controller
+  // (applied first, to the real pads), and a frame that cannot be patched is
+  // told { type: 'cmg-backbone-set', value }, which any game page loading
+  // gamepad-compatibility-plugin.js applies to its own pads. One setting for
+  // every game: it describes how the controller is held, not the game.
+  const BACKBONE_KEY = 'cmg-backbone';
+  let backboneOn = $state(readBoolPref(BACKBONE_KEY, false));
+
+  // In force right now: the mode on, and the frame a game rather than the
+  // level editor (whose own UI reads the pad as it is).
+  function backboneLive() {
+    return backboneOn && !editorFrameActive;
+  }
+
+  // The pad the launcher's own in-game reads go by — the Guide's navigation
+  // and its open chord — turned while the mode is in force. The turn is
+  // taken up (or dropped) only once the pad is centred: flipping the toggle
+  // with a direction still held would otherwise re-read that same press as
+  // another direction and move the selection.
+  let backboneNavTurned = false;
+  function backboneNavPad(pad) {
+    if (!pad) return pad;
+    const want = backboneLive();
+    if (want !== backboneNavTurned) {
+      const ax = pad.axes || [];
+      const centred = ![12, 13, 14, 15].some((i) => pad.buttons[i]?.pressed) &&
+        [0, 1, 2, 3].every((i) => Math.abs(ax[i] ?? 0) <= PAD_DEADZONE);
+      if (centred) backboneNavTurned = want;
+    }
+    if (!backboneNavTurned) return pad;
+    try { return window.CMGGamepadCompat?.backbone?.([pad])?.[0] || pad; }
+    catch (_) { return pad; }
+  }
+
+  function setBackbone(v) {
+    backboneOn = !!v;
+    try { localStorage.setItem(BACKBONE_KEY, backboneOn ? '1' : '0'); } catch (_) { /* ignore */ }
+    applyBackbone();
+  }
+
+  // Patch (same-origin) and/or notify (any origin) the running game frame —
+  // the same shape as applyTwinStick, sharing its one-time patch.
+  function applyBackbone() {
+    const iframe = document.getElementById('gameframe') ||
+      document.querySelector('.game-iframe iframe');
+    const w = iframe && iframe.contentWindow;
+    if (!w) return;
+    patchFrameGamepads(iframe);
+    try { w.postMessage({ type: 'cmg-backbone-set', value: backboneLive() }, '*'); } catch (_) { /* ignore */ }
+  }
+
+  // Keep gamepad-support.js's D-pad keys turned with the pad.
+  $effect(() => {
+    const on = gameOn && backboneLive();
+    const gm = typeof window !== 'undefined' ? window.gamepadManager : null;
+    if (gm && typeof gm.setBackboneActive === 'function') {
+      try { gm.setBackboneActive(on); } catch (_) { /* ignore */ }
+    }
+  });
+
   // What machine this is, from the desktop/dev server (routes/api/host.ts).
   // The answer describes the machine SERVING the launcher, so the route only
   // gives it to that machine's own browser — a phone on the dev tunnel or a
@@ -5033,9 +5105,9 @@
   }
 
   // Patch a same-origin game frame's navigator.getGamepads. The patched
-  // function reads twinStickOn and splitPadsOn live, so it installs once per
-  // frame document and either toggle takes effect without a reload. Shared by
-  // applyTwinStick and applySplitPads.
+  // function reads twinStickOn, splitPadsOn and backboneOn live, so it
+  // installs once per frame document and any toggle takes effect without a
+  // reload. Shared by applyTwinStick, applySplitPads and applyBackbone.
   function patchFrameGamepads(iframe) {
     const w = iframe && iframe.contentWindow;
     if (!w || !frameIsSameOrigin(iframe)) return;
@@ -5049,7 +5121,7 @@
       // ?paddebug=1 overlay.
       w.__cmgOrigGetGamepads = orig;
       w.navigator.getGamepads = () => {
-        if (!twinStickOn && !splitPadsOn && !touchPadLive()) return orig();
+        if (!twinStickOn && !splitPadsOn && !backboneLive() && !touchPadLive()) return orig();
         try { return frameGamepads(orig); }
         catch (err) {
           splitDiag.error = String((err && err.message) || err);
@@ -5077,6 +5149,10 @@
     }
     splitDiag.source = source;
     splitDiag.pads = Array.prototype.filter.call(pads, (p) => p && p.connected).length;
+    // Backbone controls first, on the real pads: the controller is turned
+    // before anything else is made of it. (A pad the frame's own plugin
+    // already turned — the fallback above — passes through as it is.)
+    if (backboneLive() && typeof compat?.backbone === 'function') pads = compat.backbone(pads);
     if (splitPadsLive()) {
       // View is the two-player tap in the split view — and this launcher's
       // own chord button (View + Down opens the Guide in-game, View alone
@@ -5242,6 +5318,11 @@
     if (gameOn && !editorFrameActive && (hapticsAvail || isTouch || osdPadRumble)) {
       game.push({ key: 'haptics', kind: 'toggle', label: 'Haptics', value: hapticsOn });
     }
+    // Backbone controls: the controller stood upright, right stick steering.
+    // For any game; not over the level editor, which reads the pad as it is.
+    if (gameOn && !editorFrameActive) {
+      game.push({ key: 'backbone', kind: 'toggle', label: 'Backbone Controls', value: backboneOn });
+    }
     // Twin-Stick mode appears only for games that opt in (built-in list,
     // catalog `twinStick` flag, or a cmg-twinstick broadcast).
     // Split Controller (Lenovo Legion Go): each half of one pad as its own
@@ -5384,6 +5465,7 @@
     else if (it.key === 'disco') setTweak('discoMode', !!v);
     else if (it.key === 'turbo') setTurbo(!!v);
     else if (it.key === 'haptics') setHaptics(!!v);
+    else if (it.key === 'backbone') setBackbone(!!v);
     else if (it.key === 'splitpads') setSplitPads(!!v);
     else if (it.key === 'twinstick') setTwinStick(!!v);
     else if (it.key === 'twinstick-touch') setTwinTouch(!!v);
@@ -7689,20 +7771,24 @@
         return;
       }
 
+      // Directions are read off the pad as it is held: turned while Backbone
+      // Controls is on (see backboneNavPad), the pad itself otherwise.
+      const navPad = backboneNavPad(pad);
+
       if (osdOpen) {
         // Vertical: D-pad 12/13 or left-stick Y → move selection (edge-latched).
         // Ignored while SELECT is held — SELECT has no vertical-nav role in the
         // Guide, and without this the still-held SELECT+Down OPEN chord feeds
         // straight into nav (worse now that hold-to-repeat exists: holding the
         // chord a beat too long would race the selection down the list).
-        const dirs = readPadDirs(pad);
+        const dirs = readPadDirs(navPad);
         const nowOsd = performance.now();
         const selHeld = !!pad.buttons[8]?.pressed;
         let v = 0;
         if (!selHeld) {
           if (dirs.up) v = -1;
           else if (dirs.down) v = 1;
-          else { const ay = pad.axes[1] ?? 0; if (ay < -PAD_DEADZONE) v = -1; else if (ay > PAD_DEADZONE) v = 1; }
+          else { const ay = navPad.axes[1] ?? 0; if (ay < -PAD_DEADZONE) v = -1; else if (ay > PAD_DEADZONE) v = 1; }
         }
         // Shoulders mirror the launcher-list nav (L up, R/L2 down) — on
         // Android Chrome the SNES pad's D-pad doesn't report, so these are
@@ -7744,7 +7830,7 @@
         let h = 0;
         if (dirs.left) h = -1;
         else if (dirs.right) h = 1;
-        else { const ax = pad.axes[0] ?? 0; if (ax < -PAD_DEADZONE) h = -1; else if (ax > PAD_DEADZONE) h = 1; }
+        else { const ax = navPad.axes[0] ?? 0; if (ax < -PAD_DEADZONE) h = -1; else if (ax > PAD_DEADZONE) h = 1; }
         const hReal = h;
         if (h === 0 && osdNav.hDir !== 0 && nowOsd - (osdNav.hSeenAt || 0) < 80) h = osdNav.hDir;
         if (hReal !== 0) { osdNav.hSeenAt = nowOsd; lastInput = 'pad'; }
@@ -7769,11 +7855,11 @@
       // OSD closed: SELECT + Down opens it (SELECT + R is the SNES-adapter
       // fallback for pads whose D-pad isn't recognized; SELECT + L2 is the
       // Android chord, where R is remapped to L2 by the compat plugin).
-      const dirs = readPadDirs(pad);
+      const dirs = readPadDirs(navPad);
       const selectBtn = !!pad.buttons[8]?.pressed;
       const rShoulder = !!pad.buttons[5]?.pressed || !!pad.buttons[6]?.pressed;
       const dpadDown = dirs.down;
-      const ayDown = (pad.axes[1] ?? 0) > PAD_DEADZONE;
+      const ayDown = (navPad.axes[1] ?? 0) > PAD_DEADZONE;
       const combo = selectBtn && (dpadDown || ayDown || rShoulder);
       if (combo && !padState.comboLatched) { padState.comboLatched = true; openOsd(); }
       else if (!combo) padState.comboLatched = false;
@@ -9756,7 +9842,7 @@
       src={gameSrc}
       title="game"
       allow="autoplay; fullscreen; gamepad; xr-spatial-tracking"
-      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); injectArcadeFill(e); injectFrameHaptics(e); applyTwinStick(); applySplitPads(); applyTouchControls(); applyGameTheme(); postVolume(); }}
+      onload={(e) => { try { const l = e.currentTarget.contentWindow.location; frameUrl = l.pathname + l.search; } catch (_) { frameUrl = null; } injectLauncherMarkerIntoFrame(e); injectOsdKeyForwarder(e); injectEditorCornerGesture(e); injectKeyActivityProbe(e); injectArcadeFill(e); injectFrameHaptics(e); applyTwinStick(); applySplitPads(); applyBackbone(); applyTouchControls(); applyGameTheme(); postVolume(); }}
     ></iframe>
   </div>
 {/if}

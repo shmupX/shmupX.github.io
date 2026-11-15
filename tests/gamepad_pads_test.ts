@@ -878,6 +878,8 @@ function fakeManager() {
   const self: any = {
     splitPadsActive: false,
     _splitTargets: null,
+    backboneActive: false,
+    withBackboneTurn: proto.withBackboneTurn,
     buttonState: { 0: state, 1: proto.initialButtonState() },
     ensureButtonState: (i: number) => self.buttonState[i],
     readDpad: proto.readDpad,
@@ -1165,9 +1167,11 @@ function pressAndRelease(group: string, opts: {
   pressed?: number[];
   axes?: number[];
   useWASD?: boolean;
+  backbone?: boolean;
 }) {
   const { self, sent } = fakeManager();
   self.arcadeFrame = opts.arcade;
+  self.backboneActive = opts.backbone ?? false;
   const index = 0;
   const pad = (held: boolean) =>
     fakePad({
@@ -1370,4 +1374,277 @@ Deno.test("switching split mode on releases a right-half key already held", () =
   assertEquals(sent, ["keyup: "]);
   assert(!self.splitPadsActive);
   assertStrictEquals(self._splitTargets, null);
+});
+
+// ---- Backbone controls ----
+//
+// A Backbone holds the phone in landscape; stood upright for a vertical
+// shooter — a quarter turn clockwise, the phone's port being in the right
+// grip — the right stick is the one in hand. CMGGamepadCompat.backbone hands
+// the game the pad as that hold has it, and gamepad-support.js turns the
+// D-pad's arrow keys the same way. Both are pinned here, against the slots
+// 2028-ai steers from, read out of its bundle.
+
+// Stick directions as the controller prints them: [x, y].
+const STICK = {
+  up: [0, -1],
+  down: [0, 1],
+  left: [-1, 0],
+  right: [1, 0],
+};
+// Where each lands once the controller is stood upright: the stick's up is
+// the screen's right, and so on round.
+const UPRIGHT = [
+  ["up", "right"],
+  ["right", "down"],
+  ["down", "left"],
+  ["left", "up"],
+] as const;
+
+Deno.test("backbone: the right stick steers from the left stick's slot, turned with the controller", () => {
+  for (const [printed, screen] of UPRIGHT) {
+    const [x, y] = STICK[printed];
+    const [pad] = compat.backbone([fakePad({ axes: [0, 0, x, y] })]);
+    assertEquals(
+      [pad.axes[0], pad.axes[1]],
+      STICK[screen],
+      `right stick ${printed}`,
+    );
+    // The left stick's slot is all the right stick: nothing is left behind.
+    assertEquals([pad.axes[2], pad.axes[3]], [0, 0]);
+  }
+  // The left stick takes the right stick's slot, turned the same way, and
+  // analog values survive the trip.
+  const [pad] = compat.backbone([fakePad({ axes: [0.25, -0.5, 0.75, -1] })]);
+  assertEquals(pad.axes, [1, 0.75, 0.5, 0.25]);
+});
+
+Deno.test("backbone: the D-pad turns with the controller, and every other button keeps its slot", () => {
+  const slot = { up: 12, down: 13, left: 14, right: 15 };
+  for (const [printed, screen] of UPRIGHT) {
+    const [pad] = compat.backbone([fakePad({ pressed: [slot[printed]] })]);
+    assertEquals(pressedSlots(pad), [slot[screen]], `D-pad ${printed}`);
+  }
+  const others = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 16];
+  const [pad] = compat.backbone([fakePad({ pressed: others })]);
+  assertEquals(pressedSlots(pad), others);
+});
+
+Deno.test("backbone: a pad is turned once, keeps its identity, and gaps stay gaps", () => {
+  const src = fakePad({
+    id: PADS.xbox.id,
+    index: 2,
+    axes: [0, 0, 0, -1],
+    actuator: { type: "dual-rumble" },
+  });
+  const out = compat.backbone([null, undefined, src]);
+  assertEquals(out.length, 3);
+  assertStrictEquals(out[0], null);
+  assertStrictEquals(out[1], null);
+  const pad = out[2];
+  assertEquals(pad.id, PADS.xbox.id);
+  assertEquals(pad.index, 2);
+  assertEquals(pad.mapping, "standard");
+  assert(pad.connected);
+  assertStrictEquals(pad.vibrationActuator, src.vibrationActuator);
+  // A plain snapshot, not the pad itself: the source is left as it was.
+  assertEquals(src.axes, [0, 0, 0, -1]);
+  // Turned by the launcher's patch and again by the game page's own plugin
+  // would be a half turn; the second pass hands the pad back untouched.
+  assert(pad.__cmgBackbone);
+  const [again] = compat.backbone([pad]);
+  assertStrictEquals(again, pad);
+  assertEquals(again.axes, [1, 0, 0, 0]);
+  // A disconnected pad is no pad.
+  assertEquals(compat.backbone([{ ...fakePad(), connected: false }]), [null]);
+  assertEquals(compat.backbone(null), []);
+});
+
+Deno.test("2028-ai steers from what the turned pad fills: axes 0/1 and the D-pad slots", async () => {
+  const game = await Deno.readTextFile(
+    new URL("../static/games/2028-ai/game.bundle.js", import.meta.url),
+  );
+  const num = (name: string) => {
+    const m = new RegExp("var " + name + " = ([\\d.]+);").exec(game);
+    assert(m, `${name} not found in the bundle`);
+    return Number(m[1]);
+  };
+  const dpad = {
+    up: num("DPAD_UP"),
+    down: num("DPAD_DOWN"),
+    left: num("DPAD_LEFT"),
+    right: num("DPAD_RIGHT"),
+  };
+  const threshold = num("STICK_THRESHOLD");
+  assert(
+    /gp\.axes\[0\] > STICK_THRESHOLD\) state\.right = true;/.test(game) &&
+      /gp\.axes\[1\] < -STICK_THRESHOLD\) state\.up = true;/.test(game),
+    "the bundle no longer steers from axes 0/1",
+  );
+  // The game's own read, off the pad the launcher hands it.
+  const steer = (pad: FakePad) => ({
+    up: pad.buttons[dpad.up].pressed || pad.axes[1] < -threshold,
+    down: pad.buttons[dpad.down].pressed || pad.axes[1] > threshold,
+    left: pad.buttons[dpad.left].pressed || pad.axes[0] < -threshold,
+    right: pad.buttons[dpad.right].pressed || pad.axes[0] > threshold,
+  });
+  const only = (dir: string) => ({
+    up: dir === "up",
+    down: dir === "down",
+    left: dir === "left",
+    right: dir === "right",
+  });
+  for (const [printed, screen] of UPRIGHT) {
+    const [x, y] = STICK[printed];
+    // The right stick moves the ship...
+    const [stick] = compat.backbone([fakePad({ axes: [0, 0, x, y] })]);
+    assertEquals(steer(stick), only(screen), `right stick ${printed}`);
+    // ...where, unturned, it moved nothing at all.
+    assertEquals(steer(fakePad({ axes: [0, 0, x, y] })), only(""));
+  }
+});
+
+Deno.test("backbone: the D-pad's arrow keys turn with it", () => {
+  const slot = { up: 12, down: 13, left: 14, right: 15 };
+  const arrow = {
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight",
+  };
+  for (const arcade of [false, true]) {
+    for (const [printed, screen] of UPRIGHT) {
+      assertEquals(
+        pressAndRelease("dpad", {
+          arcade,
+          backbone: true,
+          pressed: [slot[printed]],
+        }),
+        ["keydown:" + arrow[screen], "keyup:" + arrow[screen]],
+        `D-pad ${printed}, arcade ${arcade}`,
+      );
+    }
+  }
+  // Off, the D-pad is the D-pad.
+  assertEquals(pressAndRelease("dpad", { arcade: false, pressed: [14] }), [
+    "keydown:ArrowLeft",
+    "keyup:ArrowLeft",
+  ]);
+  // The face buttons are no direction: nothing about them turns.
+  assertEquals(
+    pressAndRelease("face", { arcade: false, backbone: true, pressed: [0] }),
+    ["keydown: ", "keyup: "],
+  );
+});
+
+Deno.test("backbone: on an arcade board the right stick steers, turned, and the left stick stands down", () => {
+  // The right stick's up is the screen's right.
+  assertEquals(
+    pressAndRelease("dpad", {
+      arcade: true,
+      backbone: true,
+      axes: [0, 0, 0, -0.9],
+    }),
+    ["keydown:ArrowRight", "keyup:ArrowRight"],
+  );
+  assertEquals(
+    pressAndRelease("dpad", {
+      arcade: true,
+      backbone: true,
+      axes: [0, 0, -0.9, 0],
+    }),
+    ["keydown:ArrowUp", "keyup:ArrowUp"],
+  );
+  // The left stick is out of reach at the top of the upright controller.
+  assertEquals(
+    pressAndRelease("dpad", {
+      arcade: true,
+      backbone: true,
+      axes: [-0.9, -0.9, 0, 0],
+    }),
+    [],
+  );
+});
+
+Deno.test("backbone: the touch pad is not a controller anyone turned", () => {
+  const { poll, sent, self } = touchPadPoller({ arcade: true });
+  self.backboneActive = true;
+  poll({ axes: [-1, 0, 0, 0] });
+  poll({ axes: [0, 0, 0, 0] });
+  assertEquals(sent, ["keydown:ArrowLeft", "keyup:ArrowLeft"]);
+});
+
+Deno.test("backbone: setBackboneActive is the launcher's switch", () => {
+  const { self } = fakeManager();
+  GamepadManager.prototype.setBackboneActive.call(self, true);
+  assertStrictEquals(self.backboneActive, true);
+  GamepadManager.prototype.setBackboneActive.call(self, 0);
+  assertStrictEquals(self.backboneActive, false);
+});
+
+Deno.test("backbone: a game page turns its own pads when the window embedding it says so", async () => {
+  // The plugin again, as a game page inside the launcher's frame loads it:
+  // its own globalThis, with a parent to hear from.
+  const source = await Deno.readTextFile(
+    new URL("../static/gamepad-compatibility-plugin.js", import.meta.url),
+  );
+  const parent = {};
+  let listener: ((e: unknown) => void) | null = null;
+  const real = fakePad({
+    id: PADS.xbox.id,
+    axes: [0, 0, 0, -1],
+    pressed: [14],
+  });
+  // deno-lint-ignore no-explicit-any
+  const page: any = {
+    parent,
+    navigator: { userAgent: "", getGamepads: () => [real] },
+    addEventListener(type: string, fn: (e: unknown) => void) {
+      if (type === "message") listener = fn;
+    },
+  };
+  new Function("globalThis", source)(page);
+  assert(listener, "the plugin does not listen for the launcher");
+  const say = (data: unknown, from: unknown = parent) =>
+    listener!({ data, source: from });
+  const read = () => page.navigator.getGamepads()[0];
+
+  // Untold, the pad is the pad.
+  assertEquals(read().axes, [0, 0, 0, -1]);
+  // Somebody else's message is not the launcher's.
+  say({ type: "cmg-backbone-set", value: true }, {});
+  assertEquals(read().axes, [0, 0, 0, -1]);
+  say({ type: "cmg-backbone-set", value: true });
+  assertEquals(read().axes, [1, 0, 0, 0]);
+  assertEquals(pressedSlots(read()), [12]);
+  say({ type: "cmg-backbone-set", value: false });
+  assertEquals(read().axes, [0, 0, 0, -1]);
+  assertEquals(pressedSlots(read()), [14]);
+
+  // The launcher's own window has no one to hear from, and listens to no one.
+  let topListener = false;
+  // deno-lint-ignore no-explicit-any
+  const top: any = {
+    navigator: { userAgent: "", getGamepads: () => [real] },
+    addEventListener(type: string) {
+      if (type === "message") topListener = true;
+    },
+  };
+  top.parent = top;
+  new Function("globalThis", source)(top);
+  assert(!topListener);
+});
+
+Deno.test("the committed dashboard bundle carries Backbone Controls", async () => {
+  const bundle = await Deno.readTextFile(
+    new URL("../static/dashboard.bundle.js", import.meta.url),
+  );
+  assert(
+    bundle.includes("Backbone Controls"),
+    "stale bundle: run `deno task dashboard:build`",
+  );
+  assert(
+    bundle.includes("cmg-backbone-set"),
+    "stale bundle: the launcher no longer tells the frame",
+  );
 });

@@ -201,6 +201,12 @@ class GamepadManager {
     this.splitPadsActive = false;
     this._splitTargets = null;
 
+    // Backbone controls: the launcher (Dashboard.svelte) sets this while a
+    // game runs with the controller stood upright. The D-pad's arrow keys
+    // then turn with it, the way CMGGamepadCompat.backbone turns the pad the
+    // game reads — see withBackboneTurn.
+    this.backboneActive = false;
+
     // The launcher's Touch Controller: a function returning its Gamepad-shaped
     // state, or null when it is not in play. Set by Dashboard.svelte, read by
     // processTouchPad.
@@ -486,8 +492,11 @@ class GamepadManager {
     // D-pad press state comes from readDpad() so non-standard pads (hat switch
     // on an axis, digital D-pad axes, or shifted button indices) drive it — not
     // just the standard buttons 12-15.
+    // Backbone controls turn a real pad's directions; the on-screen Touch
+    // Controller is not a pad anyone has turned.
+    const turned = this.backboneActive && controllerIndex !== TOUCH_PAD_SLOT;
     const dpadDirs = groupName === 'dpad'
-      ? this.withArcadeStick(controller, this.readDpad(controller, mapping))
+      ? this.withArcadeStick(controller, this.withBackboneTurn(this.readDpad(controller, mapping), turned), turned)
       : null;
 
     for (let buttonName in group) {
@@ -643,6 +652,20 @@ class GamepadManager {
 
   isLegionController(controller) {
     return LEGION_PAD_RE.test((controller && controller.id) || "");
+  }
+
+  // Backbone controls on or off (the launcher's Guide toggle).
+  setBackboneActive(on) {
+    this.backboneActive = !!on;
+  }
+
+  // The D-pad as a controller stood upright has it — a quarter turn
+  // clockwise, so the button printed "left" is the one at the top of the
+  // screen. The same turn CMGGamepadCompat.backbone gives the pad the game
+  // reads, so the arrow keys sent here agree with it.
+  withBackboneTurn(dirs, turned) {
+    if (!turned) return dirs;
+    return { up: dirs.left, right: dirs.up, down: dirs.right, left: dirs.down };
   }
 
   // Map Arrow keys to WASD when enabled for D-pad only
@@ -1031,11 +1054,14 @@ class GamepadManager {
   // only through its joystick path, which sees the single pad preferSinglePad
   // hands it: with a Stadia and a Switch Pro both connected, the other pad's
   // stick moved nothing. Standard pads only, where axes 0/1 are that stick.
-  withArcadeStick(controller, dirs) {
+  withArcadeStick(controller, dirs, turned = false) {
     if (!controller || controller.mapping !== 'standard' || !this.isArcadeFrame()) return dirs;
     const ax = controller.axes || [];
-    const x = typeof ax[0] === 'number' ? ax[0] : 0;
-    const y = typeof ax[1] === 'number' ? ax[1] : 0;
+    const num = (v) => (typeof v === 'number' ? v : 0);
+    // Backbone controls: the right stick steers, turned with the controller
+    // (its up is the screen's right) — CMGGamepadCompat.backbone's turn.
+    const x = turned ? -num(ax[3]) : num(ax[0]);
+    const y = turned ? num(ax[2]) : num(ax[1]);
     return {
       up: dirs.up || y < -ARCADE_STICK_AT,
       down: dirs.down || y > ARCADE_STICK_AT,
