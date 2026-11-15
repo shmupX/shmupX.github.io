@@ -1147,7 +1147,7 @@ function readEditorAtlasBridge(atlasKey, opts) {
           const record = recordReq.result;
           resolve(
             record && record.frames && record.blob
-              ? { frames: record.frames, blob: record.blob }
+              ? { frames: record.frames, blob: record.blob, diag: record.diag || null }
               : null,
           );
         };
@@ -1595,6 +1595,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       return readEditorAtlasBridge(atlasKey, bridge)
         .then((record) => {
           if (!record) return false;
+          // What the editor measured as it built and published the sheet
+          // (its editorAtlasDiag), for the readout beside what arrived here.
+          if (record.diag && typeof record.diag === "object") atlasInfoNote("editor", record.diag);
           return loadImage(record.blob).then((img) => {
             atlasInfoNote("handoff", img ? {
               atlas: img.naturalWidth + "x" + img.naturalHeight,

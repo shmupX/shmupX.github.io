@@ -327,6 +327,18 @@ they are written out in full.
     Chrome the v1 readout showed MAX_TEXTURE_SIZE 8192, no context loss and
     no GL errors, but Image Seal's game_asset and its Dezaemon scenery strips
     blank in the source itself, so the art is lost before the GPU sees it.
+    The v2 readout there put it in the editor: the sheet it handed over
+    (2048 x 2056, 1682 frames) was 0% drawn, where the same hand-off from
+    the cloud browser is 62% drawn. So the editor now builds and publishes
+    its atlas on canvases the CPU draws (`atlasWorkCanvas`, with
+    `willReadFrequently`), copies a stock frame by its rect instead of
+    through a canvas of its own, checks the sheet it built
+    (`atlasOpaquePercent`) and builds it once more when it came out blank,
+    and redraws the published copy once when that reads blank. What it
+    measured (`editorAtlasDiag`: the stock atlas, a sample of the cart's
+    sprite canvases, the built and the stored sheet) rides with the sheet
+    in the bridge record as `diag`, and the readout lists it as `editor`.
+    `tests/editor_atlas_cpu_canvas_test.ts` pins it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,
