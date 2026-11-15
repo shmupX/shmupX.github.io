@@ -320,7 +320,13 @@ they are written out in full.
     pixel the source has is also in the GPU's copy, read back through a
     throwaway framebuffer: `EMPTY on GPU` means the upload failed. It never
     takes input and puts the game's framebuffer back after each read.
-    `tests/atlas_info_readout_test.ts` pins it.
+    `tests/atlas_info_readout_test.ts` pins it. Version 2 adds how much of
+    each sheet is drawn (`atlasInfoOpaque`, the non-transparent share of a
+    256 x 256 reduction): the editor's hand-off image, the incoming and the
+    stacked or packed sheet, and every texture listed. On the Pixel 9 in
+    Chrome the v1 readout showed MAX_TEXTURE_SIZE 8192, no context loss and
+    no GL errors, but Image Seal's game_asset and its Dezaemon scenery strips
+    blank in the source itself, so the art is lost before the GPU sees it.
   - `applyCabinet` and `loadingArt`, with the helpers they share
     (`normalizeCabinet`, `cabinetScreenRect`, `cabinetFrameBox`,
     `cabinetBackdropBox`, `installCabinetBackdrop`, `installCabinetFrame`,

@@ -67,3 +67,40 @@ Deno.test("the readout runs only with atlasInfo=1 and is armed when the game sta
     g.document = saved.document;
   }
 });
+
+Deno.test("v2 measures how much of each sheet is drawn, only with the readout on", async () => {
+  for (const url of [LOADER, BUNDLE]) {
+    const js = await read(url);
+    const opaque = functionSource(js, "atlasInfoOpaque");
+    assert(opaque.includes('readParam("atlasInfo") !== "1"'), `${url}: gated`);
+    const stack = functionSource(js, "stackedAtlasCanvas");
+    assert(stack.includes("incomingOpaque: atlasInfoOpaque(image)"), `${url}: incoming measured`);
+    assert(stack.includes("outOpaque: atlasInfoOpaque(packed.canvas)"), `${url}: packed measured`);
+    assert(stack.includes("outOpaque: atlasInfoOpaque(canvas)"), `${url}: stacked measured`);
+    const merge = js.slice(js.indexOf("mergeEditorAtlas(opts) {"), js.indexOf("mergeEditorAtlas(opts) {") + 1200);
+    assert(merge.includes('atlasInfoNote("handoff"'), `${url}: loader hand-off noted`);
+    assert(merge.includes("opaque: atlasInfoOpaque(img)"), `${url}: hand-off measured`);
+
+    // Off: nothing is read back.
+    const readParam = (name: string) => (name === "atlasInfo" ? on : null);
+    let on: string | null = null;
+    const fn = new Function("readParam", "document", opaque + "\nreturn atlasInfoOpaque;");
+    let drawn = 0;
+    const doc = {
+      createElement: () => ({
+        getContext: () => ({
+          drawImage: () => drawn++,
+          // A 256 x 256 reduction with a quarter of it drawn.
+          getImageData: () => ({
+            data: Uint8ClampedArray.from({ length: 256 * 256 * 4 }, (_, i) => (i % 4 === 3 && i < 256 * 256) ? 255 : 0),
+          }),
+        }),
+      }),
+    };
+    assertEquals(fn(readParam, doc)({}), undefined);
+    assertEquals(drawn, 0);
+    on = "1";
+    assertEquals(fn(readParam, doc)({}), "25.0%");
+  }
+  assert((await read(BUNDLE)).includes('"atlasInfo v2  "'));
+});

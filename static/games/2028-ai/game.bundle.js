@@ -908,6 +908,26 @@
       // The readout is a diagnostic; a page without globalThis just has none.
     }
   }
+  // How much of `src` (an image or canvas) is not transparent, as a percentage,
+  // from a 256 x 256 reduction of it: a sheet whose sprites came through reads
+  // well above 0%, one drawn blank reads 0%. Only with the atlasInfo=1 readout
+  // on, since it reads pixels back.
+  function atlasInfoOpaque(src) {
+    if (readParam("atlasInfo") !== "1" || !src) return undefined;
+    try {
+      const c = document.createElement("canvas");
+      c.width = 256;
+      c.height = 256;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(src, 0, 0, 256, 256);
+      const d = ctx.getImageData(0, 0, 256, 256).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i]) n++;
+      return (n / 655.36).toFixed(1) + "%";
+    } catch (_e) {
+      return "unreadable";
+    }
+  }
   function stackedAtlasCanvas(scene, localSource, image, frameMap) {
     const localH = localSource.height;
     const width = Math.max(localSource.width, image.width);
@@ -916,13 +936,18 @@
     const info = {
       local: localSource.width + "x" + localH,
       incoming: image.width + "x" + image.height,
+      incomingOpaque: atlasInfoOpaque(image),
       stacked: width + "x" + height,
       limit,
     };
     if (width > limit || height > limit) {
       const packed = packStackedFrames(localSource, image, localH, frameMap, limit);
       if (packed) {
-        atlasInfoNote("stack", Object.assign(info, { result: "packed", out: packed.canvas.width + "x" + packed.canvas.height }));
+        atlasInfoNote("stack", Object.assign(info, {
+          result: "packed",
+          out: packed.canvas.width + "x" + packed.canvas.height,
+          outOpaque: atlasInfoOpaque(packed.canvas),
+        }));
         return packed;
       }
       info.result = "repack failed, stacked";
@@ -933,7 +958,10 @@
     const ctx = canvas.getContext("2d");
     ctx.drawImage(localSource, 0, 0);
     ctx.drawImage(image, 0, localH);
-    atlasInfoNote("stack", Object.assign(info, { out: canvas.width + "x" + canvas.height }));
+    atlasInfoNote("stack", Object.assign(info, {
+      out: canvas.width + "x" + canvas.height,
+      outOpaque: atlasInfoOpaque(canvas),
+    }));
     return { canvas, frames: frameMap };
   }
   // Is this page an app built around one game? The export's shell says so
@@ -1395,9 +1423,15 @@
         const bridge = Object.assign({}, DEFAULTS.editorAtlas, o.editorAtlas || {});
         return readEditorAtlasBridge(atlasKey, bridge).then((record) => {
           if (!record) return false;
-          return loadImage(record.blob).then(
-            (img) => img ? this._stackAtlas(img, this._withoutStockCutins(img, record.frames), atlasKey) : false
-          );
+          return loadImage(record.blob).then((img) => {
+            atlasInfoNote("handoff", img ? {
+              atlas: img.naturalWidth + "x" + img.naturalHeight,
+              frames: Object.keys(record.frames).length,
+              bytes: record.blob.size,
+              opaque: atlasInfoOpaque(img)
+            } : { atlas: "image did not decode", bytes: record.blob.size });
+            return img ? this._stackAtlas(img, this._withoutStockCutins(img, record.frames), atlasKey) : false;
+          });
         }).catch((err) => {
           console.warn("Editor atlas bridge unavailable, using on-disk art:", err);
           return false;
@@ -4560,7 +4594,8 @@
             atlasInfoNote("handoff", {
               atlas: img.naturalWidth + "x" + img.naturalHeight,
               frames: Object.keys(bridge.frames).length,
-              bytes: bridge.blob.size
+              bytes: bridge.blob.size,
+              opaque: atlasInfoOpaque(img)
             });
             return mergeAtlasIntoGameAsset(self, img, bridge.frames);
           });
@@ -22822,12 +22857,14 @@
         else if (typeof a === "number") empty++;
         else return key + " " + w + "x" + h + " " + kind + ": " + a;
       }
+      const share = atlasInfoOpaque(img);
       const verdict = !gl ? "" : empty ? " EMPTY on GPU (" + empty + " of " + (ok + empty) + ")" : ok ? " ok on GPU" : " no pixels to test";
-      return key + " " + w + "x" + h + " " + kind + verdict + (blank ? ", " + blank + " blank in source" : "");
+      return key + " " + w + "x" + h + " " + kind + (share ? " opaque " + share : "") + verdict +
+        (blank ? ", " + blank + " blank in source" : "");
     };
     const render = () => {
       mount();
-      const lines = ["atlasInfo v1  " + new Date().toLocaleTimeString()];
+      const lines = ["atlasInfo v2  " + new Date().toLocaleTimeString()];
       const renderer = game.renderer;
       const gl = renderer && renderer.gl ? renderer.gl : null;
       if (game.canvas && game.canvas !== armedCanvas) {
