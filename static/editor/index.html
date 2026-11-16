@@ -124,6 +124,51 @@
             --kn1: #ffd9db; --kn2: #e4000f; --kn3: #7a000a; --knglow: rgba(255,69,84,.7);
             --stripe: rgba(139,160,194,.08);
         }
+        /* Xbox 360 skin, matching the launcher's (Settings → THEME → XBOX 360):
+           the default green chrome, carried by cream-green text, the brighter
+           "lit blade" green for selection and glossy, top-lit rounded controls
+           with silver orbs. */
+        body.theme-xbox360 {
+            --title-ink: #dfffc4; --tglow: rgba(124,255,79,.8); --counter: rgba(200,255,170,.7);
+            --sel: #9cff6b; --selglow: rgba(124,255,79,.55);
+            --edge: rgba(140,255,110,.35); --bedge: rgba(140,255,110,.55); --bedge2: rgba(140,255,110,.3);
+            --bink: #dfffc4; --bink2: rgba(200,255,170,.6); --raillbl: rgba(200,255,170,.55);
+            --shedge: rgba(156,255,107,.65); --rink: #dfffc4; --rsub: rgba(200,255,170,.55);
+            --sr1: #d9ffa6; --sr2: #9cff6b; --sr3: #58e05f; --sr4: #17842f; --srink: #05230d; --srsub: rgba(8,60,24,.7); --srglow: rgba(124,255,79,.5);
+            --tgbg: rgba(124,255,79,.25); --tgedge: rgba(140,255,110,.5);
+            --kn1: #f0ffe0; --kn2: #9cff6b; --kn3: #17842f; --knglow: rgba(124,255,79,.7);
+            color: #dfffc4;
+        }
+        body.theme-xbox360 #osd-topbar .osd-left span { color: #dfffc4; }
+        body.theme-xbox360 #stage-banner-title { color: #dfffc4; text-shadow: 0 0 14px rgba(124,255,79,.7); }
+        body.theme-xbox360 .badge {
+            border-color: rgba(140,255,110,.3); color: #dfffc4;
+            background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0) 45%),
+                        radial-gradient(circle at 50% 30%, rgba(124,255,79,.16), rgba(8,22,10,.85) 75%);
+            box-shadow: 0 6px 18px color-mix(in srgb, var(--shade) 50%, transparent), inset 0 1px 0 rgba(200,255,170,.3);
+        }
+        body.theme-xbox360 .badge.active {
+            border-color: #d9ffa6; color: #05230d;
+            background: linear-gradient(180deg, rgba(255,255,255,.4), rgba(255,255,255,0) 45%),
+                        linear-gradient(180deg, #d9ffa6 0%, #9cff6b 32%, #58e05f 68%, #17842f 100%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 0 22px rgba(124,255,79,.55);
+        }
+        body.theme-xbox360 .tb-pill.off {
+            background: radial-gradient(circle at 38% 38%, #fff 0%, #eef5ea 12%, #c2d0bc 38%, #5f6e58 66%, #131c0e 90%);
+            border: 1px solid rgba(140,255,110,.45); color: #131c0e;
+        }
+        body.theme-xbox360 .tb-pill.on {
+            background: radial-gradient(circle at 35% 30%, #f0ffe0 0%, #d9ffa6 22%, #9cff6b 48%, #17842f 82%, #05230d 100%);
+            box-shadow: 0 0 18px rgba(124,255,79,.75); color: #05230d; animation: none;
+        }
+        body.theme-xbox360 .grid-cell { border-radius: 6px; border-color: rgba(140,255,110,.18); }
+        body.theme-xbox360 .grid-cell.occupied {
+            background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 40%), color-mix(in srgb, var(--surface) 90%, transparent);
+            border-color: rgba(140,255,110,.32);
+        }
+        body.theme-xbox360 .grid-cell:active,
+        body.theme-xbox360 .grid-cell.drag-over { box-shadow: inset 0 0 0 2px #9cff6b, 0 0 14px rgba(124,255,79,.5); }
+        body.theme-xbox360 .menu-row.hi { background: linear-gradient(90deg, rgba(124,255,79,.28), rgba(23,132,47,.18)); }
 
         /* ===== APP LAYOUT ===== */
         #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
@@ -814,6 +859,7 @@
             border-color: transparent; font-weight: 800; color: var(--srink); box-shadow: 0 0 14px var(--srglow);
         }
         .seg.xseg { font-size: var(--t-micro-fixed); letter-spacing: .05em; padding: 5px 0; }
+        .seg { white-space: nowrap; }
         .toggle-row { justify-content: space-between; padding: 6px 10px; cursor: pointer; }
         .toggle {
             width: 36px; height: 18px; border-radius: 9px; background: var(--tgbg);
@@ -1834,8 +1880,9 @@
         <div class="display-row">
             <span class="display-lbl">THEME</span>
             <div class="seg-wrap">
-                <button id="seg-xbox" class="seg" onclick="setTheme('xbox')">XBOX</button>
-                <button id="seg-nintendo" class="seg" onclick="setTheme('nintendo')">NINTENDO</button>
+                <button id="seg-xbox" class="seg xseg" onclick="setTheme('xbox')">XBOX</button>
+                <button id="seg-xbox360" class="seg xseg" onclick="setTheme('xbox360')">XBOX 360</button>
+                <button id="seg-nintendo" class="seg xseg" onclick="setTheme('nintendo')">NINTENDO</button>
             </div>
         </div>
         <button class="display-row toggle-row" onclick="toggleScanlines()">
@@ -5511,25 +5558,32 @@
         function launcherTweaks() {
             try { return JSON.parse(localStorage.getItem('cmg-tweaks') || '{}'); } catch (e) { return {}; }
         }
+        // The launcher's three skins. The boss lab, pixel editor and music
+        // maker know only XBOX and NINTENDO; XBOX 360 is green, so they get XBOX.
+        const THEMES = ['xbox', 'xbox360', 'nintendo'];
+        function normTheme(t) { return THEMES.includes(t) ? t : 'xbox'; }
         function applyTheme(t) {
+            t = normTheme(t);
             document.body.classList.toggle('theme-nintendo', t === 'nintendo');
+            document.body.classList.toggle('theme-xbox360', t === 'xbox360');
             if (bossLab) bossLab.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
             if (pixelEditor) pixelEditor.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
             if (musicMaker) musicMaker.setTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
-            const x = document.getElementById('seg-xbox'), n = document.getElementById('seg-nintendo');
-            if (x && n) {
-                x.classList.toggle('on', t !== 'nintendo');
-                n.classList.toggle('on', t === 'nintendo');
+            for (const id of THEMES) {
+                const b = document.getElementById('seg-' + id);
+                if (b) b.classList.toggle('on', id === t);
             }
         }
         function setTheme(t) {
+            t = normTheme(t);
             applyTheme(t);
             try {
                 localStorage.setItem('cmg-theme', t);
                 localStorage.setItem('__editorTheme__', t); // legacy key
             } catch (e) {}
             try { if (window.parent !== window) window.parent.postMessage({ type: 'cmg-theme', theme: t }, '*'); } catch (e) {}
-            flash(t === 'nintendo' ? 'THEME: NINTENDO RED · LAUNCHER SYNCED' : 'THEME: XBOX GREEN · LAUNCHER SYNCED');
+            flash(t === 'nintendo' ? 'THEME: NINTENDO RED · LAUNCHER SYNCED'
+                : t === 'xbox360' ? 'THEME: XBOX 360 · LAUNCHER SYNCED' : 'THEME: XBOX GREEN · LAUNCHER SYNCED');
         }
         let scanlinesOn = true;
         function applyScanlines(on) {
@@ -5548,7 +5602,7 @@
         try {
             const tw = launcherTweaks();
             const t = localStorage.getItem('cmg-theme') || localStorage.getItem('__editorTheme__') || tw.theme || 'xbox';
-            applyTheme(t === 'nintendo' ? 'nintendo' : 'xbox');
+            applyTheme(t);
             const s = localStorage.getItem('cmg-scanlines');
             applyScanlines(s !== null ? s === '1' : tw.scanlines !== false);
         } catch (e) { applyTheme('xbox'); applyScanlines(true); }
