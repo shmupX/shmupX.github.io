@@ -17,7 +17,7 @@
             font-display: swap;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body { margin: 0; padding: 0; background: #000; }
+        html, body { margin: 0; padding: 0; background: var(--shade); }
         body { color: var(--ink-hi); font-family: var(--font-display); overflow: hidden; }
         button, select { font-family: inherit; }
         .hidden { display: none !important; }
@@ -29,7 +29,7 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: oklch(0.902 0.212 calc(var(--h) + 10) / 0.28); border-radius: 3px; }
 
-        #app { position: fixed; inset: 0; overflow: hidden; background: #000; color: var(--ink-hi); }
+        #app { position: fixed; inset: 0; overflow: hidden; background: var(--shade); color: var(--ink-hi); }
         #bg { position: absolute; inset: 0; background: var(--pagebg); transition: background .3s; }
         #col { position: absolute; inset: 0; display: flex; flex-direction: column; }
 
@@ -37,7 +37,7 @@
         #statusbar {
             flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
             padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 6px;
-            font-family: var(--font-mono); font-size: 10px; letter-spacing: .18em; color: var(--mono);
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .18em; color: var(--mono);
         }
         .status-left { display: flex; align-items: center; gap: 7px; }
         .status-right { display: flex; align-items: center; gap: 12px; }
@@ -53,7 +53,7 @@
             font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em;
             background: transparent; color: var(--mono);
         }
-        .seg button.on { background: var(--sel); color: #111; }
+        .seg button.on { background: var(--sel); color: var(--select-ink); }
         body.theme-nintendo .seg button.on { color: #fff; }
 
         /* ===== BANNER ===== */
@@ -63,7 +63,7 @@
             clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
         }
         .banner-title {
-            flex: 1; text-align: center; font-size: 17px; font-weight: 800; letter-spacing: .32em;
+            flex: 1; text-align: center; font-size: var(--t-head-fixed); font-weight: 800; letter-spacing: .32em;
             color: var(--ink); text-shadow: 0 0 14px var(--tglow); padding-left: 12px;
         }
         #banner-sub { font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .14em; color: var(--rsub); padding-right: 34px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50%; }
@@ -77,11 +77,11 @@
         .chip {
             height: 30px; padding: 0 13px; border-radius: 15px; cursor: pointer; white-space: nowrap;
             text-transform: uppercase; letter-spacing: .08em; font-family: var(--font-display);
-            font-size: 10px; font-weight: 800; transition: all .15s;
+            font-size: var(--t-small-fixed); font-weight: 800; transition: all .15s;
             border: 2px solid var(--redge); color: var(--rink); background: var(--btnbg); box-shadow: none;
             display: inline-flex; align-items: center; gap: 8px;
         }
-        .chip .sw { width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,.5); }
+        .chip .sw { width: 10px; height: 10px; border-radius: 2px; border: 1px solid color-mix(in srgb, var(--shade) 50%, transparent); }
         .chip.active { border-color: var(--sel); color: var(--sel); background: var(--btnactive); box-shadow: 0 0 16px var(--selglow); }
         .chip.small { height: 26px; padding: 0 10px; font-size: var(--t-micro-fixed); font-family: var(--font-mono); letter-spacing: .12em; font-weight: 400; }
         .chip.on { border-color: var(--sel); color: var(--sel); }
@@ -93,7 +93,7 @@
         #stage.dragging { cursor: grabbing; }
         #stage canvas { position: absolute; left: 0; top: 0; display: block; }
         #stage-info, #frame-info {
-            position: absolute; bottom: 8px; font-size: 10px; color: var(--rsub);
+            position: absolute; bottom: 8px; font-size: var(--t-small-fixed); color: var(--rsub);
             font-family: var(--font-mono); pointer-events: none; letter-spacing: .1em;
         }
         #stage-info { left: 12px; }
@@ -115,7 +115,7 @@
         }
         #options { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; }
         #options select {
-            background: rgba(0,0,0,.5); color: var(--bink); border: 1px solid var(--redge); border-radius: 8px;
+            background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--bink); border: 1px solid var(--redge); border-radius: 8px;
             padding: 5px 9px; font-size: var(--t-micro-fixed); letter-spacing: .1em; font-family: var(--font-mono); cursor: pointer; height: 26px;
         }
         #options select option { background: var(--surface); color: var(--rink); }
@@ -129,8 +129,8 @@
         #parts td { padding: 0 8px; white-space: nowrap; }
         #parts td.dim { color: var(--rsub); }
         #parts tr.placeholder td { color: var(--rsub); font-style: italic; }
-        #parts .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; margin-right: 6px; border: 1px solid rgba(0,0,0,.5); }
-        #notice { text-align: center; font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em; color: var(--rsub); }
+        #parts .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: middle; margin-right: 6px; border: 1px solid color-mix(in srgb, var(--shade) 50%, transparent); }
+        #notice { text-align: center; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; color: var(--rsub); }
         #notice b { color: var(--sel); font-weight: 400; }
 
         /* ===== FX OVERLAYS ===== */
@@ -141,12 +141,12 @@
         }
         #vignette {
             position: absolute; inset: 0; pointer-events: none; z-index: 51;
-            background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.8) 100%);
+            background: radial-gradient(ellipse at center, transparent 55%, color-mix(in srgb, var(--shade) 80%, transparent) 100%);
         }
         #flash {
             position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 300;
-            font-family: var(--font-mono); font-size: 10px; letter-spacing: .16em;
-            color: var(--sel); background: rgba(0,0,0,.75); border: 1px solid var(--edge);
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .16em;
+            color: var(--sel); background: color-mix(in srgb, var(--shade) 75%, transparent); border: 1px solid var(--edge);
             border-radius: 8px; padding: 8px 16px; white-space: nowrap;
         }
     </style>
