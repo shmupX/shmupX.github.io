@@ -67,7 +67,7 @@
 {/if}
 
 <style>
-  .nudge-scrim { position: fixed; inset: 0; z-index: 102; background: rgba(0, 0, 0, .72); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+  .nudge-scrim { position: fixed; inset: 0; z-index: 102; background: color-mix(in srgb, var(--shade) 72%, transparent); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 
   .nudge-wrap {
     position: fixed; inset: 0; z-index: 103;
@@ -85,17 +85,17 @@
     width: min(560px, 92vw); box-sizing: border-box;
     display: flex; flex-direction: column; gap: 10px;
     padding: max(2.6vmin, 20px);
-    background: rgba(6, 12, 6, .94);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
     border: 1px solid color-mix(in srgb, var(--green, #9CFF6B) 46%, transparent);
     border-radius: 10px;
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, .6), 0 18px 60px rgba(0, 0, 0, .7);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--shade) 60%, transparent), 0 18px 60px color-mix(in srgb, var(--shade) 70%, transparent);
   }
 
-  .nudge-kicker { font-size: 11px; letter-spacing: .28em; opacity: .62; }
+  .nudge-kicker { font-size: var(--t-small-fixed); letter-spacing: .28em; opacity: .62; }
   .nudge-hd { margin: 0; font-size: clamp(18px, 3.2vmin, 26px); letter-spacing: .1em; }
   .nudge-detail, .nudge-warn {
     margin: 0; font-family: var(--font-mono);
-    font-size: clamp(12px, 1.8vmin, 14px); line-height: 1.5; opacity: .82;
+    font-size: var(--t-small); line-height: 1.5; opacity: .82;
   }
   .nudge-warn { color: var(--amber, #FFC46B); opacity: .95; }
 
@@ -114,7 +114,7 @@
   }
   .nudge-row.go.sel { box-shadow: 0 0 18px color-mix(in srgb, var(--green, #9CFF6B) 34%, transparent); }
   .nudge-row:disabled { cursor: progress; opacity: .6; }
-  .nudge-row-label { font-size: clamp(13px, 2vmin, 15px); letter-spacing: .14em; }
+  .nudge-row-label { font-size: var(--t-body); letter-spacing: .14em; }
   .nudge-row-sub {
     font-family: var(--font-mono);
     font-size: clamp(10px, 1.5vmin, 12px); opacity: .68;
@@ -122,7 +122,7 @@
 
   .nudge-foot {
     margin-top: 2px; font-family: var(--font-mono);
-    font-size: 11px; opacity: .55;
+    font-size: var(--t-small-fixed); opacity: .55;
   }
   .nudge-foot b { color: var(--green, #9CFF6B); font-weight: 400; }
 </style>

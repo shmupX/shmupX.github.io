@@ -489,7 +489,7 @@
 {/if}
 
 <style>
-  .sav-scrim { position: fixed; inset: 0; z-index: 102; background: rgba(0, 0, 0, .62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+  .sav-scrim { position: fixed; inset: 0; z-index: 102; background: color-mix(in srgb, var(--shade) 62%, transparent); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 
   .sav-picker {
     position: fixed; inset: 0; z-index: 103;
@@ -521,7 +521,7 @@
     flex: 0 0 auto;
     appearance: none; border: 0; background: transparent; color: var(--green, #9CFF6B);
     opacity: .65; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
-    font-size: 15px; line-height: 1; align-self: center;
+    font-size: var(--t-head-fixed); line-height: 1; align-self: center;
   }
   .sav-x:hover, .sav-x.on { opacity: 1; background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.12); }
   .sav-x.on { color: var(--yellow, #F6FF4A); }
@@ -530,10 +530,10 @@
   .sav-find {
     flex: 1; min-width: 0;
     appearance: none; -webkit-appearance: none;
-    background: rgba(0, 0, 0, .5); color: var(--green, #9CFF6B);
+    background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--green, #9CFF6B);
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55)); border-radius: 6px;
     padding: .5em .7em; box-sizing: border-box;
-    font-family: var(--font-mono); font-size: clamp(10px, 1.7vmin, 13px);
+    font-family: var(--font-mono); font-size: var(--t-small);
     letter-spacing: .14em; text-transform: uppercase;
   }
   .sav-find:focus { outline: none; border-color: var(--yellow, #F6FF4A); }
@@ -561,7 +561,7 @@
     font-family: var(--font-mono); font-size: clamp(11px, 2vmin, 14px);
     letter-spacing: .14em; opacity: .75; padding: 0 8vmin;
   }
-  .sav-note.err { color: #ff9a7a; opacity: .95; }
+  .sav-note.err { color: var(--error); opacity: .95; }
 
   .sav-body { display: flex; flex: 1; min-height: 0; }
   .sav-stage {
@@ -576,27 +576,27 @@
     height: min(calc(var(--cf-w) * 1.875), 74%);
     aspect-ratio: 256 / 480;
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
-    border-radius: 6px; overflow: hidden; background: #000;
+    border-radius: 6px; overflow: hidden; background: var(--shade);
     transition: transform .3s cubic-bezier(.22, .9, .32, 1), opacity .3s ease, box-shadow .3s ease;
-    box-shadow: 0 1.6vmin 4vmin rgba(0, 0, 0, .7);
-    -webkit-box-reflect: below 1.2vmin linear-gradient(transparent 68%, rgba(0, 0, 0, .30));
+    box-shadow: 0 1.6vmin 4vmin color-mix(in srgb, var(--shade) 70%, transparent);
+    -webkit-box-reflect: below 1.2vmin linear-gradient(transparent 68%, color-mix(in srgb, var(--shade) 30%, transparent));
     cursor: pointer;
   }
   .cf-card.center {
     border-color: var(--yellow, #F6FF4A);
-    box-shadow: 0 0 3.4vmin color-mix(in srgb, var(--green-glow, #7CFF4F) 55%, transparent), 0 2vmin 5vmin rgba(0, 0, 0, .75);
+    box-shadow: 0 0 3.4vmin color-mix(in srgb, var(--green-glow, #7CFF4F) 55%, transparent), 0 2vmin 5vmin color-mix(in srgb, var(--shade) 75%, transparent);
   }
   .cf-art { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; display: block; }
   .cf-video {
     position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-    border: 0; background: #000;
+    border: 0; background: var(--shade);
     /* Click-through: the card under it stays the thing a press launches. */
     pointer-events: none;
   }
   .cf-play {
     position: absolute; right: 5%; bottom: 3.5%;
     width: 22%; aspect-ratio: 1; display: grid; place-items: center;
-    border-radius: 50%; background: rgba(0, 0, 0, .55);
+    border-radius: 50%; background: color-mix(in srgb, var(--shade) 55%, transparent);
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
     color: var(--green, #9CFF6B); font-size: clamp(8px, 1.5vmin, 12px);
     text-shadow: 0 0 8px var(--green-glow, #7CFF4F); pointer-events: none;
@@ -606,9 +606,9 @@
        affordance per bottom corner instead of stacking them on one edge. */
     position: absolute; left: 5%; bottom: 3.5%;
     width: 22%; aspect-ratio: 1; display: grid; place-items: center;
-    border-radius: 50%; background: rgba(0, 0, 0, .55);
+    border-radius: 50%; background: color-mix(in srgb, var(--shade) 55%, transparent);
     border: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
-    color: var(--green, #9CFF6B); font-size: clamp(9px, 1.7vmin, 13px);
+    color: var(--green, #9CFF6B); font-size: var(--t-small);
     padding: 0; appearance: none; cursor: pointer; line-height: 1;
   }
   .cf-fav:hover { color: var(--yellow, #F6FF4A); border-color: var(--yellow, #F6FF4A); }
@@ -626,7 +626,7 @@
       linear-gradient(160deg, oklch(0.892 0.236 calc(var(--h) + 10) / 0.12), transparent 42%),
       linear-gradient(180deg, oklch(0.211 0.029 calc(var(--h) + 14)), #060b06 78%);
   }
-  .cf-ph-mark, .cf-ph-foot { font-family: var(--font-mono); font-size: clamp(7px, 1.3vmin, 10px); letter-spacing: .3em; opacity: .5; }
+  .cf-ph-mark, .cf-ph-foot { font-family: var(--font-mono); font-size: var(--t-micro); letter-spacing: .3em; opacity: .5; }
   /* A local row's placeholder leans yellow, the launcher's "yours" colour, so
      the ⬇ bucket reads as a different shelf even before its footer is legible. */
   .cf-ph.local {
@@ -636,7 +636,7 @@
   }
   .cf-ph.local .cf-ph-foot { opacity: .85; color: var(--yellow, #F6FF4A); }
   .cf-ph-title {
-    font-weight: 700; font-size: clamp(10px, 2vmin, 15px); line-height: 1.35;
+    font-weight: 700; font-size: var(--t-body); line-height: 1.35;
     letter-spacing: .08em; overflow-wrap: anywhere;
     text-shadow: 0 0 10px color-mix(in srgb, var(--green-glow, #7CFF4F) 60%, transparent);
   }
@@ -657,7 +657,7 @@
      would light one letter and jump to another. */
   .sav-band {
     flex: 1 1 0; min-height: 0; display: grid; place-items: center; line-height: 1;
-    font-family: var(--font-mono); font-size: clamp(7px, 1.3vmin, 11px);
+    font-family: var(--font-mono); font-size: var(--t-micro);
     letter-spacing: .06em; opacity: .5; pointer-events: none;
     transition: color .12s ease, opacity .12s ease, transform .12s ease;
   }
@@ -676,7 +676,7 @@
     display: flex; align-items: baseline; gap: 1.4vmin;
     max-width: 46vw; padding: .8vmin 1.8vmin; box-sizing: border-box;
     border: 1px solid var(--yellow, #F6FF4A); border-radius: 8px;
-    background: rgba(0, 0, 0, .82); pointer-events: none;
+    background: color-mix(in srgb, var(--shade) 82%, transparent); pointer-events: none;
   }
   .sav-bub-key {
     font-weight: 800; font-size: clamp(20px, 6vmin, 44px); line-height: 1;

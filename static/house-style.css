@@ -35,6 +35,7 @@
 
   /* Color — XBOX (default) */
   --bg: #000;
+  --shade: #000; /* shadows and scrims; black in every theme */
   --surface: oklch(0.196 0.04 calc(var(--h) + 20));
   --surface-hi: oklch(0.309 0.074 calc(var(--h) + 19));
   --line: oklch(0.78 0.22 var(--h) / 0.28);

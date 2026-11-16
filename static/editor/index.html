@@ -84,7 +84,7 @@
         body {
             font-family: var(--font-display); color: var(--ink-hi); overflow: hidden; touch-action: manipulation;
             background: radial-gradient(ellipse 80% 60% at 38% 55%, oklch(0.413 0.105 calc(var(--h) + 19) / 0.45), transparent 70%),
-                        radial-gradient(ellipse 60% 70% at 50% 50%, oklch(0.247 0.056 calc(var(--h) + 20) / 0.85), #000 80%), #000;
+                        radial-gradient(ellipse 60% 70% at 50% 50%, oklch(0.247 0.056 calc(var(--h) + 20) / 0.85), var(--shade) 80%), var(--shade);
         }
         body.theme-nintendo {
             background: radial-gradient(ellipse 80% 55% at 40% 45%, rgba(228,0,15,.1), transparent 70%), #0d0f1a;
@@ -131,7 +131,7 @@
         /* ===== OSD TOPBAR ===== */
         #osd-topbar {
             flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 6px;
-            font-family: var(--font-mono); font-size: 10px; letter-spacing: .18em; color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.65);
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .18em; color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.65);
         }
         #osd-topbar .osd-left, #osd-topbar .osd-right { display: flex; align-items: center; }
         #osd-topbar .osd-left { gap: 7px; }
@@ -150,7 +150,7 @@
             border-top: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35); border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35);
             clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
         }
-        #stage-banner-title { flex: 1; text-align: center; font-size: 18px; font-weight: 800; letter-spacing: .32em; color: var(--ink); text-shadow: 0 0 14px oklch(0.892 0.241 calc(var(--h) + 9) / 0.8); padding-left: 12px; }
+        #stage-banner-title { flex: 1; text-align: center; font-size: var(--t-head-fixed); font-weight: 800; letter-spacing: .32em; color: var(--ink); text-shadow: 0 0 14px oklch(0.892 0.241 calc(var(--h) + 9) / 0.8); padding-left: 12px; }
         #stage-banner-waves { font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); padding-right: 34px; }
         body.theme-nintendo #stage-banner {
             background: linear-gradient(180deg, rgba(139,160,194,.1), rgba(15,22,34,.85) 35%, rgba(15,22,34,.85) 65%, rgba(139,160,194,.08));
@@ -178,11 +178,11 @@
             width: 46px; height: 46px; border-radius: 50%; border: 2px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.3);
             background: radial-gradient(circle at 35% 30%, oklch(0.421 0.091 calc(var(--h) + 16) / 0.5), oklch(0.210 0.046 calc(var(--h) + 19) / 0.95) 70%);
             display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; padding: 0;
-            font-family: var(--font-display); font-size: 12px; font-weight: 800; letter-spacing: .05em;
+            font-family: var(--font-display); font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .05em;
             color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.6); text-decoration: none; transition: all 0.15s;
         }
         .badge:active { transform: scale(0.95); }
-        .badge.menu-badge { font-size: 15px; }
+        .badge.menu-badge { font-size: var(--t-head-fixed); }
         .badge img { width: 30px; height: 30px; image-rendering: pixelated; object-fit: contain; }
         .badge svg { width: 22px; height: 22px; display: block; }
         /* Boss Lab: a bigger, meaner invader, still inside the 46px circle */
@@ -270,7 +270,7 @@
             animation: orbBreathe 3.2s ease-in-out infinite;
         }
         .tb-pill.add { background: none; border: 1px dashed oklch(0.902 0.212 calc(var(--h) + 10) / 0.5); font-size: var(--t-body-fixed); color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.7); }
-        @keyframes orbBreathe { 50% { box-shadow: 0 0 26px color-mix(in srgb, var(--select-hot) 85%, transparent), inset -2px -4px 8px rgba(0,0,0,.55); } }
+        @keyframes orbBreathe { 50% { box-shadow: 0 0 26px color-mix(in srgb, var(--select-hot) 85%, transparent), inset -2px -4px 8px color-mix(in srgb, var(--shade) 55%, transparent); } }
         body.theme-nintendo .tb-pill.off {
             background: radial-gradient(circle at 35% 30%, #fff 0%, #e9ecf1 18%, #b7bcc6 45%, #565a66 75%, #14161d 100%);
             border: none; box-shadow: inset -2px -4px 8px rgba(0,0,0,.5); color: #14161d;
@@ -286,7 +286,7 @@
         #grid-icon-view { padding: 2px 10px 8px; }
         .editor-grid { display: grid; gap: 2px; }
         .col-hdr { display: flex; align-items: center; justify-content: center; font-size: var(--t-micro-fixed); color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.7); font-family: var(--font-mono); padding: 2px 0; }
-        .row-lbl { display: flex; align-items: center; justify-content: center; font-size: 8px; color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.4); font-family: var(--font-mono); }
+        .row-lbl { display: flex; align-items: center; justify-content: center; font-size: var(--t-micro-fixed); color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.4); font-family: var(--font-mono); }
         body.theme-nintendo .col-hdr { color: rgba(255,91,102,.8); }
         body.theme-nintendo .row-lbl { color: rgba(139,160,194,.5); }
         .grid-cell {
@@ -294,7 +294,7 @@
             aspect-ratio: 1; overflow: hidden; transition: background 0.1s, border-color 0.1s, box-shadow 0.1s;
         }
         .grid-cell:active { box-shadow: inset 0 0 0 2px var(--select), 0 0 14px color-mix(in srgb, var(--select) 45%, transparent); }
-        .grid-cell.occupied { background: rgba(10,16,34,.9); border-color: oklch(0.902 0.212 calc(var(--h) + 10) / 0.3); }
+        .grid-cell.occupied { background: color-mix(in srgb, var(--surface) 90%, transparent); border-color: oklch(0.902 0.212 calc(var(--h) + 10) / 0.3); }
         body.theme-nintendo .grid-cell { background: #0f1622; border-color: #1f2a3c; }
         body.theme-nintendo .grid-cell:active { box-shadow: inset 0 0 0 2px #ff3b49, 0 0 14px rgba(228,0,15,.5); }
         body.theme-nintendo .grid-cell.occupied { background: #10182a; border-color: #2a3850; }
@@ -306,20 +306,20 @@
             position: absolute; bottom: 1px; right: 1px; width: 44%; height: 44%;
             background: color-mix(in srgb, var(--ink-hi) 25%, transparent); border-radius: 50%;
             display: flex; align-items: center; justify-content: center;
-            pointer-events: none; box-shadow: 0 0 4px rgba(0,0,0,0.5);
+            pointer-events: none; box-shadow: 0 0 4px color-mix(in srgb, var(--shade) 50%, transparent);
         }
         .grid-cell .powerup-bubble img {
             width: 72%; height: 72%; object-fit: contain; image-rendering: pixelated;
         }
         .grid-cell .code-label {
-            position: absolute; top: 1px; left: 3px; font-size: 7px; color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.55);
+            position: absolute; top: 1px; left: 3px; font-size: var(--t-micro-fixed); color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.55);
             font-family: var(--font-mono); pointer-events: none; line-height: 1;
         }
         body.theme-nintendo .grid-cell .code-label { color: rgba(255,91,102,.6); }
         /* Grid hover modes (desktop) */
         @media (hover: hover) {
             .editor-grid.mode-place .grid-cell:hover { box-shadow: inset 0 0 0 2px var(--select), 0 0 14px color-mix(in srgb, var(--select) 45%, transparent); }
-            .editor-grid.mode-delete .grid-cell:hover { box-shadow: inset 0 0 0 2px var(--error), 0 0 14px rgba(228,0,15,.5); }
+            .editor-grid.mode-delete .grid-cell:hover { box-shadow: inset 0 0 0 2px var(--error), 0 0 14px color-mix(in srgb, var(--error) 50%, transparent); }
             body.theme-nintendo .editor-grid.mode-place .grid-cell:hover { box-shadow: inset 0 0 0 2px #ff3b49, 0 0 14px rgba(228,0,15,.5); }
         }
         .grid-cell.drag-over { box-shadow: inset 0 0 0 2px var(--select), 0 0 14px color-mix(in srgb, var(--select) 45%, transparent); }
@@ -327,25 +327,25 @@
         /* Both carry the mode class: #grid-icon-view flips live in
            updateToolUI, .editor-grid on the next renderGrid. */
         .editor-grid.mode-character .grid-cell.occupied, #grid-icon-view.mode-character .grid-cell.occupied { cursor: crosshair; }
-        .editor-grid.mode-character .grid-cell.occupied:hover, #grid-icon-view.mode-character .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
+        .editor-grid.mode-character .grid-cell.occupied:hover, #grid-icon-view.mode-character .grid-cell.occupied:hover { box-shadow: inset 0 0 0 2px var(--info), 0 0 14px color-mix(in srgb, var(--info) 45%, transparent); }
         /* BOSS STRIP: the stage boss is not a grid cell — the runtime spawns
            bossData["boss"+stageId] once the last wave clears — so it gets its
            own full-width row under the waves, in that same spawn position. */
         .boss-strip {
             grid-column: 1 / -1; display: flex; align-items: center; gap: 8px;
             margin-top: 6px; padding: 5px 10px; min-height: 34px; border-radius: 4px;
-            background: rgba(10,16,34,.9); border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.3);
-            font-size: 10px; letter-spacing: .12em; color: oklch(0.902 0.061 calc(var(--h) + 3));
+            background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.3);
+            font-size: var(--t-small-fixed); letter-spacing: .12em; color: oklch(0.902 0.061 calc(var(--h) + 3));
         }
         .boss-strip img { width: 24px; height: 24px; image-rendering: pixelated; object-fit: contain; }
-        .boss-strip .boss-tag { margin-left: auto; opacity: .55; font-size: 8px; }
-        .boss-strip .boss-pat { font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em; color: var(--rsub); }
+        .boss-strip .boss-tag { margin-left: auto; opacity: .55; font-size: var(--t-micro-fixed); }
+        .boss-strip .boss-pat { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em; color: var(--rsub); }
         .boss-strip .boss-pat.on { color: var(--sel); }
         .boss-strip:not(.empty) { cursor: pointer; }
         .boss-strip.empty { opacity: .4; border-style: dashed; cursor: default; }
         body.theme-nintendo .boss-strip { background: #10182a; border-color: #2a3850; color: #ffd7da; }
         .editor-grid.mode-character .boss-strip:not(.empty), #grid-icon-view.mode-character .boss-strip:not(.empty) { cursor: crosshair; }
-        .editor-grid.mode-character .boss-strip:not(.empty):hover, #grid-icon-view.mode-character .boss-strip:not(.empty):hover { box-shadow: inset 0 0 0 2px #4AF6FF, 0 0 14px rgba(74,246,255,.45); }
+        .editor-grid.mode-character .boss-strip:not(.empty):hover, #grid-icon-view.mode-character .boss-strip:not(.empty):hover { box-shadow: inset 0 0 0 2px var(--info), 0 0 14px color-mix(in srgb, var(--info) 45%, transparent); }
 
         /* ===== NES CABINET STRIPE (nintendo theme) ===== */
         #nes-stripe {
@@ -357,7 +357,7 @@
         /* ===== FOOTER PAD HINTS ===== */
         #pad-footer {
             flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 16px;
-            font-size: 10px; font-weight: 700; letter-spacing: .16em; color: color-mix(in srgb, var(--ink) 80%, transparent);
+            font-size: var(--t-small-fixed); font-weight: 700; letter-spacing: .16em; color: color-mix(in srgb, var(--ink) 80%, transparent);
         }
         body.theme-nintendo #pad-footer { color: #d5d5d8; }
         #pad-footer .pad-right { display: flex; align-items: center; gap: 14px; }
@@ -388,12 +388,12 @@
         body.theme-nintendo #fx-scanlines { background: repeating-linear-gradient(180deg, rgba(255,70,84,.03) 0 1px, transparent 1px 3px); }
         #fx-vignette {
             position: fixed; inset: 0; pointer-events: none; z-index: 999;
-            background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.8) 100%);
+            background: radial-gradient(ellipse at center, transparent 55%, color-mix(in srgb, var(--shade) 80%, transparent) 100%);
         }
 
         /* ===== PICKER OVERLAY (1a bottom sheet) ===== */
         .picker-overlay {
-            position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.55);
+            position: fixed; inset: 0; z-index: 200; background: color-mix(in srgb, var(--shade) 55%, transparent);
             display: flex; align-items: flex-end; justify-content: center;
             animation: fadeIn 0.15s;
         }
@@ -403,7 +403,7 @@
         .picker-panel {
             background: linear-gradient(180deg, var(--sh1), var(--sh2) 40%);
             border-top: 2px solid var(--shedge); border-radius: 22px 22px 0 0;
-            box-shadow: 0 -12px 44px rgba(0,0,0,.7);
+            box-shadow: 0 -12px 44px color-mix(in srgb, var(--shade) 70%, transparent);
             width: 100%; max-width: 560px;
             max-height: 72vh; overflow-y: auto; padding: 0 12px 20px; animation: sheetIn .22s ease both;
         }
@@ -416,12 +416,12 @@
             background: linear-gradient(180deg, var(--ban1), var(--ban2) 50%, var(--ban3));
             border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
             clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%);
-            font-size: 15px; font-weight: 800; letter-spacing: .3em; color: var(--title-ink);
+            font-size: var(--t-head-fixed); font-weight: 800; letter-spacing: .3em; color: var(--title-ink);
             text-shadow: 0 0 14px var(--tglow); padding: 0 32px 0 18px;
         }
         /* Dezaemon 2 import sheet — themed off the same tokens as the pickers,
            so it follows XBOX green / NINTENDO red with no extra work. */
-        .deza-kind { margin-left: auto; font-size: 10px; letter-spacing: .12em; color: var(--rsub); text-shadow: none; }
+        .deza-kind { margin-left: auto; font-size: var(--t-small-fixed); letter-spacing: .12em; color: var(--rsub); text-shadow: none; }
         .deza-slots { padding: 0 6px; }
         .deza-slot {
             display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 6px;
@@ -433,8 +433,8 @@
         .deza-slot.selected { border-color: var(--sel); box-shadow: 0 0 12px var(--selglow); }
         .deza-slot.inert { opacity: .45; }
         .deza-slot-name { font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .08em; }
-        .deza-slot-meta { font-size: 10px; color: var(--rsub); letter-spacing: .06em; }
-        .deza-slot-go { font-size: 10px; color: var(--sel); letter-spacing: .12em; }
+        .deza-slot-meta { font-size: var(--t-small-fixed); color: var(--rsub); letter-spacing: .06em; }
+        .deza-slot-go { font-size: var(--t-small-fixed); color: var(--sel); letter-spacing: .12em; }
         .deza-play {
             flex: 0 0 auto; margin-left: 4px; width: 32px; height: 28px; padding: 0;
             display: grid; place-items: center; border-radius: 6px;
@@ -456,8 +456,8 @@
             /* Above the shelf overlay (200) and the drawer (301), under the
                flash toast (400). */
             position: fixed; z-index: 350; width: 288px; aspect-ratio: 16 / 9;
-            border-radius: 8px; overflow: hidden; background: #000;
-            border: 1px solid var(--sel); box-shadow: 0 12px 34px rgba(0,0,0,.75);
+            border-radius: 8px; overflow: hidden; background: var(--shade);
+            border: 1px solid var(--sel); box-shadow: 0 12px 34px color-mix(in srgb, var(--shade) 75%, transparent);
             pointer-events: none;
         }
         .deza-preview iframe { display: block; width: 100%; height: 100%; border: 0; }
@@ -473,8 +473,8 @@
         .deza-sprites canvas { width: 100%; height: auto; image-rendering: pixelated; background: var(--rbg); border: 1px solid var(--redge); border-radius: 4px; }
         .deza-hex {
             max-height: 168px; overflow: auto; margin: 0 6px 12px; padding: 8px; border-radius: 6px;
-            background: rgba(0,0,0,.45); border: 1px solid var(--redge);
-            color: var(--rsub); font-size: 10px; line-height: 1.5;
+            background: color-mix(in srgb, var(--shade) 45%, transparent); border: 1px solid var(--redge);
+            color: var(--rsub); font-size: var(--t-small-fixed); line-height: 1.5;
         }
         .deza-actions { display: flex; gap: 8px; padding: 0 6px; }
         .deza-actions .menu-row { flex: 1; }
@@ -486,7 +486,7 @@
         }
         .chooser-preview {
             width: 96px; height: 96px; flex-shrink: 0; image-rendering: pixelated;
-            background: rgba(0,0,0,.35); border: 1px solid var(--redge); border-radius: 8px;
+            background: color-mix(in srgb, var(--shade) 35%, transparent); border: 1px solid var(--redge); border-radius: 8px;
         }
         .chooser-stage-txt { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
         .chooser-hint { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; color: var(--raillbl); margin-top: 4px; }
@@ -500,7 +500,7 @@
             cursor: pointer; transition: border-color .1s, box-shadow .1s;
         }
         .chooser-cell canvas { width: 48px; height: 48px; image-rendering: pixelated; }
-        .chooser-cell span { font-family: var(--font-mono); font-size: 8px; letter-spacing: .08em; }
+        .chooser-cell span { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .08em; }
         .chooser-cell.sel { border-color: var(--sel); box-shadow: 0 0 10px var(--selglow); color: var(--sel); }
         .chooser-cell.builtin { border-color: var(--shedge); }
         .chooser-cell.off { opacity: .4; cursor: default; }
@@ -533,7 +533,7 @@
             justify-content: center; font-size: var(--t-head-fixed);
         }
         .picker-opt .opt-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .picker-opt .opt-name { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-align: left; color: var(--rink); line-height: 1.2; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .picker-opt .opt-name { font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .08em; text-align: left; color: var(--rink); line-height: 1.2; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .picker-opt.sel .opt-name { color: var(--srink); }
         .picker-opt .opt-code { font-size: var(--t-micro-fixed); color: var(--rsub); font-family: var(--font-mono); }
         .picker-opt.sel .opt-code { color: var(--srsub); }
@@ -548,12 +548,12 @@
         .picker-opt .opt-remove {
             position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; border-radius: 50%;
             border: 1px solid var(--redge); background: var(--rbg); color: var(--rsub);
-            font-size: 14px; line-height: 1; padding: 0; cursor: pointer; font-family: inherit;
+            font-size: var(--t-body-fixed); line-height: 1; padding: 0; cursor: pointer; font-family: inherit;
             display: flex; align-items: center; justify-content: center;
         }
         .picker-opt .opt-remove:hover { color: var(--ink-hi); border-color: var(--error); background: color-mix(in srgb, var(--error) 40%, transparent); }
         .picker-add-row { display: flex; gap: 8px; padding: 14px 6px 0; }
-        .picker-add-row .menu-btn { width: auto; flex: 1; justify-content: center; margin: 0; padding: 8px 6px; font-size: 10px; }
+        .picker-add-row .menu-btn { width: auto; flex: 1; justify-content: center; margin: 0; padding: 8px 6px; font-size: var(--t-small-fixed); }
         .picker-add-row .menu-btn.on { border-color: var(--rink); color: var(--ink-hi); }
         #enemy-picker-stock { margin-top: 10px; }
         /* SELECT ENEMY rows: the full-width ARM option, and a 44px pixel
@@ -578,11 +578,11 @@
         .char-panel { max-height: 82vh; }
         .cs-title { justify-content: space-between; }
         .cs-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .cs-code { font-family: var(--font-mono); font-size: 10px; font-weight: 400; letter-spacing: .14em; color: var(--counter); text-shadow: none; white-space: nowrap; }
+        .cs-code { font-family: var(--font-mono); font-size: var(--t-small-fixed); font-weight: 400; letter-spacing: .14em; color: var(--counter); text-shadow: none; white-space: nowrap; }
         .cs-head { display: flex; align-items: center; gap: 14px; padding: 2px 6px 12px; }
         .cs-sprite {
             width: 88px; height: 88px; flex-shrink: 0; border-radius: 14px; border: 1px solid var(--redge);
-            background: repeating-linear-gradient(0deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), rgba(0,0,0,.5);
+            background: repeating-linear-gradient(0deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), color-mix(in srgb, var(--shade) 50%, transparent);
             display: flex; align-items: center; justify-content: center;
         }
         body.theme-nintendo .cs-sprite { background: repeating-linear-gradient(0deg, rgba(213,213,216,.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, rgba(213,213,216,.08) 0 1px, transparent 1px 8px), rgba(0,0,0,.5); }
@@ -592,14 +592,14 @@
         .cs-sel { color: var(--sel); }
         .cs-frames-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 6px 8px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .22em; color: var(--raillbl); }
         .cs-mini-row { display: flex; gap: 6px; }
-        .cs-mini { cursor: pointer; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; padding: 0 12px; min-height: 36px; border-radius: 8px; background: rgba(0,0,0,.3); border: 1px solid var(--redge); color: var(--rink); }
+        .cs-mini { cursor: pointer; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; padding: 0 12px; min-height: 36px; border-radius: 8px; background: color-mix(in srgb, var(--shade) 30%, transparent); border: 1px solid var(--redge); color: var(--rink); }
         .cs-group { padding: 0 6px 12px; display: flex; flex-direction: column; gap: 8px; }
         .cs-group-hdr {
             display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; background: none; border: none; padding: 0; min-height: 32px;
-            cursor: pointer; text-align: left; font-family: var(--font-display); font-size: 10px; font-weight: 800; letter-spacing: .14em; color: var(--hint);
+            cursor: pointer; text-align: left; font-family: var(--font-display); font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .14em; color: var(--hint);
         }
         .cs-group-hdr.on { color: var(--sel); }
-        .cs-group-count { font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em; font-weight: 400; color: var(--raillbl); }
+        .cs-group-count { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em; font-weight: 400; color: var(--raillbl); }
         .cs-frames { display: flex; flex-wrap: wrap; gap: 8px; }
         .cs-frame {
             display: flex; flex-direction: column; align-items: center; gap: 4px; width: 72px; padding: 6px 4px 5px; border-radius: 10px; cursor: pointer;
@@ -608,10 +608,10 @@
         .cs-frame.on { border-color: var(--sel); color: var(--sel); background: linear-gradient(180deg, rgba(60,54,8,.55), rgba(24,22,4,.65)); box-shadow: 0 0 12px color-mix(in srgb, var(--select) 45%, transparent); }
         body.theme-nintendo .cs-frame.on { background: linear-gradient(180deg, rgba(74,3,8,.55), rgba(36,1,4,.65)); box-shadow: 0 0 12px rgba(228,0,15,.45); }
         .cs-frame img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
-        .cs-frame span { font-family: var(--font-mono); font-size: 8px; letter-spacing: .04em; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cs-frame span { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .04em; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .cs-foot {
             display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 22px; margin: 0 -12px; padding: 12px 16px 0;
-            border-top: 1px solid var(--redge); font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--hint);
+            border-top: 1px solid var(--redge); font-size: var(--t-small-fixed); font-weight: 700; letter-spacing: .16em; color: var(--hint);
         }
         .cs-foot .pad-hint { min-height: 44px; gap: 9px; }
         .cs-foot .pad-hint.dim { opacity: .45; }
@@ -635,12 +635,12 @@
            drag keeps landing on the box's own children and never leaves it. */
         .assist.drop::after {
             content: 'DROP A PICTURE'; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-            display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.72);
+            display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--shade) 72%, transparent);
             outline: 2px dashed var(--sel); outline-offset: -6px;
             font-family: var(--font-display); font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .2em; color: var(--sel);
         }
         .assist-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
-        .assist-row .menu-input { margin: 0; flex: 1; min-width: 0; font-size: 12px; }
+        .assist-row .menu-input { margin: 0; flex: 1; min-width: 0; font-size: var(--t-body-fixed); }
         .assist-row .menu-btn { width: auto; margin: 0; padding: 0 16px; justify-content: center; flex: none; }
         .assist-row .menu-btn[disabled] { opacity: .5; cursor: default; }
         /* A phone has no room for the sentence beside two buttons: the input
@@ -650,9 +650,9 @@
             .assist-row .menu-btn { flex: 1; min-height: 40px; }
         }
         .assist-pics { display: flex; flex-wrap: wrap; gap: 6px; }
-        .assist-pic { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 3px 3px 3px 8px; border-radius: 10px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); }
-        .assist-pic-n { flex: none; font-family: var(--font-display); font-size: 12px; font-weight: 800; color: var(--sel); }
-        .assist-pic img { flex: none; width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; border-radius: 6px; background: rgba(0,0,0,.5); }
+        .assist-pic { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 3px 3px 3px 8px; border-radius: 10px; border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 30%, transparent); }
+        .assist-pic-n { flex: none; font-family: var(--font-display); font-size: var(--t-body-fixed); font-weight: 800; color: var(--sel); }
+        .assist-pic img { flex: none; width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; border-radius: 6px; background: color-mix(in srgb, var(--shade) 50%, transparent); }
         .assist-pic-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em; color: var(--rsub); }
         .assist-pic-name { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--rink); }
         .assist-pic-x { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 8px; border: 1px solid var(--redge); background: none; color: var(--rsub); font-size: var(--t-head-fixed); line-height: 1; cursor: pointer; }
@@ -663,22 +663,22 @@
         @keyframes assistPulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
         .assist-steps { display: flex; flex-direction: column; gap: 2px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em; color: var(--rsub); }
         .assist-steps span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .assist-text { font-size: 12px; line-height: 1.5; color: var(--rink); white-space: pre-wrap; }
+        .assist-text { font-size: var(--t-body-fixed); line-height: 1.5; color: var(--rink); white-space: pre-wrap; }
         .assist-text:empty, .assist-steps:empty, .assist-cards:empty, .assist-pics:empty { display: none; }
         .assist-cards { display: flex; flex-direction: column; gap: 6px; }
         /* A card wraps rather than squeezing its name: on a phone a card with
            a SHOT beside the body sends PUBLISH to a line of its own, at the
            right edge (the button's auto margin, which only a short line has
            room to spend). */
-        .assist-card { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); }
+        .assist-card { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 30%, transparent); }
         .assist-card .cs-sprite { width: 72px; height: 72px; }
         .assist-card .cs-sprite img { width: 56px; height: 56px; }
         .assist-card-art { flex: none; display: flex; align-items: center; gap: 6px; }
-        .assist-card-shot { display: flex; flex-direction: column; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 8px; letter-spacing: .2em; color: var(--raillbl); }
+        .assist-card-shot { display: flex; flex-direction: column; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .2em; color: var(--raillbl); }
         .assist-card-shot .cs-sprite { width: 44px; height: 44px; border-radius: 10px; }
         .assist-card-shot .cs-sprite img { width: 32px; height: 32px; }
         .assist-card-info { flex: 1 1 100px; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; color: var(--rsub); }
-        .assist-card-name { font-family: var(--font-display); font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--rink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .assist-card-name { font-family: var(--font-display); font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .1em; color: var(--rink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .assist-card-warn { color: var(--sel); white-space: normal; }
         .assist-card .menu-btn { width: auto; margin: 0 0 0 auto; padding: 10px 14px; flex: none; }
         .assist-card .menu-btn[disabled] { opacity: .5; cursor: default; }
@@ -686,7 +686,7 @@
         /* CHARACTER LIBRARY rows: thumb, name over kind / hp / arms, PREVIEW,
            ADD. An open row carries its preview under it (toggleLibraryPeek):
            the firing range, the animations to hold, a tile per weapon. */
-        .lib-stage { background: repeating-linear-gradient(0deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), rgba(0,0,0,.5); }
+        .lib-stage { background: repeating-linear-gradient(0deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, oklch(0.902 0.212 calc(var(--h) + 10) / 0.08) 0 1px, transparent 1px 8px), color-mix(in srgb, var(--shade) 50%, transparent); }
         body.theme-nintendo .lib-stage { background: repeating-linear-gradient(0deg, rgba(213,213,216,.08) 0 1px, transparent 1px 8px), repeating-linear-gradient(90deg, rgba(213,213,216,.08) 0 1px, transparent 1px 8px), rgba(0,0,0,.5); }
         .lib-row { border: 1px solid var(--redge); border-radius: 10px; background: var(--rbg); }
         .lib-row.open { border-color: var(--shedge); box-shadow: 0 0 12px var(--selglow); }
@@ -694,7 +694,7 @@
         .lib-thumb { flex: none; width: 46px; height: 46px; padding: 0; border-radius: 6px; border: 1px solid var(--redge); cursor: pointer; display: flex; align-items: center; justify-content: center; }
         .lib-thumb canvas { width: 40px; height: 40px; image-rendering: pixelated; }
         .lib-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; background: none; border: none; padding: 0; text-align: left; cursor: pointer; color: var(--rink); }
-        .lib-name { font-family: var(--font-display); font-size: 12px; font-weight: 700; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .lib-name { font-family: var(--font-display); font-size: var(--t-body-fixed); font-weight: 700; letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .lib-meta { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em; color: var(--rsub); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .lib-row .menu-btn { width: auto; margin: 0; flex: none; padding: 9px 12px; justify-content: center; }
         .lib-row.open .lib-peek-btn { border-color: var(--shedge); color: var(--sel); }
@@ -711,12 +711,12 @@
             border-color: transparent; color: var(--srink); box-shadow: 0 0 14px var(--srglow);
         }
         .lib-shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
-        .lib-shot { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 8px; border: 1px solid var(--redge); background: rgba(0,0,0,.3); cursor: pointer; text-align: left; color: var(--rink); min-width: 0; }
+        .lib-shot { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 8px; border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 30%, transparent); cursor: pointer; text-align: left; color: var(--rink); min-width: 0; }
         .lib-shot.on { border-color: var(--shedge); box-shadow: 0 0 10px var(--selglow); }
         .lib-shot canvas { flex: none; width: 48px; height: 48px; image-rendering: pixelated; border-radius: 6px; }
         .lib-shot-info { min-width: 0; display: flex; flex-direction: column; gap: 3px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em; color: var(--rsub); }
         .lib-shot-val { white-space: nowrap; }
-        .lib-shot-name { font-family: var(--font-display); font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--rink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .lib-shot-name { font-family: var(--font-display); font-size: var(--t-small-fixed); font-weight: 700; letter-spacing: .06em; color: var(--rink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* ===== SAVED GAMES LIST ===== */
         .fb-level-item {
@@ -726,10 +726,10 @@
         }
         .fb-level-item:hover { background: color-mix(in srgb, var(--ink-hi) 5%, transparent); }
         .fb-level-item:active { background: color-mix(in srgb, var(--ink-hi) 8%, transparent); transform: scale(0.98); }
-        .fb-level-item .fb-name { font-size: 12px; font-weight: 800; letter-spacing: .08em; color: var(--rink); }
+        .fb-level-item .fb-name { font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .08em; color: var(--rink); }
         .fb-level-item .fb-date { font-size: var(--t-micro-fixed); color: var(--rsub); font-family: var(--font-mono); }
         .fb-level-loading { text-align: center; color: var(--rsub); padding: 24px; font-size: var(--t-small-fixed); font-family: var(--font-mono); letter-spacing: .12em; }
-        .save-badge { font-size: 12px; margin-left: 2px; }
+        .save-badge { font-size: var(--t-body-fixed); margin-left: 2px; }
         .fb-level-item .fb-detail { display: flex; gap: 2px; align-items: center; margin-top: 2px; }
 
         /* ===== MISSING TEXTURES PANEL ===== */
@@ -739,26 +739,26 @@
         }
         .missing-tex-row.uploaded { border-color: var(--tgedge); box-shadow: 0 0 10px var(--selglow); }
         .missing-tex-preview {
-            width: 32px; height: 32px; border-radius: 4px; background: rgba(0,0,0,.5); flex-shrink: 0;
+            width: 32px; height: 32px; border-radius: 4px; background: color-mix(in srgb, var(--shade) 50%, transparent); flex-shrink: 0;
             image-rendering: pixelated; object-fit: contain;
         }
         .missing-tex-name {
-            flex: 1; font-size: 10px; font-family: var(--font-mono); color: var(--rsub);
+            flex: 1; font-size: var(--t-small-fixed); font-family: var(--font-mono); color: var(--rsub);
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .missing-tex-upload {
-            font-size: 10px; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+            font-size: var(--t-small-fixed); padding: 4px 10px; border-radius: 8px; cursor: pointer;
             border: 1px solid var(--redge); background: none; color: var(--rink);
             font-family: var(--font-display); flex-shrink: 0; white-space: nowrap;
         }
         .missing-tex-upload.done { border-color: var(--tgedge); color: var(--sel); }
 
         /* ===== SYSTEM MENU DRAWER (1a) ===== */
-        .menu-backdrop { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.6); animation: fadeIn 0.15s; }
+        .menu-backdrop { position: fixed; inset: 0; z-index: 300; background: color-mix(in srgb, var(--shade) 60%, transparent); animation: fadeIn 0.15s; }
         .menu-panel {
             position: fixed; top: 0; right: 0; bottom: 0; width: 310px; max-width: 86vw;
             background: linear-gradient(270deg, var(--sh1), var(--sh2) 60%);
-            border-left: 2px solid var(--shedge); box-shadow: -14px 0 44px rgba(0,0,0,.75);
+            border-left: 2px solid var(--shedge); box-shadow: -14px 0 44px color-mix(in srgb, var(--shade) 75%, transparent);
             z-index: 301; padding: 14px 16px 12px; overflow-y: auto;
             display: flex; flex-direction: column; gap: 9px;
             animation: drawerIn .22s ease both;
@@ -768,7 +768,7 @@
             background: linear-gradient(180deg, var(--ban1), var(--ban2) 50%, var(--ban3));
             border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
             clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 50%, calc(100% - 16px) 100%, 0 100%);
-            margin: 0 -4px; font-size: 14px; font-weight: 800; letter-spacing: .28em;
+            margin: 0 -4px; font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .28em;
             color: var(--title-ink); text-shadow: 0 0 14px var(--tglow); padding-left: 14px;
         }
         .menu-label {
@@ -778,7 +778,7 @@
         .menu-row {
             display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px;
             border-radius: 8px; background: var(--rbg); border: 1px solid var(--redge);
-            font-family: var(--font-display); font-size: 10px; font-weight: 700; letter-spacing: .1em;
+            font-family: var(--font-display); font-size: var(--t-small-fixed); font-weight: 700; letter-spacing: .1em;
             color: var(--rink); cursor: pointer; text-align: left; flex-shrink: 0; transition: background 0.1s;
         }
         .menu-row:active { background: color-mix(in srgb, var(--ink-hi) 6%, transparent); }
@@ -790,16 +790,16 @@
             display: flex; align-items: center; justify-content: center;
             font-family: var(--font-mono); font-size: var(--t-micro-fixed); color: var(--bink); flex-shrink: 0;
         }
-        .mono-badge.sm { width: 20px; height: 20px; font-size: 8px; }
+        .mono-badge.sm { width: 20px; height: 20px; font-size: var(--t-micro-fixed); }
         .menu-duo { display: flex; gap: 8px; flex-shrink: 0; }
         .menu-duo .menu-row { flex: 1; width: auto; min-width: 0; justify-content: center; gap: 6px; padding: 8px 0; }
-        .menu-duo .accent { color: var(--bink); font-size: 12px; }
+        .menu-duo .accent { color: var(--bink); font-size: var(--t-body-fixed); }
         .menu-duo .accent.del { color: var(--sel); }
         .adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; flex-shrink: 0; }
         .adv-grid .menu-row { font-size: var(--t-micro-fixed); letter-spacing: .08em; gap: 8px; padding: 6px 8px; }
         .display-row {
             display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px;
-            border-radius: 10px; background: rgba(0,0,0,.45); border: 1px solid var(--redge);
+            border-radius: 10px; background: color-mix(in srgb, var(--shade) 45%, transparent); border: 1px solid var(--redge);
             font-family: var(--font-display); color: var(--hint); flex-shrink: 0; cursor: default;
         }
         .display-lbl { font-size: var(--t-micro-fixed); font-weight: 700; letter-spacing: .12em; color: var(--hint); padding: 0 4px 0 6px; }
@@ -813,7 +813,7 @@
             background: linear-gradient(90deg, var(--sr1), var(--sr2) 28%, var(--sr3) 65%, var(--sr4));
             border-color: transparent; font-weight: 800; color: var(--srink); box-shadow: 0 0 14px var(--srglow);
         }
-        .seg.xseg { font-size: 8px; letter-spacing: .05em; padding: 5px 0; }
+        .seg.xseg { font-size: var(--t-micro-fixed); letter-spacing: .05em; padding: 5px 0; }
         .toggle-row { justify-content: space-between; padding: 6px 10px; cursor: pointer; }
         .toggle {
             width: 36px; height: 18px; border-radius: 9px; background: var(--tgbg);
@@ -826,7 +826,7 @@
         }
         .toggle .knob.off { right: auto; left: 1px; opacity: .45; }
         .menu-note {
-            font-family: var(--font-mono); font-size: 8px; letter-spacing: .1em;
+            font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em;
             color: var(--raillbl); padding: 0 2px; flex-shrink: 0;
         }
         /* Every drawer control is a 44px touch target. */
@@ -836,10 +836,10 @@
            opens a sheet rather than acting. */
         .menu-row .row-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
         .menu-row .row-sub {
-            font-family: var(--font-mono); font-size: 8px; font-weight: 400; letter-spacing: .14em;
+            font-family: var(--font-mono); font-size: var(--t-micro-fixed); font-weight: 400; letter-spacing: .14em;
             color: var(--bink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
-        .menu-row .row-chev { font-size: 15px; line-height: 1; color: var(--bink2); flex-shrink: 0; }
+        .menu-row .row-chev { font-size: var(--t-head-fixed); line-height: 1; color: var(--bink2); flex-shrink: 0; }
         body:not(.has-save-target) #menu-save-row { display: none !important; }
         body:not(.has-3d-models) .needs-3d-models { display: none !important; }
         body:not(.sav-loaded) .show-when-sav { display: none !important; }
@@ -868,7 +868,7 @@
             font-family: var(--font-mono); font-size: var(--t-body-fixed); letter-spacing: .04em; color: var(--bink);
         }
         .sheet-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
-        .sheet-name { font-size: 12px; font-weight: 800; letter-spacing: .14em; line-height: 1.2; }
+        .sheet-name { font-size: var(--t-body-fixed); font-weight: 800; letter-spacing: .14em; line-height: 1.2; }
         .sheet-sub { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; line-height: 1.5; color: var(--rsub); }
         .sheet-chev { font-size: var(--t-head-fixed); line-height: 1; color: var(--bink2); transition: transform .15s; }
         .sheet-opt.open .sheet-chev { transform: rotate(90deg); color: var(--sel); }
@@ -888,7 +888,7 @@
            columns on a desktop and one on a phone. */
         .picker-panel.pub { max-width: 900px; max-height: 88vh; }
         .pub-title-sub {
-            margin-left: auto; font-family: var(--font-mono); font-size: 10px; font-weight: 400;
+            margin-left: auto; font-family: var(--font-mono); font-size: var(--t-small-fixed); font-weight: 400;
             letter-spacing: .12em; color: var(--rsub); text-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .pub-stores { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
@@ -906,7 +906,7 @@
         }
         .pub-store.on .sheet-badge { border-color: var(--shedge); color: var(--sel); }
         .pub-cred {
-            display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 8px;
+            display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: var(--t-micro-fixed);
             letter-spacing: .12em; line-height: 1.4; color: var(--bink);
         }
         .pub-cred.warn { color: var(--sel); }
@@ -921,17 +921,17 @@
         .pub-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
         .pub-field {
             display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px; border-radius: 10px;
-            background: rgba(0,0,0,.45); border: 1px solid var(--redge); color: var(--hint); font-family: var(--font-display);
+            background: color-mix(in srgb, var(--shade) 45%, transparent); border: 1px solid var(--redge); color: var(--hint); font-family: var(--font-display);
         }
         .pub-field .display-lbl { flex-shrink: 0; }
         .pub-field .menu-input { margin-bottom: 0; flex: 1; min-width: 0; width: auto; }
-        .pub-tail { font-family: var(--font-mono); font-size: 8px; letter-spacing: .1em; color: var(--rsub); padding-right: 6px; flex-shrink: 0; }
+        .pub-tail { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em; color: var(--rsub); padding-right: 6px; flex-shrink: 0; }
         .pub-toggle-row { justify-content: space-between; }
         .pub-row-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .pub-row-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-        .pub-row-sub { font-family: var(--font-mono); font-size: 8px; font-weight: 400; letter-spacing: .14em; color: var(--bink2); }
+        .pub-row-sub { font-family: var(--font-mono); font-size: var(--t-micro-fixed); font-weight: 400; letter-spacing: .14em; color: var(--bink2); }
         .pub-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .pub-note { font-family: var(--font-mono); font-size: 8px; letter-spacing: .1em; line-height: 1.7; color: var(--raillbl); padding: 0 2px; }
+        .pub-note { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em; line-height: 1.7; color: var(--raillbl); padding: 0 2px; }
         .pub-note.warn { color: var(--sel); }
         .pub-note.ok { color: var(--ok); }
         .pub-note.run { color: var(--warn); }
@@ -940,15 +940,15 @@
         .pub-go { min-height: 48px; font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .12em; transition: opacity .15s; }
         .pub-go:disabled { opacity: .5; cursor: default; }
         .pub-go .pub-go-label { flex: 1; }
-        .pub-go .pub-go-sub { font-family: var(--font-mono); font-size: 8px; font-weight: 400; letter-spacing: .14em; color: var(--bink2); }
+        .pub-go .pub-go-sub { font-family: var(--font-mono); font-size: var(--t-micro-fixed); font-weight: 400; letter-spacing: .14em; color: var(--bink2); }
         .pub-runs { display: flex; flex-direction: column; gap: 9px; }
-        .pub-run { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.45); border: 1px solid var(--redge); }
+        .pub-run { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--shade) 45%, transparent); border: 1px solid var(--redge); }
         .pub-run-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .pub-run-name { font-size: var(--t-micro-fixed); font-weight: 700; letter-spacing: .12em; color: var(--rink); width: 118px; flex-shrink: 0; }
         .pub-chips { flex: 1; min-width: 220px; display: flex; gap: 4px; }
         .pub-chip {
             flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 4px; border-radius: 7px;
-            border: 1px solid var(--redge); color: var(--rsub); font-family: var(--font-mono); font-size: 8px;
+            border: 1px solid var(--redge); color: var(--rsub); font-family: var(--font-mono); font-size: var(--t-micro-fixed);
             letter-spacing: .12em; white-space: nowrap;
         }
         .pub-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--redge); flex-shrink: 0; }
@@ -961,7 +961,7 @@
         .pub-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px 18px; margin-top: 6px; }
         .pub-col { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
         .pub-textarea {
-            width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--redge); background: rgba(0,0,0,.5);
+            width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 50%, transparent);
             color: var(--rink); font-size: var(--t-small-fixed); font-family: var(--font-mono); outline: none; resize: vertical; line-height: 1.6;
         }
         .pub-textarea::placeholder { color: var(--rsub); }
@@ -971,22 +971,22 @@
         .pub-shot-tile {
             border-radius: 8px; border: 1px dashed var(--redge); position: relative; overflow: hidden;
             background: repeating-linear-gradient(135deg, var(--stripe) 0 6px, transparent 6px 12px);
-            display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 8px;
+            display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: var(--t-micro-fixed);
             letter-spacing: .1em; color: var(--rsub); text-align: center; padding: 4px;
         }
         .pub-shot-tile.ready { border-style: solid; border-color: var(--tgedge); color: var(--bink); }
         .pub-shot-tile.recording { border-color: var(--warn); color: var(--warn); }
         .pub-shot-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-        .pub-shot-lbl { font-family: var(--font-mono); font-size: 8px; letter-spacing: .08em; line-height: 1.4; color: var(--rsub); text-align: center; }
+        .pub-shot-lbl { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .08em; line-height: 1.4; color: var(--rsub); text-align: center; }
         .pub-log-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--rbg); border: 1px solid var(--redge); }
         .pub-log-txt { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
         .pub-log-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
         .pub-log-title .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-        .pub-log-title-txt { font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1.4; color: var(--rink); min-width: 0; text-wrap: pretty; }
-        .pub-log-when { font-family: var(--font-mono); font-size: 8px; letter-spacing: .1em; line-height: 1.5; color: var(--rsub); }
+        .pub-log-title-txt { font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .08em; line-height: 1.4; color: var(--rink); min-width: 0; text-wrap: pretty; }
+        .pub-log-when { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .1em; line-height: 1.5; color: var(--rsub); }
         .pub-log-links {
             display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;
-            font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em; color: var(--bink2);
+            font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; color: var(--bink2);
         }
 
         .menu-flex-spacer { flex: 1; min-height: 8px; }
@@ -1004,7 +1004,7 @@
         .menu-btn:active { background: color-mix(in srgb, var(--ink-hi) 6%, transparent); }
         .menu-input {
             width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--redge);
-            background: rgba(0,0,0,.5); color: var(--rink); font-size: 12px; margin-bottom: 8px;
+            background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--rink); font-size: var(--t-body-fixed); margin-bottom: 8px;
             font-family: var(--font-mono); outline: none;
         }
         .menu-input::placeholder { color: var(--rsub); }
@@ -1014,14 +1014,14 @@
         .credit-row { display: flex; gap: 4px; align-items: flex-start; }
         .credit-row select {
             flex: 0 0 34%; min-width: 0; height: 32px; padding: 0 4px; border-radius: 8px;
-            border: 1px solid var(--redge); background: rgba(0,0,0,.5); color: var(--rink);
-            font-family: var(--font-mono); font-size: 10px; outline: none;
+            border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--rink);
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); outline: none;
         }
         .credit-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
         .credit-name .menu-input { margin-bottom: 0; height: 32px; padding: 0 8px; font-size: var(--t-small-fixed); text-transform: uppercase; }
         .credit-name canvas {
             width: 100%; aspect-ratio: 4 / 1; border-radius: 4px;
-            background: #1b2540; border: 1px solid var(--redge);
+            background: var(--surface); border: 1px solid var(--redge);
         }
         /* What the cart gets when the row is left alone, not what was typed. */
         .credit-name canvas.ghost { opacity: .5; }
@@ -1039,9 +1039,9 @@
             .badge { width: 52px; height: 52px; }
             #lab-status { height: 52px; }
             .badge img { width: 34px; height: 34px; }
-            .tb-pill { width: 30px; height: 30px; font-size: 12px; }
+            .tb-pill { width: 30px; height: 30px; font-size: var(--t-body-fixed); }
             .editor-grid { gap: 2px; }
-            .grid-cell .code-label { font-size: 8px; }
+            .grid-cell .code-label { font-size: var(--t-micro-fixed); }
             .picker-panel { max-width: 560px; }
         }
 
@@ -1050,14 +1050,14 @@
         .editor-grid.horizontal { width: max-content; min-width: 100%; }
         .editor-grid.horizontal .grid-cell { min-width: 44px; }
         .rail-orient { flex: 0 0 auto; margin-left: auto; display: flex; gap: 4px; }
-        .rail-orient .seg { font-size: 8px; letter-spacing: .1em; padding: 5px 8px; min-width: 0; }
+        .rail-orient .seg { font-size: var(--t-micro-fixed); letter-spacing: .1em; padding: 5px 8px; min-width: 0; }
         .hidden { display: none !important; }
 
         /* ===== TOAST (1a) ===== */
         #toast {
             position: fixed; left: 50%; transform: translateX(-50%); bottom: 88px; padding: 10px 18px;
             border-radius: 10px; background: linear-gradient(90deg, var(--sr1), var(--sr2) 28%, var(--sr3) 65%, var(--sr4));
-            box-shadow: 0 0 22px var(--srglow); font-size: 10px; font-weight: 800; letter-spacing: .12em;
+            box-shadow: 0 0 22px var(--srglow); font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .12em;
             color: var(--srink); z-index: 400; white-space: nowrap; pointer-events: none;
         }
 
@@ -1069,13 +1069,13 @@
         .picker-opt .picker-tag { right: auto; left: 2px; }
         .picker-tag {
             position: absolute; top: 2px; right: 2px; z-index: 1; pointer-events: none;
-            font-family: var(--font-mono); font-size: 8px; letter-spacing: .12em; font-weight: 700;
+            font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .12em; font-weight: 700;
             padding: 1px 4px; border-radius: 3px; background: var(--select); color: var(--select-ink);
         }
         .picker-cell.picker-recent .picker-tag { background: oklch(0.909 0.206 calc(var(--h) + 7) / 0.85); }
         #picker-code-row { display: flex; justify-content: flex-end; margin: -6px 0 10px; }
         #picker-code {
-            font-family: var(--font-mono); font-size: 10px; font-weight: 400; letter-spacing: .14em;
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); font-weight: 400; letter-spacing: .14em;
             text-shadow: none; color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.75); cursor: pointer; white-space: nowrap;
         }
         #picker-code b { color: var(--select); font-weight: 700; }
@@ -1090,7 +1090,7 @@
         .picker-chip.clickable:hover { border-color: var(--select); }
         .picker-chip img, .picker-chip canvas { width: 20px; height: 20px; image-rendering: pixelated; object-fit: contain; }
         .picker-chip .picker-tag { position: static; margin-left: 2px; }
-        .picker-chip .chip-act { font-size: 8px; letter-spacing: .12em; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--redge); background: transparent; color: var(--rink); cursor: pointer; font-family: inherit; }
+        .picker-chip .chip-act { font-size: var(--t-micro-fixed); letter-spacing: .12em; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--redge); background: transparent; color: var(--rink); cursor: pointer; font-family: inherit; }
         .picker-chip .chip-act:hover { background: var(--select); color: var(--select-ink); border-color: var(--select); }
 
         /* ===== ENEMY EDITOR TABS ===== */
@@ -1109,7 +1109,7 @@
             border-color: transparent; font-weight: 800; color: var(--srink); box-shadow: 0 0 14px var(--srglow);
         }
         .enemy-editor-tab .tab-count {
-            font-size: 8px; color: var(--rsub); margin-left: 4px; font-weight: 400; font-family: var(--font-mono);
+            font-size: var(--t-micro-fixed); color: var(--rsub); margin-left: 4px; font-weight: 400; font-family: var(--font-mono);
         }
         .enemy-editor-tab.active .tab-count { color: var(--srsub); }
 
@@ -1122,7 +1122,7 @@
             display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
         }
         .story-part-num {
-            font-family: var(--font-mono); font-size: 10px; color: var(--sel); min-width: 50px;
+            font-family: var(--font-mono); font-size: var(--t-small-fixed); color: var(--sel); min-width: 50px;
         }
         .story-bg-options { display: flex; gap: 6px; flex-wrap: wrap; }
         .story-bg-opt {
@@ -1136,11 +1136,11 @@
         }
         .story-bg-opt .story-bg-label {
             position: absolute; bottom: 0; left: 0; right: 0; text-align: center;
-            font-size: 7px; color: var(--ink-hi); background: rgba(0,0,0,0.6); line-height: 1.4;
+            font-size: var(--t-micro-fixed); color: var(--ink-hi); background: color-mix(in srgb, var(--shade) 60%, transparent); line-height: 1.4;
         }
         .story-text-area {
             width: 100%; min-height: 70px; padding: 8px 10px; border-radius: 8px;
-            border: 1px solid var(--redge); background: rgba(0,0,0,.5); color: var(--rink); font-size: 10px;
+            border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--rink); font-size: var(--t-small-fixed);
             font-family: var(--font-mono); resize: vertical; line-height: 1.6; outline: none;
         }
         .story-delete-btn {
@@ -1159,7 +1159,7 @@
             font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .2em; color: var(--raillbl); margin-bottom: 8px;
         }
         .story-image-slot .slot-preview, .title-image-slot .slot-preview {
-            width: 100%; aspect-ratio: 256/224; border-radius: 6px; background: #000;
+            width: 100%; aspect-ratio: 256/224; border-radius: 6px; background: var(--shade);
             overflow: hidden; margin-bottom: 8px; position: relative;
         }
         .title-image-slot .slot-preview { aspect-ratio: auto; min-height: 40px; display:flex; align-items:center; justify-content:center; }
@@ -1169,7 +1169,7 @@
         .title-image-slot .slot-preview img { width: auto; height: auto; max-width: 100%; max-height: 120px; object-fit: contain; }
         .story-image-slot .slot-upload-btn, .title-image-slot .slot-upload-btn {
             background: var(--rbg); color: var(--rink); border: 1px solid var(--redge); border-radius: 8px;
-            padding: 6px 12px; font-size: 10px; font-weight: 700; letter-spacing: .08em; cursor: pointer; width: 100%;
+            padding: 6px 12px; font-size: var(--t-small-fixed); font-weight: 700; letter-spacing: .08em; cursor: pointer; width: 100%;
             font-family: var(--font-display); transition: background 0.15s;
         }
         .story-image-slot .slot-upload-btn:hover, .title-image-slot .slot-upload-btn:hover {
@@ -1191,7 +1191,7 @@
         /* Cabinet: the page around the game — four slots that wrap */
         .cabinet-slots { flex-wrap: wrap; }
         .cabinet-slot { flex: 1 1 220px; min-width: 200px; }
-        .cabinet-slot .slot-preview { aspect-ratio: auto; min-height: 80px; max-height: 280px; background: #000; }
+        .cabinet-slot .slot-preview { aspect-ratio: auto; min-height: 80px; max-height: 280px; background: var(--shade); }
         .cabinet-slot .slot-preview img { max-height: 240px; object-fit: contain; image-rendering: auto; }
         .cabinet-slot .slot-state { font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .15em; margin-bottom: 6px; }
         .cabinet-slot .slot-state.custom { color: var(--sel); }
@@ -1201,11 +1201,11 @@
         .cabinet-loading .slot-preview .cabinet-loading-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; max-height: none; object-fit: cover; opacity: .09; image-rendering: pixelated; }
         .cabinet-loading .slot-preview .cabinet-loading-spin { position: absolute; left: 25%; top: 50%; width: 50%; height: auto; max-height: none; transform: translateY(-50%); image-rendering: pixelated; }
         .cabinet-frames { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 8px; }
-        .cabinet-frames .fr { position: relative; width: 44px; height: 44px; border: 1px solid var(--redge); border-radius: 6px; background: #000; }
+        .cabinet-frames .fr { position: relative; width: 44px; height: 44px; border: 1px solid var(--redge); border-radius: 6px; background: var(--shade); }
         .cabinet-frames .fr img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-        .cabinet-frames .fr button { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--redge); background: var(--rbg); color: var(--rink); font-size: 10px; line-height: 1; cursor: pointer; padding: 0; }
+        .cabinet-frames .fr button { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--redge); background: var(--rbg); color: var(--rink); font-size: var(--t-small-fixed); line-height: 1; cursor: pointer; padding: 0; }
         .cabinet-rect { display: flex; gap: 4px; align-items: center; justify-content: center; margin: 6px 0; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .15em; color: var(--raillbl); }
-        .cabinet-rect input { width: 48px; background: rgba(0,0,0,.5); border: 1px solid var(--redge); color: var(--rink); border-radius: 4px; font-size: 10px; padding: 3px 4px; font-family: var(--font-mono); }
+        .cabinet-rect input { width: 48px; background: color-mix(in srgb, var(--shade) 50%, transparent); border: 1px solid var(--redge); color: var(--rink); border-radius: 4px; font-size: var(--t-small-fixed); padding: 3px 4px; font-family: var(--font-mono); }
         .bg-image-slot .slot-state.stock { color: var(--raillbl); }
         .bg-image-slot .slot-actions { display: flex; gap: 6px; }
         .bg-image-slot .slot-actions .slot-upload-btn { flex: 1; }
@@ -1225,8 +1225,8 @@
         .audio-filter-pill:hover { color: var(--rink); }
         .audio-search-input {
             flex: 1; min-width: 120px; padding: 5px 10px; border-radius: 7px;
-            border: 1px solid var(--redge); background: rgba(0,0,0,.5); color: var(--rink);
-            font-size: 10px; font-family: var(--font-mono); outline: none;
+            border: 1px solid var(--redge); background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--rink);
+            font-size: var(--t-small-fixed); font-family: var(--font-mono); outline: none;
         }
         .audio-search-input:focus { border-color: var(--tgedge); }
         .audio-grid {
@@ -1243,11 +1243,11 @@
             font-family: var(--font-display); word-break: break-all;
         }
         .audio-slot-category {
-            font-size: 8px; color: var(--rsub); text-transform: uppercase; letter-spacing: .16em;
+            font-size: var(--t-micro-fixed); color: var(--rsub); text-transform: uppercase; letter-spacing: .16em;
             font-family: var(--font-mono);
         }
         .audio-slot-badge {
-            font-size: 8px; padding: 3px 8px; border-radius: 7px; letter-spacing: .1em;
+            font-size: var(--t-micro-fixed); padding: 3px 8px; border-radius: 7px; letter-spacing: .1em;
             font-family: var(--font-mono); display: inline-block; width: fit-content;
         }
         .audio-slot-badge.default { border: 1px solid var(--bedge2); color: var(--bink); }
@@ -1263,13 +1263,13 @@
         .audio-btn-upload:hover { background: color-mix(in srgb, var(--ink-hi) 6%, transparent); }
         .audio-url-row { display: flex; gap: 3px; align-items: center; margin-top: 3px; }
         .audio-url-input {
-            flex: 1; min-width: 0; background: rgba(0,0,0,.5); color: var(--rink); border: 1px solid var(--redge);
+            flex: 1; min-width: 0; background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--rink); border: 1px solid var(--redge);
             border-radius: 7px; padding: 2px 5px; font-size: var(--t-micro-fixed); font-family: var(--font-mono);
             outline: none;
         }
         .audio-url-input::placeholder { color: var(--rsub); }
         .audio-url-input:focus { border-color: var(--tgedge); }
-        .audio-btn-url { background: none; color: var(--bink); min-width: 22px; font-size: 10px; }
+        .audio-btn-url { background: none; color: var(--bink); min-width: 22px; font-size: var(--t-small-fixed); }
         .audio-btn-url:hover { background: color-mix(in srgb, var(--ink-hi) 6%, transparent); }
         .audio-slot-badge.url { border: 1px solid var(--bedge2); color: var(--bink); }
         .audio-btn-play { background: none; color: var(--bink); border: 1px solid var(--bedge2); }
@@ -1292,7 +1292,7 @@
             font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .12em; color: var(--rink);
             font-family: var(--font-display); margin-bottom: 2px;
         }
-        .ss-hint { font-size: 10px; color: var(--rsub); font-family: var(--font-mono); margin-bottom: 8px; }
+        .ss-hint { font-size: var(--t-small-fixed); color: var(--rsub); font-family: var(--font-mono); margin-bottom: 8px; }
         .ss-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
         .ss-pill {
             padding: 4px 12px; border-radius: 999px; border: 1px solid var(--redge); cursor: pointer;
@@ -1303,13 +1303,13 @@
         .ss-pill.on { border-color: var(--tgedge); color: var(--sel); background: var(--rbg); }
         .ss-label { font-size: var(--t-micro-fixed); color: var(--rsub); font-family: var(--font-mono); letter-spacing: .08em; }
         .ss-input, .ss-select {
-            background: rgba(0,0,0,.5); color: var(--rink); border: 1px solid var(--redge); border-radius: 7px;
-            padding: 4px 8px; font-size: 10px; font-family: var(--font-mono); outline: none;
+            background: color-mix(in srgb, var(--shade) 50%, transparent); color: var(--rink); border: 1px solid var(--redge); border-radius: 7px;
+            padding: 4px 8px; font-size: var(--t-small-fixed); font-family: var(--font-mono); outline: none;
         }
         .ss-input::placeholder { color: var(--rsub); }
         .ss-input:focus, .ss-select:focus { border-color: var(--tgedge); }
         .ss-code {
-            width: 100%; min-height: 200px; resize: vertical; background: rgba(0,0,0,.55); color: oklch(0.942 0.064 calc(var(--h) + 15));
+            width: 100%; min-height: 200px; resize: vertical; background: color-mix(in srgb, var(--shade) 55%, transparent); color: oklch(0.942 0.064 calc(var(--h) + 15));
             border: 1px solid var(--redge); border-radius: 8px; padding: 8px; font-size: var(--t-small-fixed); line-height: 1.45;
             font-family: var(--font-mono); outline: none; white-space: pre; tab-size: 2;
         }
@@ -1325,7 +1325,7 @@
         .ss-gist-list { max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
         .ss-gist-item {
             border: 1px solid var(--redge); border-radius: 8px; padding: 6px 8px; cursor: pointer;
-            font-size: 10px; font-family: var(--font-mono); color: var(--rink);
+            font-size: var(--t-small-fixed); font-family: var(--font-mono); color: var(--rink);
         }
         .ss-gist-item:hover { background: color-mix(in srgb, var(--ink-hi) 6%, transparent); }
         .ss-gist-item.sel { border-color: var(--tgedge); background: var(--rbg); }
@@ -1937,7 +1937,7 @@
             <div id="char-recent-frames" class="picker-strip hidden" title="Frames that arrived from the Sprite Picker — click one to put its name where the cursor is in the JSON below"></div>
             <input id="enemy-key" type="text" placeholder="Key (e.g. enemyA)" class="menu-input">
             <textarea id="enemy-json" rows="12" class="menu-input" style="font-family: var(--font-mono);font-size: var(--t-small-fixed);resize:vertical;"></textarea>
-            <button onclick="saveCurrentEnemy()" class="menu-btn" style="background:var(--ok);color:#000;font-weight:700;">Save</button>
+            <button onclick="saveCurrentEnemy()" class="menu-btn" style="background:var(--ok);color:var(--shade);font-weight:700;">Save</button>
         </div>
     </div>
 
@@ -1984,7 +1984,7 @@
                  brought a weapon with it. -->
             <div style="display:flex;align-items:center;gap:12px;margin:0 0 8px;padding:0 4px;">
                 <canvas id="library-editor-demo-canvas" width="360" height="108"
-                        style="image-rendering:pixelated;background:#111;flex:none;border-radius:6px;border:1px solid #333;"></canvas>
+                        style="image-rendering:pixelated;background:var(--select-ink);flex:none;border-radius:6px;border:1px solid var(--line);"></canvas>
                 <div style="display:flex;flex-direction:column;gap:6px;min-width:0;">
                     <!-- The range aims itself. The element below owns no outward
                          signal for which character it is showing, and reaching
@@ -1992,9 +1992,9 @@
                          deploy — so this picker drives the range and nothing else,
                          and in particular never writes to the editor. -->
                     <select id="library-editor-demo-pick" onchange="showLibraryDemo(this.value)"
-                            style="background:var(--surface-hi);color:var(--ink);border:1px solid var(--line-hi);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;max-width:220px;"></select>
+                            style="background:var(--surface-hi);color:var(--ink);border:1px solid var(--line-hi);border-radius:4px;padding:2px 8px;font-size: var(--t-body-fixed);cursor:pointer;max-width:220px;"></select>
                     <div id="library-editor-demo-note"
-                         style="font-size:10px;letter-spacing:.16em;opacity:.7;white-space:pre-line;"></div>
+                         style="font-size: var(--t-small-fixed);letter-spacing:.16em;opacity:.7;white-space:pre-line;"></div>
                 </div>
             </div>
             <div id="library-editor-host" style="height:62vh;"></div>
@@ -2048,18 +2048,18 @@
     <div id="missing-tex-overlay" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">MISSING TEXTURES — upload an image for each</div>
-            <div style="padding:4px 4px 8px;border-bottom:1px solid #333;margin-bottom:8px;">
-                <div style="font-size: var(--t-small-fixed);color:#888;margin-bottom:6px;font-family: var(--font-mono);">Upload atlas to resolve multiple at once:</div>
+            <div style="padding:4px 4px 8px;border-bottom:1px solid var(--line);margin-bottom:8px;">
+                <div style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:6px;font-family: var(--font-mono);">Upload atlas to resolve multiple at once:</div>
                 <label class="missing-tex-upload" style="cursor:pointer;">
                     ↑ Upload Atlas (PNG + JSON)
                     <input id="missing-tex-atlas-input" type="file" accept=".png,.json,image/png,application/json" multiple style="display:none" onchange="handleAtlasUpload(this.files)">
                 </label>
-                <span id="missing-tex-atlas-status" style="font-size: var(--t-small-fixed);font-family: var(--font-mono);color:#888;margin-left:8px;"></span>
+                <span id="missing-tex-atlas-status" style="font-size: var(--t-small-fixed);font-family: var(--font-mono);color:var(--ink-dim);margin-left:8px;"></span>
             </div>
             <div id="missing-tex-list" style="padding:0 4px;"></div>
             <div style="display:flex;gap:8px;margin-top:12px;">
                 <button id="missing-tex-repack-btn" onclick="repackFromMissingPanel()"
-                        class="menu-btn" style="background:var(--ok);color:#000;font-weight:700;flex:1;justify-content:center;opacity:0.4;"
+                        class="menu-btn" style="background:var(--ok);color:var(--shade);font-weight:700;flex:1;justify-content:center;opacity:0.4;"
                         disabled>Repack Atlas</button>
                 <button onclick="skipMissingTextures()" title="Close the panel. These frames stay missing until they are uploaded; a set that still had one frame was already filled from it."
                         class="menu-btn" style="background:var(--line-hi);color:var(--ink);font-weight:700;flex:1;justify-content:center;">Later</button>
@@ -2071,7 +2071,7 @@
     <div id="atlas-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">ATLAS MANAGER (<span id="frame-count">0</span> frames)
-                <select id="atlas-select" onchange="switchAtlas(this.value)" style="margin-left:12px;background:var(--surface-hi);color:var(--ink);border:1px solid var(--line-hi);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;">
+                <select id="atlas-select" onchange="switchAtlas(this.value)" style="margin-left:12px;background:var(--surface-hi);color:var(--ink);border:1px solid var(--line-hi);border-radius:4px;padding:2px 8px;font-size: var(--t-body-fixed);cursor:pointer;">
                     <option value="game_asset">game_asset</option>
                     <option value="game_ui">game_ui</option>
                     <option value="title_ui">title_ui</option>
@@ -2086,7 +2086,7 @@
                 <button onclick="openFirebaseSprites()" class="menu-btn" style="flex:1;justify-content:center;">☁️ Firebase Sprites</button>
                 <button onclick="repackAtlas()" class="menu-btn" style="flex:1;justify-content:center;">Repack Atlas</button>
             </div>
-            <div id="atlas-replace-banner" class="hidden" style="display:flex;align-items:center;gap:8px;background:#422006;border:1px solid var(--warn);color:var(--warn);padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size:12px;font-family: var(--font-mono);">
+            <div id="atlas-replace-banner" class="hidden" style="display:flex;align-items:center;gap:8px;background:#422006;border:1px solid var(--warn);color:var(--warn);padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size: var(--t-body-fixed);font-family: var(--font-mono);">
                 <span id="atlas-replace-banner-text"></span>
                 <button onclick="cancelMultiReplace()" style="margin-left:auto;background:var(--line);color:var(--ink);border:1px solid var(--line-hi);border-radius:3px;padding:4px 10px;cursor:pointer;font-size: var(--t-small-fixed);">Cancel</button>
             </div>
@@ -2098,19 +2098,19 @@
     <div id="firebase-sprites-modal" class="picker-overlay hidden" onclick="if(event.target===this)closeFirebaseSprites()">
         <div class="picker-panel" style="max-height:85vh;max-width:900px;">
             <div class="picker-title">FIREBASE SPRITES
-                <select id="fb-atlas-select" onchange="loadFirebaseAtlasFrames(this.value)" style="margin-left:12px;background:var(--surface-hi);color:var(--ink);border:1px solid var(--line-hi);border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;">
+                <select id="fb-atlas-select" onchange="loadFirebaseAtlasFrames(this.value)" style="margin-left:12px;background:var(--surface-hi);color:var(--ink);border:1px solid var(--line-hi);border-radius:4px;padding:2px 8px;font-size: var(--t-body-fixed);cursor:pointer;">
                     <option value="">— Select atlas —</option>
                 </select>
-                <span id="fb-sprites-status" style="margin-left:12px;font-size: var(--t-small-fixed);font-family: var(--font-mono);color:#888;"></span>
+                <span id="fb-sprites-status" style="margin-left:12px;font-size: var(--t-small-fixed);font-family: var(--font-mono);color:var(--ink-dim);"></span>
             </div>
-            <div style="font-size: var(--t-small-fixed);color:#888;margin-bottom:8px;font-family: var(--font-mono);">Click frames to toggle selection. Then add as new or replace an existing frame.</div>
+            <div style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:8px;font-family: var(--font-mono);">Click frames to toggle selection. Then add as new or replace an existing frame.</div>
             <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
                 <button onclick="selectAllFirebaseFrames(true)" class="menu-btn" style="font-size: var(--t-small-fixed);padding:4px 10px;">Select All</button>
                 <button onclick="selectAllFirebaseFrames(false)" class="menu-btn" style="font-size: var(--t-small-fixed);padding:4px 10px;">Clear</button>
                 <span id="fb-selected-count" style="font-size: var(--t-small-fixed);font-family: var(--font-mono);color:var(--ink-dim);flex:1;">0 selected</span>
-                <button onclick="addFirebaseSpritesToAtlas('add')" class="menu-btn" style="background:var(--ok);color:#000;font-weight:700;">+ Add as New</button>
-                <button onclick="addFirebaseSpritesToAtlas('replace')" class="menu-btn" style="background:var(--warn);color:#000;font-weight:700;">↻ Replace</button>
-                <button id="fb-voxelize-btn" onclick="voxelizeSelectedFirebaseFrames()" class="menu-btn" style="background:var(--info);color:#000;font-weight:700;" title="Send the selected frames to Pixel Composer; voxelized versions join the atlas as new frames">⬢ Voxelize</button>
+                <button onclick="addFirebaseSpritesToAtlas('add')" class="menu-btn" style="background:var(--ok);color:var(--shade);font-weight:700;">+ Add as New</button>
+                <button onclick="addFirebaseSpritesToAtlas('replace')" class="menu-btn" style="background:var(--warn);color:var(--shade);font-weight:700;">↻ Replace</button>
+                <button id="fb-voxelize-btn" onclick="voxelizeSelectedFirebaseFrames()" class="menu-btn" style="background:var(--info);color:var(--shade);font-weight:700;" title="Send the selected frames to Pixel Composer; voxelized versions join the atlas as new frames">⬢ Voxelize</button>
             </div>
             <div id="fb-sprites-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;max-height:60vh;overflow-y:auto;padding:4px;background:var(--surface);border-radius:4px;"></div>
         </div>
@@ -2121,13 +2121,13 @@
     <div id="story-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this){syncStoryFromUI();this.classList.add('hidden')}">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">STORY EDITOR</div>
-            <div style="font-size: var(--t-small-fixed);color:#888;margin-bottom:12px;font-family: var(--font-mono);">Edit AdvScene dialog per stage</div>
+            <div style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:12px;font-family: var(--font-mono);">Edit AdvScene dialog per stage</div>
             <div style="display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap;" id="story-stage-pills"></div>
             <div id="story-images-row" class="story-images-row"></div>
             <div id="story-parts-list"></div>
             <div style="display:flex;gap:8px;margin-top:12px;">
                 <button onclick="addStoryPart()" class="menu-btn" style="flex:1;justify-content:center;">+ Add Part</button>
-                <button onclick="saveStoryData()" class="menu-btn" style="background:var(--ok);color:#000;font-weight:700;flex:1;justify-content:center;">Save Story</button>
+                <button onclick="saveStoryData()" class="menu-btn" style="background:var(--ok);color:var(--shade);font-weight:700;flex:1;justify-content:center;">Save Story</button>
             </div>
             <div id="story-script-panel" class="ss-panel"></div>
         </div>
@@ -2137,7 +2137,7 @@
     <div id="title-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:80vh">
             <div class="picker-title">TITLE EDITOR</div>
-            <div style="font-size: var(--t-small-fixed);color:#888;margin-bottom:12px;font-family: var(--font-mono);">Customize title screen logo, subtitle, and background</div>
+            <div style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:12px;font-family: var(--font-mono);">Customize title screen logo, subtitle, and background</div>
             <div id="title-editor-slots" class="story-images-row"></div>
             <div id="title-script-panel" class="ss-panel"></div>
         </div>
@@ -2153,7 +2153,7 @@
     <div id="background-manager-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:86vh;overflow:auto">
             <div class="picker-title">BACKGROUND MANAGER</div>
-            <div id="background-manager-sub" style="font-size: var(--t-small-fixed);color:#888;margin-bottom:10px;font-family: var(--font-mono);"></div>
+            <div id="background-manager-sub" style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:10px;font-family: var(--font-mono);"></div>
             <div id="bg-set-pills"></div>
             <div id="background-slots" class="story-images-row"></div>
             <div id="background-manager-note" class="menu-note"></div>
@@ -2169,7 +2169,7 @@
     <div id="cabinet-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:86vh;overflow:auto">
             <div class="picker-title">CABINET</div>
-            <div style="font-size: var(--t-small-fixed);color:#888;margin-bottom:10px;font-family: var(--font-mono);">The page around the game: what is behind it, the frame around its screen, the HOW TO PLAY card and the loading screen</div>
+            <div style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:10px;font-family: var(--font-mono);">The page around the game: what is behind it, the frame around its screen, the HOW TO PLAY card and the loading screen</div>
             <div id="cabinet-slots" class="story-images-row cabinet-slots"></div>
             <div id="cabinet-note" class="menu-note"></div>
         </div>
@@ -2179,7 +2179,7 @@
     <div id="audio-editor-modal" class="picker-overlay hidden" onclick="if(event.target===this)this.classList.add('hidden')">
         <div class="picker-panel" style="max-height:85vh;max-width:800px;">
             <div class="picker-title">AUDIO EDITOR</div>
-            <div style="font-size: var(--t-small-fixed);color:#888;margin-bottom:12px;font-family: var(--font-mono);">Upload custom MP3 files to replace any game sound or music</div>
+            <div style="font-size: var(--t-small-fixed);color:var(--ink-dim);margin-bottom:12px;font-family: var(--font-mono);">Upload custom MP3 files to replace any game sound or music</div>
             <div class="audio-filter-row">
                 <div class="audio-filter-pill on" data-audio-cat="all" onclick="setAudioFilter('all')">All</div>
                 <div class="audio-filter-pill" data-audio-cat="bgm" onclick="setAudioFilter('bgm')">BGM</div>
@@ -15038,9 +15038,9 @@ function GAME3D_RUNTIME(DATA) {
             "  /* the overlay host is pointer-events:none — opt back in for clicks */",
             "  .wrap { position: absolute; inset: 0; display: flex; flex-direction: column;",
             "          align-items: center; justify-content: center; gap: 12px; pointer-events: auto;",
-            "          background: rgba(0,0,0,.85); color: var(--ink-hi); font-family: var(--font-mono); text-align: center; }",
+            "          background: rgba(0,0,0,.85); color: #fff; font-family: monospace; text-align: center; }",
             "  h1 { color: #ffe81f; margin: 0; }",
-            "  button { background: #ff2255; color: var(--ink-hi); border: 0; padding: 10px 24px;",
+            "  button { background: #ff2255; color: #fff; border: 0; padding: 10px 24px;",
             "           font: bold 16px monospace; cursor: pointer; }",
             "</style>",
         ].join('\n');

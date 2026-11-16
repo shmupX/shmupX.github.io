@@ -26,8 +26,8 @@ html, body, #app-root {
 body {
   background:
     radial-gradient(ellipse 80% 60% at 38% 55%, oklch(0.413 0.105 calc(var(--h) + 19) / 0.45), transparent 70%),
-    radial-gradient(ellipse 60% 70% at 50% 50%, oklch(0.247 0.056 calc(var(--h) + 20) / 0.85), #000 80%);
-  background-color: #000;
+    radial-gradient(ellipse 60% 70% at 50% 50%, oklch(0.247 0.056 calc(var(--h) + 20) / 0.85), var(--shade) 80%);
+  background-color: var(--shade);
 }
 
 /* Hide the pointer on anything that isn't a keyboard-and-mouse desk: a
@@ -60,7 +60,7 @@ body.no-cursor.pad-on * { cursor: none !important; }
 /* Scan + vignette */
 .scan { position: fixed; inset: 0; pointer-events: none; z-index: 50; background: repeating-linear-gradient(180deg, oklch(0.874 0.241 calc(var(--h) + 20) / 0.035) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
 body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
-.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 51; background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, .88) 100%); }
+.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 51; background: radial-gradient(ellipse at center, transparent 50%, color-mix(in srgb, var(--shade) 88%, transparent) 100%); }
 .noise { position: fixed; inset: 0; pointer-events: none; z-index: 49; opacity: .05; mix-blend-mode: overlay; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0.7  0 0 0 0 1  0 0 0 0 0.5  0 0 0 1 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); }
 
 .stage { position: relative; height: 100%; width: 100%; z-index: 1; }
@@ -103,8 +103,8 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 }
 .orb .core {
   position: absolute; inset: 14%; border-radius: 50%;
-  background: radial-gradient(circle at 38% 38%, #f9ffd0 0%, oklch(0.944 0.166 calc(var(--h) - 6)) 13%, oklch(0.892 0.241 calc(var(--h) + 9)) 35%, oklch(0.626 0.160 calc(var(--h) + 18)) 60%, var(--surface-hi) 86%, #000 100%);
-  box-shadow: inset -10px -20px 60px rgba(0, 0, 0, .55), inset 20px 30px 80px rgba(255, 255, 200, .35), 0 0 60px oklch(0.888 0.240 calc(var(--h) + 11) / 0.5);
+  background: radial-gradient(circle at 38% 38%, #f9ffd0 0%, oklch(0.944 0.166 calc(var(--h) - 6)) 13%, oklch(0.892 0.241 calc(var(--h) + 9)) 35%, oklch(0.626 0.160 calc(var(--h) + 18)) 60%, var(--surface-hi) 86%, var(--shade) 100%);
+  box-shadow: inset -10px -20px 60px color-mix(in srgb, var(--shade) 55%, transparent), inset 20px 30px 80px rgba(255, 255, 200, .35), 0 0 60px oklch(0.888 0.240 calc(var(--h) + 11) / 0.5);
   animation: coreShift 8s ease-in-out infinite;
 }
 @keyframes coreShift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(1%, -1%) scale(1.02); } }
@@ -147,7 +147,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .node::before {
   content: ""; position: absolute; inset: 18%; border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, var(--ink-hi) 0%, oklch(0.945 0.152 calc(var(--h) - 4)) 18%, var(--green) 45%, oklch(0.418 0.102 calc(var(--h) + 18)) 75%, var(--surface) 100%);
-  box-shadow: 0 0 22px oklch(0.900 0.226 calc(var(--h) + 8) / 0.55), inset -3px -6px 14px rgba(0, 0, 0, .5);
+  box-shadow: 0 0 22px oklch(0.900 0.226 calc(var(--h) + 8) / 0.55), inset -3px -6px 14px color-mix(in srgb, var(--shade) 50%, transparent);
   transition: background .25s ease, box-shadow .25s ease;
 }
 .node::after {
@@ -158,7 +158,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 }
 .item.sel .node::before {
   background: radial-gradient(circle at 35% 30%, #fffacc 0%, #fff36a 20%, var(--yellow) 50%, #8c7a00 80%, #2b2400 100%);
-  box-shadow: 0 0 28px color-mix(in srgb, var(--select-hot) 75%, transparent), inset -3px -6px 14px rgba(0, 0, 0, .5);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--select-hot) 75%, transparent), inset -3px -6px 14px color-mix(in srgb, var(--shade) 50%, transparent);
 }
 .item.sel .node::after { border-color: color-mix(in srgb, var(--select-hot) 85%, transparent); box-shadow: inset 0 0 16px color-mix(in srgb, var(--select-hot) 35%, transparent), 0 0 26px color-mix(in srgb, var(--select-hot) 40%, transparent); }
 
@@ -180,19 +180,19 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .bar .num { margin-left: auto; font-family: var(--font-mono); font-size: .55em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); letter-spacing: .08em; }
 
 .item.sel .bar {
-  color: #0a0a06;
+  color: var(--select-ink);
   background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 25%, #d8e640 60%, #a4b00b 100%);
-  border-color: #fff36a;
+  border-color: var(--select-hot);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 180, .5), inset 0 2px 0 rgba(255, 255, 220, .7), inset 0 -2px 0 rgba(150, 140, 0, .4), 0 0 40px color-mix(in srgb, var(--select-hot) 50%, transparent), 0 0 80px color-mix(in srgb, var(--select-hot) 20%, transparent);
 }
-.item.sel .bar .num { color: rgba(60, 50, 0, .7); }
+.item.sel .bar .num { color: color-mix(in srgb, var(--select-ink) 70%, transparent); }
 .item:hover:not(.sel) .bar {
   background: linear-gradient(180deg, oklch(0.838 0.161 calc(var(--h) + 18) / 0.18), oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 35%, oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 65%, oklch(0.838 0.161 calc(var(--h) + 18) / 0.18));
   color: oklch(0.987 0.034 calc(var(--h) - 9));
   box-shadow: inset 0 2px 0 oklch(0.933 0.150 calc(var(--h) + 4) / 0.32), 0 0 32px oklch(0.793 0.202 calc(var(--h) + 16) / 0.35);
 }
 .item .tag {
-  position: absolute; left: 0; top: -1.4em; font-family: var(--font-mono); font-size: clamp(10px, 1.2vmin, 13px);
+  position: absolute; left: 0; top: -1.4em; font-family: var(--font-mono); font-size: var(--t-micro);
   color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.5); letter-spacing: .2em; text-transform: uppercase;
 }
 
@@ -202,7 +202,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    touch lands on .games-panel and the footer's onpointerup never fires (PR #27's
    handler is correct but unreachable). Stays below .game-iframe (99, outside
    .stage) so the footers remain hidden while a game is playing. */
-.footer { position: absolute; right: 5vmin; bottom: 4vmin; z-index: 6; display: flex; align-items: center; gap: 1vmin; font-family: var(--font-mono); letter-spacing: .2em; color: var(--ink); text-transform: uppercase; font-size: clamp(12px, 1.5vmin, 16px); }
+.footer { position: absolute; right: 5vmin; bottom: 4vmin; z-index: 6; display: flex; align-items: center; gap: 1vmin; font-family: var(--font-mono); letter-spacing: .2em; color: var(--ink); text-transform: uppercase; font-size: var(--t-small); }
 .footer.left { left: 5vmin; right: auto; }
 /* Update hint sits left of the A action, centred, without a transform (so the
    .footer.tap:active scale stays intact). */
@@ -251,9 +251,9 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   width: 19vmin; height: 19vmin; max-width: 220px; max-height: 220px; min-width: 140px; min-height: 140px;
   border-radius: 50%; position: relative;
   background:
-    radial-gradient(circle at 50% 50%, #000 0%, var(--surface) 22%, transparent 23%),
+    radial-gradient(circle at 50% 50%, var(--shade) 0%, var(--surface) 22%, transparent 23%),
     conic-gradient(from 0deg, oklch(0.892 0.236 calc(var(--h) + 10) / 0.55), oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.892 0.236 calc(var(--h) + 10) / 0.55) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.892 0.236 calc(var(--h) + 10) / 0.55));
-  box-shadow: 0 0 35px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 0 40px rgba(0, 0, 0, .65);
+  box-shadow: 0 0 35px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 0 40px color-mix(in srgb, var(--shade) 65%, transparent);
   animation: spin 9s linear infinite;
 }
 .disc::before { content: ""; position: absolute; inset: 38%; border-radius: 50%; background: radial-gradient(circle, #fffec5, var(--yellow) 30%, #6e7b00 70%, #1a1d00 100%); box-shadow: 0 0 25px color-mix(in srgb, var(--select-hot) 60%, transparent); }
@@ -276,7 +276,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   border: 1px solid var(--tile-edge);
   clip-path: polygon(0 0, calc(100% - 3vmin) 0, 100% 50%, calc(100% - 3vmin) 100%, 0 100%, 3vmin 50%);
   display: flex; align-items: center; justify-content: center;
-  color: var(--ink); font-weight: 800; font-size: clamp(13px, 3.6vmin, 42px); letter-spacing: .22em;
+  color: var(--ink); font-weight: 800; font-size: var(--t-title); letter-spacing: .22em;
   white-space: nowrap; overflow: hidden;
   text-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.55);
   box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.2), 0 0 30px oklch(0.731 0.203 calc(var(--h) + 16) / 0.22);
@@ -284,7 +284,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   /* .dim rides in and out on every Up/Down between the strip and the list. */
   transition: color .25s ease, border-color .25s ease;
 }
-.counter { font-family: var(--font-mono); font-size: clamp(11px, 1.5vmin, 16px); letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); text-transform: uppercase; min-width: 5em; text-align: right; flex-shrink: 0; }
+.counter { font-family: var(--font-mono); font-size: var(--t-small); letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); text-transform: uppercase; min-width: 5em; text-align: right; flex-shrink: 0; }
 /* The eShop's release-status filter: chips between the title and the counter.
    ◀ ▶ cycles them, a tap picks one; the lit chip is the filter in force. A
    long row scrolls sideways on a phone rather than pushing the counter out. */
@@ -294,22 +294,22 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    launcher): out of the way, still in the row so nothing else moves. */
 .eshop-filters.tucked { opacity: 0; transform: translateX(1.5vmin); pointer-events: none; }
 .eshop-filter {
-  font-family: var(--font-mono); font-size: clamp(10px, 1.4vmin, 15px); letter-spacing: .16em;
+  font-family: var(--font-mono); font-size: var(--t-small); letter-spacing: .16em;
   padding: .5em 1em; border-radius: 3px; white-space: nowrap; cursor: pointer; flex-shrink: 0;
-  border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.3); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); background: rgba(0, 0, 0, .25);
+  border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.3); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); background: color-mix(in srgb, var(--shade) 25%, transparent);
   transition: color .15s ease, background .15s ease, border-color .15s ease;
 }
 .eshop-filter:hover { border-color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.6); color: var(--ink); }
-.eshop-filter.on { color: #1a1400; background: #ffe06a; border-color: #ffe06a; }
-.eshop-filter:focus-visible { outline: 2px solid #ffe06a; outline-offset: 2px; }
+.eshop-filter.on { color: var(--select-ink); background: var(--select); border-color: var(--select); }
+.eshop-filter:focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
 /* Settings › AVATAR: the free-entry field at the end of the row. */
 .avatar-input {
   flex-shrink: 0; width: 3.2em; height: 2.2em; margin-right: 1.5vmin;
   font: inherit; font-size: var(--t-head); text-align: center; line-height: 1;
-  color: var(--ink); background: rgba(0, 0, 0, .35); border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.35); border-radius: 4px;
+  color: var(--ink); background: color-mix(in srgb, var(--shade) 35%, transparent); border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.35); border-radius: 4px;
 }
-.avatar-input:focus { outline: none; border-color: #ffe06a; box-shadow: 0 0 12px rgba(255, 224, 106, .4); }
-.game-row.sel .avatar-input { color: #1a1400; background: color-mix(in srgb, var(--ink-hi) 35%, transparent); border-color: rgba(20, 20, 0, .45); }
+.avatar-input:focus { outline: none; border-color: var(--select); box-shadow: 0 0 12px color-mix(in srgb, var(--select) 40%, transparent); }
+.game-row.sel .avatar-input { color: var(--select-ink); background: color-mix(in srgb, var(--ink-hi) 35%, transparent); border-color: color-mix(in srgb, var(--select-ink) 45%, transparent); }
 /* Settings › BUILD SERVER: the pairing code as something a camera can read,
    in the row beside the letters. On a white ground whatever the theme — a
    phone's scanner wants the contrast that way round — and sized to stay
@@ -323,9 +323,9 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 /* The catalog header carries a third element (the Add button), so the title
    gives back a little size and the row can shrink further before it wraps. */
 .games-panel.with-strip .games-header { min-height: 56px; }
-.games-panel.with-strip .title-bar { font-size: clamp(13px, 3.2vmin, 38px); }
+.games-panel.with-strip .title-bar { font-size: var(--t-title); }
 
-.games-list { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 1.4vmin; overflow-x: visible; overflow-y: auto; padding: 2vmin 1vmin 2vmin max(1.6vmin, 32px); scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none; mask-image: linear-gradient(180deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%); -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%); }
+.games-list { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; gap: 1.4vmin; overflow-x: visible; overflow-y: auto; padding: 2vmin 1vmin 2vmin max(1.6vmin, 32px); scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none; mask-image: linear-gradient(180deg, transparent 0, var(--shade) 3vmin, var(--shade) calc(100% - 3vmin), transparent 100%); -webkit-mask-image: linear-gradient(180deg, transparent 0, var(--shade) 3vmin, var(--shade) calc(100% - 3vmin), transparent 100%); }
 .games-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .game-row { flex-shrink: 0; scroll-margin: 3vmin 0; }
 
@@ -344,7 +344,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   background:
     radial-gradient(circle at 50% 50%, var(--surface) 25%, transparent 26%),
     conic-gradient(from 30deg, oklch(0.900 0.226 calc(var(--h) + 8) / 0.7), oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7));
-  box-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 14px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 14px color-mix(in srgb, var(--shade) 55%, transparent);
   display: flex; align-items: center; justify-content: center;
 }
 .game-icon .glass {
@@ -377,7 +377,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   position: absolute; left: 7%; right: 7%; top: 32%; bottom: 7%; z-index: 1;
   border-radius: 14%; border: 1px solid var(--tile-edge);
   background: linear-gradient(165deg, oklch(0.342 0.084 calc(var(--h) + 21)), var(--surface));
-  box-shadow: inset 0 0 10px rgba(0, 0, 0, .55);
+  box-shadow: inset 0 0 10px color-mix(in srgb, var(--shade) 55%, transparent);
 }
 /* No folder tab: at this geometry the back disc's circle covers all four of its
    corners, so it only ghosts through the conic gradient's transparent sectors —
@@ -386,7 +386,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .submenu-art .sub-disc {
   position: absolute; width: 44%; height: 44%; border-radius: 50%; z-index: 2;
   border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.7);
-  box-shadow: 0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 6px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 6px color-mix(in srgb, var(--shade) 55%, transparent);
   background:
     radial-gradient(circle at 50% 50%, var(--surface) 24%, transparent 25%),
     conic-gradient(from 30deg, oklch(0.900 0.226 calc(var(--h) + 8) / 0.85), oklch(0.681 0.176 calc(var(--h) + 16) / 0.3), oklch(0.900 0.226 calc(var(--h) + 8) / 0.85) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.3), oklch(0.900 0.226 calc(var(--h) + 8) / 0.85));
@@ -400,10 +400,10 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.22);
 }
 .game-row.sel .submenu-icon { filter: drop-shadow(0 0 22px color-mix(in srgb, var(--select-hot) 70%, transparent)); }
-.game-row.sel .submenu-art .sub-disc { border-color: color-mix(in srgb, var(--select-hot) 90%, transparent); box-shadow: 0 0 8px color-mix(in srgb, var(--select-hot) 50%, transparent), inset 0 0 6px rgba(0, 0, 0, .5); }
+.game-row.sel .submenu-art .sub-disc { border-color: color-mix(in srgb, var(--select-hot) 90%, transparent); box-shadow: 0 0 8px color-mix(in srgb, var(--select-hot) 50%, transparent), inset 0 0 6px color-mix(in srgb, var(--shade) 50%, transparent); }
 .game-row.sel .submenu-art .folder,
 .game-row.sel .submenu-art::after { border-color: color-mix(in srgb, var(--select-hot) 85%, transparent); }
-.game-row.sel .submenu-art::after { border-top-color: #fff36a; }
+.game-row.sel .submenu-art::after { border-top-color: var(--select-hot); }
 
 .game-bar {
   flex: 1; height: 100%;
@@ -423,7 +423,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    holds its full width and the name — the thing you are actually picking —
    collapses to a single letter and an ellipsis. */
 .game-bar .sub { font-family: var(--font-mono); font-weight: 400; font-size: .7em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); letter-spacing: .1em; margin-left: 1.5em; white-space: nowrap; flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.game-row.sel .game-icon { box-shadow: 0 0 28px color-mix(in srgb, var(--select-hot) 70%, transparent), inset 0 0 14px rgba(0, 0, 0, .55); }
+.game-row.sel .game-icon { box-shadow: 0 0 28px color-mix(in srgb, var(--select-hot) 70%, transparent), inset 0 0 14px color-mix(in srgb, var(--shade) 55%, transparent); }
 .game-row.sel .game-icon .glass { box-shadow: inset 0 0 12px color-mix(in srgb, var(--select-hot) 50%, transparent), 0 0 0 2px color-mix(in srgb, var(--select-hot) 90%, transparent); }
 /* ── Shelf badge ──────────────────────────────────────────────────────────
    A row that owns a .sav shelf (ShmupX) wears a little stack of cartridge
@@ -451,8 +451,8 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   /* Solid, dark-on-light: the selected row's background is bright yellow and
      the unselected one is near-black, and a translucent pill legible on one is
      invisible on the other. */
-  color: #06172b; background: #9ccdf5;
-  border: 1px solid rgba(0, 0, 0, 0.35);
+  color: #06172b; background: var(--info);
+  border: 1px solid color-mix(in srgb, var(--shade) 35%, transparent);
 }
 /* An open seat is the actionable case, so it gets the warmer colour and the
    pulse; a full run is information, not an invitation. */
@@ -506,16 +506,16 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .shelf-spines i:nth-child(2) { height: 100%; }
 .shelf-spines i:nth-child(3) { height: 84%; transform: rotate(9deg); transform-origin: bottom center; }
 .shelf-copy { display: none; flex-direction: column; line-height: 1.2; text-align: left; }
-.shelf-copy b { font-size: clamp(9px, 1.3vmin, 12px); letter-spacing: .22em; color: var(--ink); }
+.shelf-copy b { font-size: var(--t-micro); letter-spacing: .22em; color: var(--ink); }
 .shelf-copy em {
-  font-style: normal; font-size: clamp(8px, 1.1vmin, 11px); letter-spacing: .12em;
+  font-style: normal; font-size: var(--t-micro); letter-spacing: .12em;
   color: oklch(0.933 0.150 calc(var(--h) + 4) / 0.75); text-transform: uppercase; white-space: nowrap;
 }
 .shelf-key {
   display: flex; align-items: center; justify-content: center;
   width: 2.6vmin; height: 2.6vmin; min-width: 18px; min-height: 18px; border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--select-hot) 80%, transparent); color: var(--select-hot); font-weight: 800;
-  font-size: clamp(9px, 1.3vmin, 12px);
+  font-size: var(--t-micro);
   box-shadow: 0 0 8px color-mix(in srgb, var(--select-hot) 35%, transparent), inset 0 0 6px color-mix(in srgb, var(--select-hot) 15%, transparent);
 }
 .shelf-badge.lit {
@@ -537,10 +537,10 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .game-row.sel .game-bar {
   color: var(--select-ink);
   background: linear-gradient(180deg, #fffea1 0%, var(--yellow) 28%, #d8e640 65%, #a4b00b 100%);
-  border-color: #fff36a;
+  border-color: var(--select-hot);
   box-shadow: inset 0 2px 0 rgba(255, 255, 220, .7), 0 0 36px color-mix(in srgb, var(--select-hot) 50%, transparent);
 }
-.game-row.sel .game-bar .sub { color: rgba(40, 30, 0, .65); }
+.game-row.sel .game-bar .sub { color: color-mix(in srgb, var(--select-ink) 65%, transparent); }
 .game-row:hover:not(.sel) .game-bar {
   background: linear-gradient(180deg, oklch(0.838 0.161 calc(var(--h) + 18) / 0.16), oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 50%, oklch(0.480 0.111 calc(var(--h) + 18) / 0.7) 50%, oklch(0.838 0.161 calc(var(--h) + 18) / 0.16));
 }
@@ -550,17 +550,17 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .uninstall-btn {
   flex-shrink: 0; width: 4.4vmin; height: 4.4vmin; min-width: 38px; min-height: 38px;
   border-radius: 50%; cursor: pointer;
-  border: 1.5px solid rgba(255, 150, 150, .7);
+  border: 1.5px solid color-mix(in srgb, var(--error) 70%, transparent);
   background: radial-gradient(circle at 35% 30%, #ffd9d9 0%, #ff8a8a 35%, #b3322b 80%);
-  color: #2a0606; font-weight: 800; font-size: clamp(14px, 1.9vmin, 19px); line-height: 1;
+  color: #2a0606; font-weight: 800; font-size: var(--t-body); line-height: 1;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 0 12px rgba(255, 90, 90, .45), inset -1px -2px 6px rgba(0, 0, 0, .4);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--error) 45%, transparent), inset -1px -2px 6px color-mix(in srgb, var(--shade) 40%, transparent);
   transition: transform .15s ease, filter .2s ease;
   -webkit-tap-highlight-color: transparent;
 }
 .uninstall-btn:hover { filter: brightness(1.1); }
 .uninstall-btn:active { transform: scale(.9); }
-.game-row.sel .uninstall-btn { box-shadow: 0 0 16px rgba(255, 110, 110, .7), inset -1px -2px 6px rgba(0, 0, 0, .4); }
+.game-row.sel .uninstall-btn { box-shadow: 0 0 16px color-mix(in srgb, var(--error) 70%, transparent), inset -1px -2px 6px color-mix(in srgb, var(--shade) 40%, transparent); }
 
 /* === Emulator strip ======================================================
    A horizontal shelf of console tiles across the top of the catalog panel.
@@ -584,7 +584,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   padding: 0 .4vmin;
 }
 .strip-head .strip-label { transition: color .2s ease, text-shadow .2s ease; }
-.strip-head .strip-label.on { color: #fff36a; text-shadow: 0 0 14px color-mix(in srgb, var(--select-hot) 50%, transparent); }
+.strip-head .strip-label.on { color: var(--select-hot); text-shadow: 0 0 14px color-mix(in srgb, var(--select-hot) 50%, transparent); }
 .strip-head .strip-core { color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.42); letter-spacing: .22em; }
 /* Pushes the emulator credits to the right end of the header line. Carried by a
    class rather than :first-of-type — the label span is the first <span> here, so
@@ -601,8 +601,8 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.1), oklch(0.249 0.051 calc(var(--h) + 20) / 0.55));
   box-shadow: inset 0 2px 0 oklch(0.925 0.165 calc(var(--h) + 6) / 0.12);
   transition: border-color .25s ease, box-shadow .25s ease, padding .3s ease, gap .3s ease;
-  mask-image: linear-gradient(90deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 3vmin, #000 calc(100% - 3vmin), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, var(--shade) 3vmin, var(--shade) calc(100% - 3vmin), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, var(--shade) 3vmin, var(--shade) calc(100% - 3vmin), transparent 100%);
 }
 .cmg-strip::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .cmg-strip:active { cursor: grabbing; }
@@ -631,7 +631,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   background:
     radial-gradient(circle at 50% 50%, var(--surface) 25%, transparent 26%),
     conic-gradient(from 30deg, oklch(0.900 0.226 calc(var(--h) + 8) / 0.7), oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7) 60%, oklch(0.681 0.176 calc(var(--h) + 16) / 0.25), oklch(0.900 0.226 calc(var(--h) + 8) / 0.7));
-  box-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 14px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 18px oklch(0.892 0.236 calc(var(--h) + 10) / 0.5), inset 0 0 14px color-mix(in srgb, var(--shade) 55%, transparent);
   display: flex; align-items: center; justify-content: center;
   transition: transform .22s cubic-bezier(.2, .8, .2, 1.08), box-shadow .22s ease;
 }
@@ -646,7 +646,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    fill to carry the glow and reads better with air around it. */
 .strip-disc .glass svg.glyph { width: 64%; height: 64%; color: oklch(0.906 0.145 calc(var(--h) + 2)); filter: drop-shadow(0 0 6px oklch(0.892 0.236 calc(var(--h) + 10) / 0.55)); }
 .strip-disc .mark {
-  font-weight: 800; font-size: clamp(18px, 2.9vmin, 32px); letter-spacing: .04em;
+  font-weight: 800; font-size: var(--t-head); letter-spacing: .04em;
   color: oklch(0.906 0.145 calc(var(--h) + 2)); text-shadow: 0 0 10px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7);
   transition: font-size .3s ease, color .2s ease;
 }
@@ -654,7 +654,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .strip-disc .mark.long { font-size: clamp(14px, 2.1vmin, 24px); }
 /* …and both sizes step down again on the collapsed rail, where the disc is a
    third of its expanded width. */
-.cmg-strip:not(.on) .strip-disc .mark { font-size: clamp(9px, 1.25vmin, 14px); }
+.cmg-strip:not(.on) .strip-disc .mark { font-size: var(--t-micro); }
 .cmg-strip:not(.on) .strip-disc .mark.long { font-size: clamp(7px, .95vmin, 11px); }
 
 /* The tile name only shows for the tile under the cursor — eight labels at once
@@ -662,16 +662,16 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    max-height is the collapse axis (every tile, driven by the rail state); the
    opacity is the selection axis. Both animate, so the rail's height eases. */
 .strip-name {
-  font-family: var(--font-mono); font-size: clamp(10px, 1.3vmin, 14px);
+  font-family: var(--font-mono); font-size: var(--t-small);
   letter-spacing: .16em; text-transform: uppercase; white-space: nowrap;
-  color: #fff36a; text-shadow: 0 0 12px color-mix(in srgb, var(--select-hot) 60%, transparent);
+  color: var(--select-hot); text-shadow: 0 0 12px color-mix(in srgb, var(--select-hot) 60%, transparent);
   opacity: 0; max-height: 3vmin; overflow: hidden;
   transition: opacity .2s ease, max-height .3s ease; width: max-content;
 }
 .cmg-strip:not(.on) .strip-name { max-height: 0; }
 .strip-tile.sel .strip-disc {
   transform: scale(1.06);
-  box-shadow: 0 0 34px color-mix(in srgb, var(--select-hot) 75%, transparent), inset 0 0 14px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--select-hot) 75%, transparent), inset 0 0 14px color-mix(in srgb, var(--shade) 55%, transparent);
 }
 .strip-tile.sel .strip-disc .glass {
   background: radial-gradient(circle at 50% 30%, var(--surface-hi), var(--surface) 70%);
@@ -683,7 +683,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
    glow of .sel and none of its scale, gradient or label: enough yellow to find
    your shelf on the collapsed rail, not enough to compete with the row cursor. */
 .strip-tile.active:not(.sel) .strip-disc {
-  box-shadow: 0 0 18px color-mix(in srgb, var(--select-hot) 45%, transparent), inset 0 0 14px rgba(0, 0, 0, .55);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--select-hot) 45%, transparent), inset 0 0 14px color-mix(in srgb, var(--shade) 55%, transparent);
 }
 .strip-tile.active:not(.sel) .strip-disc .glass {
   box-shadow: inset 0 0 12px color-mix(in srgb, var(--select-hot) 30%, transparent), 0 0 0 2px color-mix(in srgb, var(--select-hot) 65%, transparent);
@@ -700,15 +700,15 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .add-btn {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 10px;
   font-family: var(--font-display); font-weight: 700; letter-spacing: .18em;
-  text-transform: uppercase; font-size: clamp(11px, 1.2vmin, 13px);
+  text-transform: uppercase; font-size: var(--t-small);
   color: oklch(0.166 0.029 calc(var(--h) + 21));
   background: linear-gradient(180deg, oklch(0.911 0.202 calc(var(--h) + 6) / 0.95), oklch(0.792 0.226 calc(var(--h) + 10) / 0.9));
   border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6));
   padding: 12px 22px; border-radius: 999px; cursor: pointer; white-space: nowrap;
-  box-shadow: 0 0 24px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 -2px 0 rgba(0, 0, 0, .15);
+  box-shadow: 0 0 24px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 -2px 0 color-mix(in srgb, var(--shade) 15%, transparent);
   transition: transform .15s ease, box-shadow .2s ease;
 }
-.add-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
+.add-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7), inset 0 -2px 0 color-mix(in srgb, var(--shade) 15%, transparent); }
 .add-btn:active { transform: translateY(0) scale(.98); }
 .add-btn-icon { font-size: 1.2em; }
 
@@ -716,17 +716,17 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .strip-top {
   position: absolute; left: 25vmin; right: 2vmin; top: -4.2vmin; height: 3vmin;
   display: flex; align-items: center; justify-content: flex-end; gap: 2em;
-  color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); font-family: var(--font-mono); font-size: clamp(11px, 1.3vmin, 14px); letter-spacing: .22em; text-transform: uppercase;
+  color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55); font-family: var(--font-mono); font-size: var(--t-small); letter-spacing: .22em; text-transform: uppercase;
 }
 
 /* Iframe holder when a game is launched */
 .game-iframe {
-  position: fixed; inset: 0; background: #000; z-index: 99;
+  position: fixed; inset: 0; background: var(--shade); z-index: 99;
   opacity: 0; transform: scale(.92); pointer-events: none;
   transition: opacity .5s ease, transform .5s ease;
 }
 .game-iframe.on { opacity: 1; transform: scale(1); pointer-events: auto; }
-.game-iframe iframe { width: 100%; height: 100%; border: 0; background: #000; }
+.game-iframe iframe { width: 100%; height: 100%; border: 0; background: var(--shade); }
 
 /* Touch twin-stick overlay — enabled from the Guide only for twin-stick games.
    The visuals reuse the Nintendo dynamic analog assets while each half of the
@@ -781,7 +781,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
 .osd-corner.br { right: 0; bottom: 0; }
 
 /* Soft-mod cinematic overlay — full-screen, above the game iframe and OSD. */
-.softmod-overlay { position: fixed; inset: 0; z-index: 200; background: #000; }
+.softmod-overlay { position: fixed; inset: 0; z-index: 200; background: var(--shade); }
 .softmod-overlay iframe { width: 100%; height: 100%; border: 0; display: block; }
 
 /* Music app sidebar — a CMG Network kind:'music' app docked to the right edge.
@@ -797,7 +797,7 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   display: flex; flex-direction: column;
   background: linear-gradient(180deg, oklch(0.213 0.038 calc(var(--h) + 22) / 0.97), rgba(5, 16, 9, .98));
   border-left: 1px solid var(--tile-edge, rgba(140, 255, 110, .55));
-  box-shadow: -18px 0 48px rgba(0, 0, 0, .6), inset 1px 0 0 oklch(0.902 0.212 calc(var(--h) + 10) / 0.08);
+  box-shadow: -18px 0 48px color-mix(in srgb, var(--shade) 60%, transparent), inset 1px 0 0 oklch(0.902 0.212 calc(var(--h) + 10) / 0.08);
   transform: translateX(100%); opacity: 0; pointer-events: none;
   transition: transform .32s cubic-bezier(.22, .61, .36, 1), opacity .32s ease;
   -webkit-backdrop-filter: blur(6px) saturate(140%); backdrop-filter: blur(6px) saturate(140%);
@@ -825,17 +825,17 @@ body.no-scan .scan { display: none; } /* OSD "Scanlines" tweak */
   padding: 12px 12px 12px 16px; border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.18);
   color: oklch(0.973 0.063 calc(var(--h) - 2)); font-family: var(--font-display);
 }
-.music-dot { color: var(--green, #8cff6e); font-size: 15px; text-shadow: 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.6); }
+.music-dot { color: var(--green, #8cff6e); font-size: var(--t-head-fixed); text-shadow: 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.6); }
 .music-title {
-  flex: 1; font-weight: 800; letter-spacing: .2em; font-size: 13px; text-transform: uppercase;
+  flex: 1; font-weight: 800; letter-spacing: .2em; font-size: var(--t-body-fixed); text-transform: uppercase;
   text-shadow: 0 0 14px oklch(0.892 0.236 calc(var(--h) + 10) / 0.4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .music-x {
   appearance: none; border: 0; background: transparent; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.6);
-  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 15px; line-height: 1; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: var(--t-head-fixed); line-height: 1; flex-shrink: 0;
 }
 .music-x:hover { background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.12); color: oklch(0.973 0.063 calc(var(--h) - 2)); }
-.music-sidebar iframe { flex: 1; width: 100%; border: 0; background: #000; display: block; }
+.music-sidebar iframe { flex: 1; width: 100%; border: 0; background: var(--shade); display: block; }
 
 /* XBOX 360 blades Guide — while the Music blade is expanded with a player on,
    the Osd renders an inline player slot and publishes its rect as the
@@ -868,12 +868,12 @@ body.theme-xbox360.osd-music-blade .music-hd {
 }
 .byod-title {
   font-family: var(--font-display); font-weight: 800; letter-spacing: .22em;
-  font-size: clamp(14px, 1.6vmin, 18px);
+  font-size: var(--t-body);
   color: oklch(0.940 0.139 calc(var(--h) + 2)); text-shadow: 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.35);
 }
 .byod-sub {
   font-family: var(--font-mono); color: color-mix(in srgb, var(--ink) 78%, transparent);
-  font-size: clamp(11px, 1.2vmin, 13px); max-width: 36ch;
+  font-size: var(--t-small); max-width: 36ch;
 }
 .byod-sub code {
   color: var(--ink); background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.08);
@@ -883,27 +883,27 @@ body.theme-xbox360.osd-music-blade .music-hd {
 .byod-btn {
   display: inline-flex; align-items: center; gap: 10px;
   font-family: var(--font-display); font-weight: 700; letter-spacing: .18em;
-  text-transform: uppercase; font-size: clamp(11px, 1.2vmin, 13px);
+  text-transform: uppercase; font-size: var(--t-small);
   color: oklch(0.166 0.029 calc(var(--h) + 21));
   background: linear-gradient(180deg, oklch(0.911 0.202 calc(var(--h) + 6) / 0.95), oklch(0.792 0.226 calc(var(--h) + 10) / 0.9));
   border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6));
   padding: 12px 22px; border-radius: 999px;
-  box-shadow: 0 0 24px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 -2px 0 rgba(0, 0, 0, .15);
+  box-shadow: 0 0 24px oklch(0.892 0.236 calc(var(--h) + 10) / 0.45), inset 0 -2px 0 color-mix(in srgb, var(--shade) 15%, transparent);
   cursor: pointer;
   transition: transform .12s ease, box-shadow .2s ease;
 }
-.byod-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7), inset 0 -2px 0 rgba(0, 0, 0, .15); }
+.byod-btn:hover { transform: translateY(-1px); box-shadow: 0 0 32px oklch(0.892 0.236 calc(var(--h) + 10) / 0.7), inset 0 -2px 0 color-mix(in srgb, var(--shade) 15%, transparent); }
 .byod-btn:active { transform: translateY(0) scale(.98); }
 .byod-btn-icon { font-size: 1.2em; }
 .byod-hint {
   font-family: var(--font-mono); color: color-mix(in srgb, var(--ink) 55%, transparent);
-  font-size: clamp(10px, 1.05vmin, 12px); line-height: 1.5; max-width: 40ch;
+  font-size: var(--t-micro); line-height: 1.5; max-width: 40ch;
 }
 .byod-err {
   font-family: var(--font-mono);
-  color: #ffbcbc;
-  background: rgba(255, 90, 90, .08);
-  border: 1px solid rgba(255, 120, 120, .4);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
   padding: 8px 12px; border-radius: 6px;
   font-size: clamp(11px, 1.1vmin, 13px); max-width: 40ch;
 }
@@ -914,9 +914,9 @@ body.theme-xbox360.osd-music-blade .music-hd {
   margin-top: 4px;
   width: 100%;
   font-family: var(--font-mono);
-  font-size: clamp(12px, 1.3vmin, 15px);
+  font-size: var(--t-small);
   color: oklch(0.976 0.046 calc(var(--h) + 5));
-  background: rgba(0, 0, 0, .35);
+  background: color-mix(in srgb, var(--shade) 35%, transparent);
   border: 1px solid oklch(0.892 0.236 calc(var(--h) + 10) / 0.35);
   border-radius: 6px;
   padding: 7px 10px;
@@ -942,7 +942,7 @@ body.theme-xbox360.osd-music-blade .music-hd {
   box-shadow: inset 0 0 12px oklch(0.892 0.236 calc(var(--h) + 10) / 0.3);
   border: 2px dashed oklch(0.902 0.212 calc(var(--h) + 10) / 0.7);
 }
-.byoc-row .game-icon .glass .ph { font-size: clamp(18px, 2.6vmin, 26px); }
+.byoc-row .game-icon .glass .ph { font-size: var(--t-head); }
 
 /* Settings → OpenEmu import picker + Controller Sync. Reuses .games-screen /
    .game-row; adds non-selectable system-section headers (.oe-head), a dimmed
@@ -951,7 +951,7 @@ body.theme-xbox360.osd-music-blade .music-hd {
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between; gap: 1em;
   padding: 1.2vmin .6vmin .2vmin;
-  font-family: var(--font-mono); font-size: clamp(10px, 1.3vmin, 13px);
+  font-family: var(--font-mono); font-size: var(--t-micro);
   letter-spacing: .24em; text-transform: uppercase;
   color: oklch(0.925 0.165 calc(var(--h) + 6) / 0.55);
   border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.18);
@@ -962,7 +962,7 @@ body.theme-xbox360.osd-music-blade .music-hd {
   flex-shrink: 0;
   display: grid; grid-template-columns: 1.2fr auto 1.2fr 1.6fr; align-items: center; gap: 1.2em;
   padding: .9vmin 1.2vmin;
-  font-family: var(--font-mono); font-size: clamp(11px, 1.5vmin, 15px);
+  font-family: var(--font-mono); font-size: var(--t-small);
   letter-spacing: .1em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.8);
   border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.16); border-radius: .8vmin;
   background: linear-gradient(180deg, oklch(0.686 0.163 calc(var(--h) + 17) / 0.05), color-mix(in srgb, var(--surface-hi) 25%, transparent));
@@ -982,19 +982,19 @@ body.theme-xbox360.osd-music-blade .music-hd {
   border: 1px solid currentColor; flex-shrink: 0;
 }
 .net-badge.get { color: oklch(0.906 0.145 calc(var(--h) + 2)); }
-.net-badge.dl  { color: #7fd8ff; }
-.net-badge.ok  { color: #ffe06a; }
-.net-badge.err { color: #ff9b9b; }
+.net-badge.dl  { color: var(--info); }
+.net-badge.ok  { color: var(--select); }
+.net-badge.err { color: var(--error); }
 .net-badge.upd { color: oklch(0.901 0.156 calc(var(--h) + 37)); cursor: pointer; animation: net-upd-pulse 1.4s ease-in-out infinite; }
 .net-badge.upd:hover { background: oklch(0.901 0.156 calc(var(--h) + 37) / 0.18); }
 /* A console section's ! RETRY is a click target too (it re-runs the update). */
 .net-badge.err[role="button"] { cursor: pointer; }
-.net-badge.err[role="button"]:hover { background: rgba(255, 155, 155, .18); }
+.net-badge.err[role="button"]:hover { background: color-mix(in srgb, var(--error) 18%, transparent); }
 @keyframes net-upd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
-.game-row.sel .net-badge { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: color-mix(in srgb, var(--ink-hi) 35%, transparent); }
+.game-row.sel .net-badge { color: var(--select-ink); border-color: color-mix(in srgb, var(--select-ink) 45%, transparent); background: color-mix(in srgb, var(--ink-hi) 35%, transparent); }
 .net-prog {
   position: absolute; left: 7.4vmin; right: 0; bottom: -1px; height: 3px;
-  background: rgba(0, 0, 0, .45); border-radius: 2px; overflow: hidden;
+  background: color-mix(in srgb, var(--shade) 45%, transparent); border-radius: 2px; overflow: hidden;
 }
 .net-prog-fill { height: 100%; width: 0; background: linear-gradient(90deg, #55eeff, oklch(0.906 0.145 calc(var(--h) + 2))); transition: width .2s ease; box-shadow: 0 0 8px oklch(0.892 0.236 calc(var(--h) + 10) / 0.6); }
 
@@ -1007,13 +1007,13 @@ body.theme-xbox360.osd-music-blade .music-hd {
   font-size: .56em; letter-spacing: .18em; margin-left: 1.2em;
   padding: 1px 8px; border-radius: 3px; white-space: nowrap; flex-shrink: 0;
   border: 1px solid oklch(0.925 0.165 calc(var(--h) + 6) / 0.35); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.8);
-  background: rgba(0, 0, 0, .25);
+  background: color-mix(in srgb, var(--shade) 25%, transparent);
 }
 .eshop-kind.deza { color: #ffd07a; border-color: rgba(255, 208, 122, .45); }
 /* A game's release status (its codemonkey.json, or the catalog row): amber,
    so EARLY ACCESS reads as a caution beside the kind chip, not as a kind. */
-.eshop-kind.status { color: #ffb45e; border-color: rgba(255, 180, 94, .5); }
-.game-row.sel .eshop-kind { color: #1a1400; border-color: rgba(20, 20, 0, .45); background: color-mix(in srgb, var(--ink-hi) 30%, transparent); }
+.eshop-kind.status { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.game-row.sel .eshop-kind { color: var(--select-ink); border-color: color-mix(in srgb, var(--select-ink) 45%, transparent); background: color-mix(in srgb, var(--ink-hi) 30%, transparent); }
 /* A row can carry the sub, the chip AND a badge; let the sub give way first
    on a phone rather than pushing the badge out of the bar's chevron. */
 .game-bar .eshop-kind + .net-badge { margin-left: 1em; }
@@ -1030,8 +1030,8 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
   --lib-edge: oklch(0.902 0.212 calc(var(--h) + 10) / 0.28); --lib-edge-hi: oklch(0.902 0.212 calc(var(--h) + 10) / 0.45); --lib-edge-lo: oklch(0.902 0.212 calc(var(--h) + 10) / 0.16);
   --lib-ink: var(--ink); --lib-sub: oklch(0.957 0.103 calc(var(--h) - 1) / 0.6); --lib-dim: oklch(0.909 0.206 calc(var(--h) + 7) / 0.5); --lib-chip: oklch(0.909 0.206 calc(var(--h) + 7) / 0.8);
   --lib-card: linear-gradient(180deg, oklch(0.333 0.071 calc(var(--h) + 18) / 0.55), oklch(0.165 0.030 calc(var(--h) + 23) / 0.94) 42%);
-  --lib-art: radial-gradient(ellipse 70% 80% at 50% 60%, oklch(0.413 0.105 calc(var(--h) + 19) / 0.6), rgba(0, 0, 0, .15) 70%), oklch(0.173 0.032 calc(var(--h) + 26));
-  --lib-glow: oklch(0.892 0.241 calc(var(--h) + 9) / 0.6); --lib-well: rgba(0, 0, 0, .45); --lib-feat: oklch(0.350 0.086 calc(var(--h) + 17) / 0.5);
+  --lib-art: radial-gradient(ellipse 70% 80% at 50% 60%, oklch(0.413 0.105 calc(var(--h) + 19) / 0.6), color-mix(in srgb, var(--shade) 15%, transparent) 70%), oklch(0.173 0.032 calc(var(--h) + 26));
+  --lib-glow: oklch(0.892 0.241 calc(var(--h) + 9) / 0.6); --lib-well: color-mix(in srgb, var(--shade) 45%, transparent); --lib-feat: oklch(0.350 0.086 calc(var(--h) + 17) / 0.5);
   --lib-sel: var(--select); --lib-sel-edge: color-mix(in srgb, var(--select) 45%, transparent); --lib-sel-ink: #fffbb0;
   --lib-ribbon: linear-gradient(90deg, rgba(60, 54, 8, .8), rgba(24, 22, 4, .9));
   --lib-seg: linear-gradient(90deg, #fffea1, var(--select) 28%, #d8e640 65%, #a4b00b); --lib-seg-ink: var(--select-ink); --lib-seg-glow: color-mix(in srgb, var(--select-hot) 50%, transparent);
@@ -1045,8 +1045,8 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
   border-top: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35); border-bottom: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35);
   clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 50%, calc(100% - 20px) 100%, 0 100%);
 }
-.lib-banner-title { flex: 1; text-align: center; font-size: 18px; font-weight: 800; letter-spacing: .32em; color: var(--lib-ink); text-shadow: 0 0 14px oklch(0.892 0.241 calc(var(--h) + 9) / 0.8); padding-left: 12px; }
-.lib-banner-count { font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); padding-right: 34px; white-space: nowrap; }
+.lib-banner-title { flex: 1; text-align: center; font-size: var(--t-head-fixed); font-weight: 800; letter-spacing: .32em; color: var(--lib-ink); text-shadow: 0 0 14px oklch(0.892 0.241 calc(var(--h) + 9) / 0.8); padding-left: 12px; }
+.lib-banner-count { font-family: var(--font-mono); font-size: var(--t-small-fixed); letter-spacing: .14em; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.7); padding-right: 34px; white-space: nowrap; }
 /* The bottom padding clears the B / A hints, which float over this screen. */
 .lib-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 16px max(13vmin, 84px); scrollbar-width: thin; scrollbar-color: var(--lib-edge) transparent; }
 .lib-cards { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; justify-content: center; }
@@ -1065,53 +1065,53 @@ body.theme-nintendo .eshop-kind { margin-left: 0; justify-self: start; }
 .lib-ribbon {
   display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 14px;
   background: var(--lib-ribbon); border: none; border-bottom: 1px solid var(--lib-sel-edge); color: var(--lib-sel);
-  font-family: var(--font-mono); font-size: 9px; letter-spacing: .18em; cursor: pointer; text-align: left;
+  font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .18em; cursor: pointer; text-align: left;
 }
 .lib-card .lib-ribbon { font-family: var(--font-mono); }
 .lib-ribbon svg { width: 14px; height: 14px; }
 .lib-ribbon-k { flex-shrink: 0; }
 .lib-ribbon-parent { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .lib-ribbon-parent img { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
-.lib-ribbon-parent span { font-family: var(--font-display); font-size: 11px; font-weight: 800; letter-spacing: .12em; color: var(--lib-sel-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-ribbon-chev { font-size: 15px; line-height: 1; color: color-mix(in srgb, var(--select) 70%, transparent); }
+.lib-ribbon-parent span { font-family: var(--font-display); font-size: var(--t-small-fixed); font-weight: 800; letter-spacing: .12em; color: var(--lib-sel-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-ribbon-chev { font-size: var(--t-head-fixed); line-height: 1; color: color-mix(in srgb, var(--select) 70%, transparent); }
 
 /* Key art: the cart's own title screen, standing where the design's sprite stood. */
 .lib-art { position: relative; height: 150px; overflow: hidden; background: var(--lib-art); }
 .lib-art img { position: absolute; left: 50%; top: 54%; height: 125px; width: auto; transform: translate(-50%, -50%); image-rendering: pixelated; filter: drop-shadow(0 0 6px oklch(0.892 0.241 calc(var(--h) + 9) / 0.55)); }
 .lib-art-ph { position: absolute; left: 50%; top: 54%; transform: translate(-50%, -50%); font-size: 44px; font-weight: 800; letter-spacing: .1em; color: var(--lib-dim); }
 .lib-art-scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(180deg, oklch(0.874 0.241 calc(var(--h) + 20) / 0.05) 0 1px, transparent 1px 3px); mix-blend-mode: screen; }
-.lib-source, .lib-tag { position: absolute; top: 10px; padding: 3px 7px; border-radius: 4px; background: rgba(0, 0, 0, .55); font-family: var(--font-mono); font-size: 8px; letter-spacing: .18em; }
+.lib-source, .lib-tag { position: absolute; top: 10px; padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, var(--shade) 55%, transparent); font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .18em; }
 .lib-source { left: 12px; color: var(--lib-chip); }
 .lib-tag { right: 12px; border: 1px solid oklch(0.902 0.212 calc(var(--h) + 10) / 0.35); color: oklch(0.909 0.206 calc(var(--h) + 7) / 0.85); }
 .lib-card.mod .lib-tag { border-color: color-mix(in srgb, var(--select) 50%, transparent); color: var(--lib-sel); }
 
 .lib-head { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px 2px; }
-.lib-title { font-size: 15px; font-weight: 800; letter-spacing: .14em; color: var(--lib-ink); text-shadow: 0 0 12px var(--lib-glow); text-wrap: balance; overflow-wrap: anywhere; }
-.lib-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-mono); font-size: 9px; letter-spacing: .14em; color: var(--lib-sub); }
+.lib-title { font-size: var(--t-head-fixed); font-weight: 800; letter-spacing: .14em; color: var(--lib-ink); text-shadow: 0 0 12px var(--lib-glow); text-wrap: balance; overflow-wrap: anywhere; }
+.lib-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em; color: var(--lib-sub); }
 .lib-mods { display: flex; align-items: center; gap: 5px; color: color-mix(in srgb, var(--select) 85%, transparent); }
 .lib-mods svg { width: 11px; height: 11px; }
 
 /* VERSION: OG | MOD */
 .lib-version { display: flex; align-items: center; gap: 8px; margin: 12px 14px 0; padding: 6px; border-radius: 10px; background: var(--lib-well); border: 1px solid var(--lib-edge); }
-.lib-version-lbl { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; letter-spacing: .12em; color: color-mix(in srgb, var(--ink) 80%, transparent); padding: 0 4px 0 6px; }
+.lib-version-lbl { display: flex; align-items: center; gap: 6px; font-size: var(--t-micro-fixed); font-weight: 700; letter-spacing: .12em; color: color-mix(in srgb, var(--ink) 80%, transparent); padding: 0 4px 0 6px; }
 .lib-segs { flex: 1; display: flex; gap: 4px; }
 .lib-seg {
   flex: 1; text-align: center; padding: 6px 0; min-height: 40px; border-radius: 7px; cursor: pointer;
-  font-size: 9px; font-weight: 700; letter-spacing: .14em;
+  font-size: var(--t-micro-fixed); font-weight: 700; letter-spacing: .14em;
   border: 1px solid var(--lib-edge); background: none; color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.55);
 }
 .lib-seg.on { border-color: transparent; background: var(--lib-seg); color: var(--lib-seg-ink); font-weight: 800; box-shadow: 0 0 14px var(--lib-seg-glow); }
 .lib-feats { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
 .lib-feat {
   display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 6px;
-  font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em;
+  font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em;
   border: 1px solid var(--lib-edge-lo); color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.42); background: transparent;
 }
 .lib-feat.on { border-color: var(--lib-edge-hi); color: var(--lib-ink); background: var(--lib-feat); }
-.lib-feat-mark { font-size: 9px; line-height: 1; }
-.lib-note { padding: 8px 14px 0; font-family: var(--font-mono); font-size: 8px; letter-spacing: .14em; color: var(--lib-dim); }
+.lib-feat-mark { font-size: var(--t-micro-fixed); line-height: 1; }
+.lib-note { padding: 8px 14px 0; font-family: var(--font-mono); font-size: var(--t-micro-fixed); letter-spacing: .14em; color: var(--lib-dim); }
 
-.lib-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; font-size: 10px; font-weight: 700; letter-spacing: .16em; color: var(--lib-hint); }
+.lib-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px; font-size: var(--t-small-fixed); font-weight: 700; letter-spacing: .16em; color: var(--lib-hint); }
 .lib-act { display: flex; align-items: center; gap: 8px; background: none; border: none; padding: 0; min-height: 44px; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; }
 .lib-act:active { transform: scale(.96); }
 .lib-orb { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 900; }
@@ -1147,7 +1147,7 @@ body.theme-nintendo .lib-art img { filter: drop-shadow(0 0 6px rgba(255, 59, 73,
 body.theme-nintendo .lib-art-scan { background: repeating-linear-gradient(180deg, rgba(255, 70, 84, .04) 0 1px, transparent 1px 3px); }
 
 /* Boot flash */
-.boot { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 200; pointer-events: none; animation: bootOut 1.6s ease forwards; }
+.boot { position: fixed; inset: 0; background: var(--shade); display: flex; align-items: center; justify-content: center; z-index: 200; pointer-events: none; animation: bootOut 1.6s ease forwards; }
 /* .b-glyph is the 🐵 emoji in the 30vmin box the voxel X used to fill: the
    glyph sizes off font-size, centred, with the same bootIn timing and green
    drop-shadow. */
@@ -1190,7 +1190,7 @@ body.theme-nintendo .lib-art-scan { background: repeating-linear-gradient(180deg
   position: fixed; left: 8px; bottom: 8px; z-index: 300;
   margin: 0; padding: 6px 8px; max-width: 92vw;
   font: 11px/1.45 "Share Tech Mono", monospace; color: oklch(0.909 0.206 calc(var(--h) + 7));
-  background: rgba(0, 0, 0, .78); border: 1px solid oklch(0.891 0.242 calc(var(--h) + 9) / 0.5);
+  background: color-mix(in srgb, var(--shade) 78%, transparent); border: 1px solid oklch(0.891 0.242 calc(var(--h) + 9) / 0.5);
   white-space: pre-wrap; word-break: break-all; pointer-events: none;
 }
 /* ?debug=1 status line: top-left, clear of the ?paddebug=1 monitor below. */

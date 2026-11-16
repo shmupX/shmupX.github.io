@@ -38,6 +38,8 @@ export const STATIC_INDEXES = [
   "/music-player",
   "/pixel-composer",
   "/pixel-editor",
+  // The house style guide: a reference page for the launcher and editor tokens.
+  "/style-guide",
   "/tilemap-editor",
   "/virtual-pad",
 ];
