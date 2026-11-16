@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>shmupX House Style</title>
+  <meta name="description" content="The one type and color set behind the codemonkey.games launcher and level editor.">
+  <!-- This page is built from the same tokens it documents: the self-hosted
+       fonts, then /house-style.css. The theme and Glow color controls below set
+       body.theme-* and --h exactly as the launcher does, so the whole page
+       follows them. -->
+  <link rel="stylesheet" href="/fonts/launcher.css">
+  <link rel="stylesheet" href="/house-style.css">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); }
+    body { color: var(--ink); font: 15px/1.55 var(--font-mono); }
+    a { color: var(--info); }
+    .wrap { max-width: 980px; margin: 0 auto; padding-block: 40px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 44px; }
+    h1, h2, h3 { font-family: var(--font-display); text-transform: uppercase; margin: 0; text-wrap: balance; }
+    h1 { font-weight: 900; font-size: clamp(26px, 5vw, 44px); letter-spacing: .14em; color: var(--accent); text-shadow: 0 0 18px color-mix(in srgb, var(--accent-glow) 45%, transparent); }
+    h2 { font-weight: 800; font-size: 17px; letter-spacing: .2em; color: var(--ink); }
+    p { margin: 0; max-width: 68ch; }
+    .eyebrow { font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: var(--ink-dim); }
+    .eyebrow a { color: inherit; }
+    .dim { color: var(--ink-dim); }
+    code { font-family: var(--font-mono); color: var(--select); }
+    section { display: grid; gap: 16px; }
+    .head { display: grid; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 24px; }
+
+    .scroll { overflow-x: auto; border: 1px solid var(--line); }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+    th { font-family: var(--font-display); font-weight: 700; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-dim); background: var(--surface); }
+    td.wrap-ok { white-space: normal; min-width: 180px; }
+    tr:last-child td { border-bottom: 0; }
+    .sw { display: inline-block; width: 16px; height: 16px; vertical-align: -3px; border: 1px solid rgba(255, 255, 255, .25); margin-right: 6px; }
+    .tok { color: var(--select); }
+
+    .type-demo { display: grid; gap: 10px; border: 1px solid var(--line); background: var(--surface); padding: 18px; }
+    .type-demo .d { font-family: var(--font-display); font-weight: 900; font-size: 30px; letter-spacing: .18em; color: var(--accent); text-transform: uppercase; overflow-wrap: anywhere; }
+    .type-demo .m { font-size: 15px; letter-spacing: .06em; }
+    .rules { display: grid; gap: 6px; padding-left: 18px; margin: 0; }
+
+    .ctl { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+    .seg { display: inline-flex; border: 1px solid var(--line); }
+    .seg button { font: 12px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; background: transparent; color: var(--ink-dim); border: 0; padding: 8px 12px; cursor: pointer; }
+    .seg button[aria-pressed="true"] { background: var(--select); color: var(--select-ink); }
+    .hue { display: inline-flex; gap: 6px; align-items: center; }
+    .hue button { width: 26px; height: 26px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; }
+    .hue button[aria-pressed="true"] { border-color: var(--ink-hi); }
+    .hue[aria-disabled="true"] { opacity: .35; }
+    button:focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
+
+    /* Launcher sample: everything inside reads only the house tokens. */
+    .launcher { position: relative; overflow: hidden; border: 1px solid var(--line-hi); background: radial-gradient(ellipse 80% 70% at 40% 55%, color-mix(in oklab, var(--accent-deep) 45%, transparent), transparent 70%), var(--bg); color: var(--ink); padding: 18px clamp(14px, 3vw, 28px) 22px; display: grid; gap: 18px; }
+    .launcher::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(180deg, color-mix(in oklab, var(--accent) 6%, transparent) 0 1px, transparent 1px 3px); }
+    .l-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-dim); }
+    .l-brand { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+    .l-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-glow); box-shadow: 0 0 10px var(--accent-glow); }
+    .l-title { font-family: var(--font-display); font-weight: 800; font-size: clamp(20px, 3.4vw, 34px); letter-spacing: .2em; color: var(--ink); text-shadow: 0 0 14px color-mix(in oklab, var(--accent-glow) 70%, transparent); }
+    .l-title small { font-family: var(--font-mono); font-weight: 400; font-size: 12px; letter-spacing: .16em; color: var(--ink-dim); margin-left: 10px; text-shadow: none; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .tile { border: 1px solid var(--line); background: linear-gradient(180deg, var(--surface-hi), var(--surface)); padding: 12px; display: grid; gap: 8px; min-height: 120px; align-content: space-between; }
+    .tile .art { height: 46px; border: 1px solid var(--line); background: repeating-linear-gradient(135deg, color-mix(in oklab, var(--accent) 22%, transparent) 0 6px, transparent 6px 12px); }
+    .tile .nm { font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+    .tile .sub { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); }
+    .tile.sel { border-color: var(--select); box-shadow: 0 0 0 1px var(--select), 0 0 22px color-mix(in oklab, var(--select) 45%, transparent); }
+    .tile.sel .nm { color: var(--select); }
+    .l-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; }
+    @media (max-width: 640px) { .l-row { grid-template-columns: 1fr; } }
+    .panel { border: 1px solid var(--line); background: color-mix(in oklab, var(--surface) 85%, transparent); padding: 12px 14px; display: grid; gap: 8px; }
+    .panel h4 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink); }
+    .job { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+    .chip { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; padding: 1px 8px; border: 1px solid currentColor; }
+    .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.error { color: var(--error); } .chip.info { color: var(--info); }
+    .btn-a { justify-self: start; font-family: var(--font-display); font-weight: 800; font-size: 13px; letter-spacing: .18em; text-transform: uppercase; background: var(--select); color: var(--select-ink); padding: 8px 14px; }
+    .l-foot { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-dim); }
+    .orb { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent-deep); color: var(--ink-hi); font-size: 10px; margin-right: 6px; border: 1px solid var(--line-hi); }
+    footer { border-top: 1px solid var(--line); padding-top: 18px; font-size: 13px; color: var(--ink-dim); }
+    @media (prefers-reduced-motion: no-preference) { .l-dot { animation: pulse 1.6s ease-in-out infinite; } @keyframes pulse { 50% { opacity: .3; } } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <div class="eyebrow"><a href="/">codemonkey.games</a> · launcher + level editor</div>
+    <h1>shmupX House Style</h1>
+    <p>One type system and one set of named color tokens for the launcher (dashboard, OSD, save picker) and the level editor. The three launcher themes each fill in the same token names, so a theme is one short block, and the Glow color tweak moves every green on the XBOX theme at once. The tokens live in <a href="/house-style.css"><code>/house-style.css</code></a>.</p>
+  </header>
+
+  <section aria-label="Theme and Glow color">
+    <p class="dim">This page is drawn from those tokens. Switch the theme or the Glow color and all of it follows, the same way the launcher does.</p>
+    <div class="ctl">
+      <div class="seg" role="group" aria-label="Theme">
+        <button type="button" data-th="xbox" aria-pressed="true">XBOX</button>
+        <button type="button" data-th="xbox360" aria-pressed="false">XBOX 360</button>
+        <button type="button" data-th="nintendo" aria-pressed="false">Nintendo</button>
+      </div>
+      <div class="hue" id="hue" role="group" aria-label="Glow color"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Type</h2>
+    <div class="type-demo">
+      <div class="d">codemonkey.games</div>
+      <div class="m">SHARE TECH MONO · 2P START · BUILD 0412 · 03:41 PM</div>
+    </div>
+    <ul class="rules">
+      <li><b>Display, Orbitron 700 to 900:</b> screen titles, tile names, buttons, panel headings. Always uppercase, letter-spacing .12 to .22em. Token <code>--font-display</code>.</li>
+      <li><b>Everything else, Share Tech Mono 400:</b> HUD, labels, body copy, numbers, code. Token <code>--font-mono</code>.</li>
+      <li><b>One source:</b> every page loads both faces from <a href="/fonts/launcher.css"><code>/fonts/launcher.css</code></a>, served from this site, so the launcher and the editor work offline.</li>
+    </ul>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Token</th><th>Launcher (TV distance)</th><th>Editor</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td class="tok">--t-micro</td><td>clamp(9px, 1.1vmin, 12px)</td><td>9px</td><td>Key hints, chip labels</td></tr>
+          <tr><td class="tok">--t-small</td><td>clamp(11px, 1.4vmin, 15px)</td><td>11px</td><td>HUD, field labels, editor body</td></tr>
+          <tr><td class="tok">--t-body</td><td>clamp(13px, 1.8vmin, 18px)</td><td>13px</td><td>Body copy, list rows</td></tr>
+          <tr><td class="tok">--t-head</td><td>clamp(16px, 2.6vmin, 30px)</td><td>16px</td><td>Panel headings, tile names</td></tr>
+          <tr><td class="tok">--t-title</td><td>clamp(20px, 3.4vmin, 38px)</td><td>20px</td><td>Screen titles</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="dim">The launcher's steps scale with the screen because it's read from across a room. The editor is read at a desk, so it uses the fixed steps, <code>--t-micro-fixed</code> through <code>--t-title-fixed</code>.</p>
+  </section>
+
+  <section>
+    <h2>Palette</h2>
+    <p class="dim">The same token names in every theme. On XBOX, the greens come from one hue, so the Glow color tweak moves them together. Selection and the four states stay fixed so they read the same everywhere. "Now" shows the token as this page is drawing it.</p>
+    <div class="scroll">
+      <table id="palette">
+        <thead><tr><th>Token</th><th>Role</th><th>Now</th><th>XBOX (green glow)</th><th>XBOX 360</th><th>Nintendo</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Launcher sample</h2>
+    <p class="dim">A launcher screen built only from the tokens above, with example export jobs.</p>
+    <div class="launcher">
+      <div class="l-top"><span class="l-brand"><span class="l-dot"></span>shmupX · codemonkey.games</span><span>2P ready · 11:46 AM</span></div>
+      <div class="l-title">Games<small>4 on this shelf</small></div>
+      <div class="tiles">
+        <div class="tile sel"><div class="art"></div><div><div class="nm">Evil Invaders '95</div><div class="sub">Shmup · 2P</div></div></div>
+        <div class="tile"><div class="art"></div><div><div class="nm">Ronagun</div><div class="sub">Phaser 3</div></div></div>
+        <div class="tile"><div class="art"></div><div><div class="nm">Sh'M↑ Party</div><div class="sub">Web · 1-4 players</div></div></div>
+        <div class="tile"><div class="art"></div><div><div class="nm">Ramsie</div><div class="sub">Dezaemon 2</div></div></div>
+      </div>
+      <div class="l-row">
+        <div class="panel">
+          <h4>Exports</h4>
+          <div class="job"><span>Evil Invaders '95 · macOS</span><span class="chip ok">Built</span></div>
+          <div class="job"><span>Evil Invaders '95 · iOS</span><span class="chip warn">Building</span></div>
+          <div class="job"><span>Evil Invaders '95 · Android</span><span class="chip error">Failed</span></div>
+          <div class="job"><span>Ronagun · Windows</span><span class="chip info">Queued</span></div>
+        </div>
+        <div class="panel">
+          <h4>Evil Invaders '95</h4>
+          <span style="font-size: 13px; color: var(--ink-dim)">Invaders x Galaga · 2P couch shooter</span>
+          <span class="btn-a">Play</span>
+        </div>
+      </div>
+      <div class="l-foot"><span><span class="orb">A</span>Play</span><span><span class="orb">Y</span>Edit</span><span><span class="orb">X</span>Version</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Using the tokens</h2>
+    <ul class="rules">
+      <li>Load <code>/fonts/launcher.css</code>, then <code>/house-style.css</code>, before a page's own styles.</li>
+      <li>Write colors as tokens, like <code>var(--accent)</code>. For a see-through version, mix the token: <code>color-mix(in srgb, var(--accent) 40%, transparent)</code>.</li>
+      <li>A green that isn't a token is written on the Glow hue, <code>oklch(L C calc(var(--h) + n))</code>, so it follows the tweak too.</li>
+      <li>Theme palettes, controller face buttons and art (gradient stops, brand marks) keep their own colors.</li>
+    </ul>
+  </section>
+
+  <footer><a href="/">Back to codemonkey.games</a></footer>
+</div>
+
+<script>
+  const TOKENS = [
+    ["bg", "Page ground", "#000000", "#000000", "#0d0f1a"],
+    ["surface", "Panels, tiles", "#061a0b", "#262f38", "#0f1622"],
+    ["surface-hi", "Raised panel, tile top", "#0e3a1a", "#3a444e", "#1f2a3c"],
+    ["line", "Hairlines, panel edges", "rgba(140,255,110,.28)", "rgba(214,225,235,.38)", "rgba(213,213,216,.3)"],
+    ["line-hi", "Focused edges, dividers", "rgba(140,255,110,.55)", "#5c6b78", "rgba(213,213,216,.5)"],
+    ["ink", "Primary text", "#dfffc4", "#eef2f5", "#e9ecf1"],
+    ["ink-dim", "Secondary text, hints", "rgba(220,255,180,.6)", "#a9b4be", "#8ba0c2"],
+    ["ink-hi", "Text on dark fills", "#ffffff", "#ffffff", "#ffffff"],
+    ["accent", "Brand, titles, tile names", "#9cff6b", "#9cff6b", "#e4000f"],
+    ["accent-glow", "Glows, live dot", "#7cff4f", "#7cff4f", "#ff3b49"],
+    ["accent-deep", "Deep fills, orbs", "#0e6a2b", "#0e6a2b", "#5a0e14"],
+    ["select", "Current selection, primary button", "#f6ff4a", "#9fd63f", "#e4000f"],
+    ["select-ink", "Text on the selection", "#0e0e02", "#04120a", "#ffffff"],
+    ["ok", "Done, built", "#58e05f", "#58e05f", "#58e05f"],
+    ["warn", "Running, attention", "#f59e0b", "#f59e0b", "#f59e0b"],
+    ["error", "Failed, delete", "#ff5b66", "#ff5b66", "#ff5b66"],
+    ["info", "Queued, links, status", "#49c2ff", "#49c2ff", "#49c2ff"],
+    ["cabinet", "Nintendo only: cabinet gray", "", "", "#d5d5d8"],
+    ["cabinet-dim", "Nintendo only: cabinet shadow", "", "", "#88848b"],
+  ];
+  const sw = (c) => c ? `<span class="sw" style="background:${c}"></span>${c}` : "—";
+  document.querySelector("#palette tbody").innerHTML = TOKENS.map(([t, role, a, b, c]) =>
+    `<tr><td class="tok">--${t}</td><td class="wrap-ok">${role}</td><td><span class="sw" style="background:var(--${t}, transparent)"></span></td><td>${sw(a)}</td><td>${sw(b)}</td><td>${sw(c)}</td></tr>`
+  ).join("");
+
+  // Theme and Glow color, set the way the launcher sets them: a body.theme-*
+  // class for the fixed palettes, and --h on <html> for the XBOX hue.
+  const root = document.documentElement;
+  const HUES = [["#7CFF4F", 130, "Green"], ["#4FB8FF", 235, "Blue"], ["#FF6FB1", 350, "Pink"], ["#FFB13D", 60, "Amber"], ["#C18BFF", 290, "Violet"], ["#56F0E2", 190, "Cyan"]];
+  const hueBox = document.getElementById("hue");
+  hueBox.innerHTML = HUES.map(([c, h, n], i) =>
+    `<button type="button" data-h="${h}" aria-label="${n}" aria-pressed="${i === 0}" style="background:${c}"></button>`
+  ).join("");
+  hueBox.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b || hueBox.getAttribute("aria-disabled") === "true") return;
+    root.style.setProperty("--h", b.dataset.h);
+    hueBox.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  });
+  document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+    document.body.classList.remove("theme-xbox360", "theme-nintendo");
+    if (b.dataset.th !== "xbox") document.body.classList.add("theme-" + b.dataset.th);
+    document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    hueBox.setAttribute("aria-disabled", String(b.dataset.th !== "xbox"));
+  }));
+</script>
+</body>
+</html>
