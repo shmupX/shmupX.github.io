@@ -80,9 +80,9 @@ Deno.test("the level loader — the plugin and the bundle's inlined copy — str
     assertEquals(js.includes('manifest[uKey] || (uKey + ".mp3")'), false, path);
     assert(
       js.includes(
-        "scene.load.audio(uKey, [baseUrl + customBgmDir + manifest[uKey], uUrl]);",
+        "scene.load.audio(uKey, [baseUrl + customBgmDir + local, uUrl]);",
       ),
-      path + ": the listed local copy no longer comes first",
+      path + ": the downloaded copy no longer comes first",
     );
     assert(
       js.includes("scene.load.audio(uKey, uUrl);"),
