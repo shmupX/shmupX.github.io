@@ -12,6 +12,8 @@
 //                                   NEW GAME, named for the label)
 //   sfex2.codemonkey.games/      -> cmg's arcade player, ?rom=sfex2  (an
 //                                   ARCADE_SUBDOMAINS label, asked first)
+//   psiop.codemonkey.games/      -> /games/2028-ai?level=foo  (a BUILTIN_ALIASES
+//                                   alias; 2028 is another)
 //
 // Only the root is redirected. Every other path on a subdomain serves as the
 // apex does, which is what lets the redirect be relative: the game page and
@@ -103,6 +105,25 @@ export const ARCADE_PLAYER_URL =
 export const ARCADE_SUBDOMAINS: Readonly<Record<string, string>> = {
   sfex2: "sfex2",
 };
+
+/**
+ * Aliases that ship with the site, beside the cloud index: alias -> level key.
+ * psiop.codemonkey.games and 2028.codemonkey.games are the 2028.Ai game, saved
+ * as the level `foo`. They count only while that level exists and no level
+ * owns the name, exactly like an alias in `shmupX/levelAliases`, and an entry
+ * in the cloud index for the same name wins (withBuiltinAliases).
+ */
+export const BUILTIN_ALIASES: Readonly<Record<string, string>> = {
+  psiop: "foo",
+  "2028": "foo",
+};
+
+/** The cloud alias index with BUILTIN_ALIASES under it: the cloud wins a name. */
+export function withBuiltinAliases(
+  aliases: LevelAliases | null | undefined,
+): Record<string, string> {
+  return { ...BUILTIN_ALIASES, ...(aliases ?? {}) };
+}
 
 // One DNS label: letters, digits and inner hyphens, 63 chars at most.
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;

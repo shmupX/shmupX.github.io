@@ -7265,6 +7265,12 @@ shmupX's index only; cmg's root-level `levelAliases` is neither read nor
 written. `planAliases` in `lib/level-subdomain.ts` refuses an alias another
 level holds or a level already owns as its own name.
 
+**Built-in aliases.** `psiop.codemonkey.games/` and `2028.codemonkey.games/`
+open the 2028.Ai game, saved as the level `foo`. They live in `BUILTIN_ALIASES`
+in `lib/level-subdomain.ts` rather than the cloud index, so they ship with the
+site. They behave like any other alias (the level must exist, a level's own
+name beats them), and an entry for the same name in `shmupX/levelAliases` wins.
+
 **Arcade boards.** A few labels open a MAME board instead of a level:
 `sfex2.codemonkey.games/` → cmg's arcade player with `?rom=sfex2` (Street
 Fighter EX2). They live in `ARCADE_SUBDOMAINS` in `lib/level-subdomain.ts`
