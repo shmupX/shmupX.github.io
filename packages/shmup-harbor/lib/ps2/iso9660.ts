@@ -17,12 +17,38 @@ export interface IsoFile {
   data: Uint8Array;
 }
 
+/**
+ * A file whose bytes are already in `IsoOptions.base`: it gets a directory
+ * record pointing at them, and nothing is copied.
+ */
+export interface PlacedIsoFile {
+  path: string;
+  /** First sector of the file's data in the base image. */
+  extent: number;
+  length: number;
+}
+
 export interface IsoOptions {
   /** Volume identifier, trimmed to 32 characters. */
   volumeId: string;
   files: IsoFile[];
   /** Fixed timestamp, so the same inputs produce the same image. */
   date?: Date;
+  /**
+   * Build ON TOP of this image instead of from nothing: every byte of it is
+   * kept, `files` (and the new directories and path tables) go after its
+   * end, and only the primary volume descriptor in sector 16 is rewritten to
+   * describe the new tree. This is how a FreeDVDBoot disc carries a game:
+   * its UDF side (the DVD Video the console's player reads and the exploit
+   * lives in) and its raw payload sectors stay exactly where they were, and
+   * the ISO 9660 side that cdfs reads gains the game. The base has to be an
+   * ISO 9660 image already (sector 16 a primary descriptor, sector 17 the set
+   * terminator), so sectors 18 on — a UDF bridge's BEA01/NSR02/TEA01 — are
+   * left alone.
+   */
+  base?: Uint8Array;
+  /** Files already in `base` to list in the new tree. See readIsoFiles. */
+  placed?: PlacedIsoFile[];
 }
 
 // ISO 9660 d-characters, plus the '.' and ';' the name grammar adds, and
@@ -118,6 +144,8 @@ interface Node {
   name: string; // mangled identifier
   isDirectory: boolean;
   data?: Uint8Array;
+  /** Data already in the base image, at `extent`; never laid out or copied. */
+  placed?: boolean;
   children: Node[];
   parent: Node | null;
   extent: number;
@@ -200,8 +228,14 @@ function directoryExtentSize(node: Node): number {
 export function buildIso(options: IsoOptions): Uint8Array {
   const date = options.date ?? new Date(0);
   const root = newDirectory("", null);
+  const base = options.base ?? null;
+  if (base) checkBase(base);
 
-  for (const file of options.files) {
+  const entries: (IsoFile | PlacedIsoFile)[] = [
+    ...(options.placed ?? []),
+    ...options.files,
+  ];
+  for (const file of entries) {
     const parts = file.path.split("/").filter(Boolean);
     const leaf = parts.pop();
     if (!leaf) throw new Error(`iso: empty path in file list`);
@@ -221,14 +255,16 @@ export function buildIso(options: IsoOptions): Uint8Array {
         `iso: "${file.path}" collides with another file once shortened to "${name}"`,
       );
     }
+    const placed = "extent" in file;
     dir.children.push({
       name,
       isDirectory: false,
-      data: file.data,
+      data: placed ? undefined : file.data,
+      placed,
       children: [],
       parent: dir,
-      extent: 0,
-      length: file.data.length,
+      extent: placed ? file.extent : 0,
+      length: placed ? file.length : file.data.length,
       number: 0,
     });
   }
@@ -266,10 +302,12 @@ export function buildIso(options: IsoOptions): Uint8Array {
   }
 
   // Layout: system area, PVD, terminator, both path tables, directory
-  // extents, then file data.
-  let sector = SYSTEM_AREA_SECTORS;
-  const pvdSector = sector++;
-  const terminatorSector = sector++;
+  // extents, then file data. Over a base image the PVD and terminator are
+  // the base's own sectors 16 and 17, and everything new starts after its
+  // last sector.
+  const pvdSector = SYSTEM_AREA_SECTORS;
+  const terminatorSector = SYSTEM_AREA_SECTORS + 1;
+  let sector = base ? base.length / SECTOR : terminatorSector + 1;
   const pathTableSectors = sectorsFor(pathTableSize);
   const lPathSector = sector;
   sector += pathTableSectors;
@@ -283,7 +321,7 @@ export function buildIso(options: IsoOptions): Uint8Array {
   }
   for (const dir of directories) {
     for (const child of dir.children) {
-      if (child.isDirectory) continue;
+      if (child.isDirectory || child.placed) continue;
       child.extent = sector;
       sector += sectorsFor(child.length);
     }
@@ -291,15 +329,25 @@ export function buildIso(options: IsoOptions): Uint8Array {
   const totalSectors = sector;
 
   const image = new Uint8Array(totalSectors * SECTOR);
+  if (base) image.set(base);
 
   // --- Primary volume descriptor ---
   const pvd = image.subarray(pvdSector * SECTOR, (pvdSector + 1) * SECTOR);
+  // Over a base, its system and volume identifiers are kept: "PLAYSTATION"
+  // is what marks a PS2-format disc, and a FreeDVDBoot disc has to go on
+  // looking like the plain DVD Video it was mastered as.
+  const baseIds = base ? pvd.slice(8, 72) : null;
+  pvd.fill(0);
   const pvdView = new DataView(pvd.buffer, pvd.byteOffset, SECTOR);
   pvd[0] = 1;
   ascii(pvd, 1, "CD001", 5);
   pvd[6] = 1;
-  ascii(pvd, 8, "PLAYSTATION", 32);
-  ascii(pvd, 40, options.volumeId.toUpperCase().slice(0, 32), 32);
+  if (baseIds) {
+    pvd.set(baseIds, 8);
+  } else {
+    ascii(pvd, 8, "PLAYSTATION", 32);
+    ascii(pvd, 40, options.volumeId.toUpperCase().slice(0, 32), 32);
+  }
   both32(pvdView, 80, totalSectors);
   both16(pvdView, 120, 1);
   both16(pvdView, 124, 1);
@@ -323,11 +371,13 @@ export function buildIso(options: IsoOptions): Uint8Array {
   volumeDate(pvd, 864, date);
   pvd[881] = 1; // file structure version
 
-  // --- Volume descriptor set terminator ---
-  const terminator = image.subarray(terminatorSector * SECTOR);
-  terminator[0] = 0xff;
-  ascii(terminator, 1, "CD001", 5);
-  terminator[6] = 1;
+  // --- Volume descriptor set terminator (a base image already has one) ---
+  if (!base) {
+    const terminator = image.subarray(terminatorSector * SECTOR);
+    terminator[0] = 0xff;
+    ascii(terminator, 1, "CD001", 5);
+    terminator[6] = 1;
+  }
 
   // --- Path tables (little-endian and big-endian copies) ---
   for (
@@ -401,4 +451,79 @@ export function buildIso(options: IsoOptions): Uint8Array {
   }
 
   return image;
+}
+
+function isDescriptor(
+  image: Uint8Array,
+  sector: number,
+  type: number,
+): boolean {
+  const at = sector * SECTOR;
+  return image.length >= at + SECTOR && image[at] === type &&
+    String.fromCharCode(...image.subarray(at + 1, at + 6)) === "CD001";
+}
+
+function checkBase(base: Uint8Array): void {
+  if (base.length % SECTOR) {
+    throw new Error("iso: the base image is not a whole number of sectors");
+  }
+  if (!isDescriptor(base, SYSTEM_AREA_SECTORS, 1)) {
+    throw new Error("iso: the base image has no primary volume descriptor");
+  }
+  if (!isDescriptor(base, SYSTEM_AREA_SECTORS + 1, 0xff)) {
+    // Its sector 17 is about to stay as it is, so it had better already be
+    // the set terminator rather than something a new PVD would orphan.
+    throw new Error(
+      "iso: the base image's sector 17 is not a volume descriptor set terminator",
+    );
+  }
+}
+
+/**
+ * Every file on an image's ISO 9660 side, with where its data lies — the
+ * `placed` list that carries a base image's own files into a tree built over
+ * it. Names lose their `;1`; empty directories are not listed.
+ */
+export function readIsoFiles(image: Uint8Array): PlacedIsoFile[] {
+  if (!isDescriptor(image, SYSTEM_AREA_SECTORS, 1)) {
+    throw new Error("iso: no primary volume descriptor in sector 16");
+  }
+  const view = new DataView(image.buffer, image.byteOffset, image.length);
+  const out: PlacedIsoFile[] = [];
+  const seen = new Set<number>();
+  const walk = (extent: number, length: number, prefix: string) => {
+    if (seen.has(extent)) return; // a malformed tree must not loop
+    seen.add(extent);
+    let at = extent * SECTOR;
+    const end = Math.min(at + length, image.length);
+    while (at < end) {
+      const size = image[at];
+      if (size === 0) {
+        at = (Math.floor(at / SECTOR) + 1) * SECTOR;
+        continue;
+      }
+      const childExtent = view.getUint32(at + 2, true);
+      const childLength = view.getUint32(at + 10, true);
+      const isDirectory = (image[at + 25] & 0x02) !== 0;
+      const nameLength = image[at + 32];
+      const raw = String.fromCharCode(
+        ...image.subarray(at + 33, at + 33 + nameLength),
+      );
+      at += size;
+      if (raw === "\0" || raw === "\x01") continue;
+      const name = raw.replace(/;\d+$/, "");
+      if (isDirectory) {
+        walk(childExtent, childLength, `${prefix}${name}/`);
+      } else {
+        out.push({
+          path: `${prefix}${name}`,
+          extent: childExtent,
+          length: childLength,
+        });
+      }
+    }
+  };
+  const root = SYSTEM_AREA_SECTORS * SECTOR + 156;
+  walk(view.getUint32(root + 2, true), view.getUint32(root + 10, true), "");
+  return out;
 }
