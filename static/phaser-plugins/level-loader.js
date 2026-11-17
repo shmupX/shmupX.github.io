@@ -594,6 +594,47 @@ export function openCustomAudioDB(dbName, store) {
   });
 }
 
+// The name a level's custom track goes by in a downloaded custom-bgm/ folder:
+// the first sixteen hex digits of the SHA-1 of its URL, and ".mp3". Every
+// downloader names its files this way (scripts/2028-ai/download-custom-bgm.ts
+// for the site, shmup-harbor's build-level and the in-game forge for an
+// exported app), so the name says whose track a file is. A hash by hand
+// because the loader queues its audio synchronously and crypto.subtle is
+// async, and absent outside a secure context. Nothing here is a secret.
+export function customBgmFileName(url) {
+  const bytes = new TextEncoder().encode(String(url));
+  const words = [];
+  for (let i = 0; i < bytes.length; i++) {
+    words[i >> 2] |= bytes[i] << (24 - (i % 4) * 8);
+  }
+  words[bytes.length >> 2] |= 0x80 << (24 - (bytes.length % 4) * 8);
+  words[(((bytes.length + 8) >> 6) << 4) + 15] = bytes.length * 8;
+  const rol = (n, by) => (n << by) | (n >>> (32 - by));
+  const h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
+  const w = new Array(80);
+  for (let block = 0; block < words.length; block += 16) {
+    let [a, b, c, d, e] = h;
+    for (let t = 0; t < 80; t++) {
+      w[t] = t < 16 ? words[block + t] | 0 : rol(w[t - 3] ^ w[t - 8] ^ w[t - 14] ^ w[t - 16], 1);
+      const f = t < 20 ? (b & c) | (~b & d) : t < 40 ? b ^ c ^ d : t < 60 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
+      const k = t < 20 ? 0x5a827999 : t < 40 ? 0x6ed9eba1 : t < 60 ? 0x8f1bbcdc : 0xca62c1d6;
+      const next = (rol(a, 5) + f + e + k + w[t]) | 0;
+      e = d;
+      d = c;
+      c = rol(b, 30);
+      b = a;
+      a = next;
+    }
+    h[0] = (h[0] + a) | 0;
+    h[1] = (h[1] + b) | 0;
+    h[2] = (h[2] + c) | 0;
+    h[3] = (h[3] + d) | 0;
+    h[4] = (h[4] + e) | 0;
+  }
+  const hex = h.map((n) => (n >>> 0).toString(16).padStart(8, "0")).join("");
+  return hex.slice(0, 16) + ".mp3";
+}
+
 function loadImage(src) {
   if (typeof Image === "undefined") {
     return Promise.resolve(null);
@@ -2243,6 +2284,9 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
       const manifest = scene.cache.json.exists(manifestKey)
         ? (scene.cache.json.get(manifestKey) || {})
         : {};
+      // The files the downloaded folder holds, whatever key each is listed
+      // under.
+      const downloaded = new Set(Object.keys(manifest).map((k) => manifest[k]));
 
       const stockPaths = opts.stockPaths || {};
       const streamed = {};
@@ -2260,7 +2304,16 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           if (scene.cache.audio.exists(uKey)) {
             scene.cache.audio.remove(uKey);
           }
-          if (!manifest[uKey] && stockPaths[uKey]) streamed[uKey] = stockPaths[uKey];
+          // The downloaded copy of THIS track, if the folder holds one. The
+          // manifest lists a file per key, and on the site that folder is
+          // 2028.Ai's: another game's own music under the same key (RonaGun's
+          // boss_bison_bgm) is a different file, and so is a key the record
+          // has since pointed elsewhere. So the key does not vouch for a
+          // file; the file's name does, being its track's URL hashed
+          // (customBgmFileName), under whichever key the folder lists it.
+          const ownFile = customBgmFileName(uUrl);
+          const local = downloaded.has(ownFile) ? ownFile : null;
+          if (!local && stockPaths[uKey]) streamed[uKey] = stockPaths[uKey];
           // Keys often share a track (2028.Ai's four bosses share one 41 MB file):
           // load it once, under the first key, and file it under the rest on landing.
           if (leadFor[uUrl]) {
@@ -2271,8 +2324,8 @@ export function createLevelLoaderPlugin(Phaser = globalThis.Phaser) {
           sharers[uKey] = [];
           // Phaser takes the first URL it can decode and never falls back on a
           // 404, so a local path goes in only when the manifest vouches for it.
-          if (manifest[uKey]) {
-            scene.load.audio(uKey, [baseUrl + customBgmDir + manifest[uKey], uUrl]);
+          if (local) {
+            scene.load.audio(uKey, [baseUrl + customBgmDir + local, uUrl]);
           } else {
             scene.load.audio(uKey, uUrl);
           }

@@ -222,6 +222,20 @@ they are written out in full.
     2028.Ai uses all five: see
     [the soundtrack converter](#a-soundtrack-off-the-tone-bank).
     `tests/stage_bgm_by_length_test.ts` runs the helpers out of the bundle.
+  - **A level's custom music is its own.** The site keeps a folder of
+    downloaded tracks, `assets/custom-bgm/`, which the build fills from
+    2028.Ai's `foo.json` (`deno task 2028-ai:bgm`) and lists in a manifest of
+    audio key to file. The loader took a key's listing for the copy of
+    whatever a level named under that key, so RonaGun, whose own song is its
+    `boss_bison_bgm`, played 2028.Ai's track on the site, and a key the cloud
+    record had pointed elsewhere played the baked record's file.
+    `_queueAudioOverrides` now asks the folder for the file named after the
+    track's own URL (`customBgmFileName`: the first sixteen hex digits of the
+    URL's SHA-1 and `.mp3`, as the site's download step, build-level and the
+    in-game forge all name a file), whichever key lists it, and otherwise
+    streams the track from its URL with the key's stock sound as the
+    fallback. In the plugin and the inlined copy alike;
+    `tests/custom_bgm_own_copy_test.ts` runs both.
   - **Canvases that come back after a GPU reset.** A GPU reset — the GPU
     process restarting, which Android does under memory pressure — clears
     _every_ 2D canvas: Chromium fires `contextlost` on each, then
