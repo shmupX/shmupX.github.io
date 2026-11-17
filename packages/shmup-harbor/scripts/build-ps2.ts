@@ -40,6 +40,10 @@
 //   --sfx-budget <KB>    how much IOP RAM the effects may use (default 1024)
 //   --iso                also write a disc image (the folder is the default)
 //   --zip                write the folder as one .zip instead of as a folder
+//   --freedvdboot <ver>  also write <App>-freedvdboot.iso, the disc a stock
+//                        console boots through FreeDVDBoot; <ver> is its DVD
+//                        player version (2.10, 2.12, 3.04, 3.10, 3.11, slim)
+//                        or the path to a FreeDVDBoot image
 
 import { relative } from "@std/path";
 import { buildPs2 } from "../lib/ps2/build.ts";
@@ -60,6 +64,7 @@ const VALUE_FLAGS = new Set([
   "--athena-elf",
   "--atlas-max",
   "--sndpac",
+  "--freedvdboot",
 ]);
 
 const BOOL_FLAGS = new Set([
@@ -162,6 +167,9 @@ try {
     maxSheet: atlasMax === undefined ? undefined : Number(atlasMax),
     iso: flags["--iso"] === true,
     zip: flags["--zip"] === true,
+    freedvdboot: typeof flags["--freedvdboot"] === "string"
+      ? flags["--freedvdboot"]
+      : null,
     sndpac: typeof flags["--sndpac"] === "string" ? flags["--sndpac"] : null,
     skipAudio: flags["--no-audio"] === true,
     skipMusic: flags["--no-music"] === true,
@@ -180,6 +188,9 @@ try {
   if (result.appDir) console.log(`  folder : ${here(result.appDir)}/`);
   if (result.zipPath) console.log(`  zip    : ${here(result.zipPath)}`);
   if (result.isoPath) console.log(`  disc   : ${here(result.isoPath)}`);
+  if (result.freedvdbootPath) {
+    console.log(`  FreeDVDBoot disc: ${here(result.freedvdbootPath)}`);
+  }
   console.log(`  notes  : ${here(result.dir)}/README.txt`);
 } catch (error) {
   fail((error as Error).message);
