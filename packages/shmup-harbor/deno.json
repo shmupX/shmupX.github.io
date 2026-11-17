@@ -12,6 +12,7 @@
     "./ps2/adpcm": "./lib/ps2/adpcm.ts",
     "./ps2/sound-pack": "./lib/ps2/sound-pack.ts",
     "./ps2/tone-bank-pack": "./lib/ps2/tone-bank-pack.ts",
+    "./ps5": "./lib/ps5/build.ts",
     "./png": "./lib/ps2/png.ts",
     "./gif": "./lib/ps2/gif.ts",
     "./zip": "./lib/ps2/zip.ts",
