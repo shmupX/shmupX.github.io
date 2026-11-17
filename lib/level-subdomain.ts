@@ -10,8 +10,9 @@
 //                                   cart, run straight away)
 //   anything-else.codemonkey.games/ -> /editor/?new=anything-else  (neither:
 //                                   NEW GAME, named for the label)
-//   sfex2.codemonkey.games/      -> cmg's arcade player, ?rom=sfex2  (an
-//                                   ARCADE_SUBDOMAINS label, asked first)
+//   sfex2.codemonkey.games/      -> cmg's arcade player, ?rom=sfex2 with its
+//                                   BIOS sets  (an ARCADE_SUBDOMAINS label,
+//                                   asked first)
 //   psiop.codemonkey.games/      -> /games/2028-ai?level=foo  (a BUILTIN_ALIASES
 //                                   alias; 2028 is another)
 //
@@ -98,12 +99,17 @@ export const ARCADE_PLAYER_URL =
 
 /**
  * Labels that open an arcade board rather than a level: label -> the romset
- * the player boots. sfex2.codemonkey.games is Street Fighter EX2. Fixed here,
- * not in the database, and asked first: a level or an alias never takes one
- * of these names.
+ * the player boots and the BIOS sets it mounts beside it (the player's
+ * `?bios=`, the same list the dashboard's tile passes). sfex2.codemonkey.games
+ * is Street Fighter EX2, a ZN-2 board: without coh3002c and qsound_hle MAME
+ * stops at "Loading Machine" and the game never starts. Fixed here, not in the
+ * database, and asked first: a level or an alias never takes one of these
+ * names.
  */
-export const ARCADE_SUBDOMAINS: Readonly<Record<string, string>> = {
-  sfex2: "sfex2",
+export const ARCADE_SUBDOMAINS: Readonly<
+  Record<string, { rom: string; bios: readonly string[] }>
+> = {
+  sfex2: { rom: "sfex2", bios: ["coh3002c", "qsound_hle"] },
 };
 
 /**
@@ -123,6 +129,15 @@ export function withBuiltinAliases(
   aliases: LevelAliases | null | undefined,
 ): Record<string, string> {
   return { ...BUILTIN_ALIASES, ...(aliases ?? {}) };
+}
+
+/** The player's query for a board: its romset, then its BIOS sets if any. */
+function arcadeQuery(
+  board: { rom: string; bios: readonly string[] },
+): Array<[string, string]> {
+  const query: Array<[string, string]> = [["rom", board.rom]];
+  if (board.bios.length) query.push(["bios", board.bios.join(",")]);
+  return query;
 }
 
 // One DNS label: letters, digits and inner hyphens, 63 chars at most.
@@ -291,7 +306,7 @@ export function subdomainTarget(
   if (Object.hasOwn(ARCADE_SUBDOMAINS, label)) {
     return withQuery(
       ARCADE_PLAYER_URL,
-      [["rom", ARCADE_SUBDOMAINS[label]]],
+      arcadeQuery(ARCADE_SUBDOMAINS[label]),
       search,
     );
   }

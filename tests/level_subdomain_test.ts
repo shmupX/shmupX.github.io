@@ -541,7 +541,8 @@ Deno.test("the bundle's inlined loader looks aliases up the way the plugin does"
 });
 
 Deno.test("an arcade subdomain boots its board in cmg's arcade player, before any level, alias or shelf game", () => {
-  const sfex2 = "https://cmg.easierbycode.deno.net/arcade/play.html?rom=sfex2";
+  const sfex2 =
+    "https://cmg.easierbycode.deno.net/arcade/play.html?rom=sfex2&bios=coh3002c%2Cqsound_hle";
   assertEquals(subdomainTarget("sfex2", KEYS), sfex2);
   assertEquals(subdomainTarget("sfex2", null), sfex2);
   assertEquals(
@@ -551,7 +552,7 @@ Deno.test("an arcade subdomain boots its board in cmg's arcade player, before an
     sfex2,
   );
   assertEquals(
-    subdomainTarget("sfex2", KEYS, {}, "?rom=other&args=-nosound"),
+    subdomainTarget("sfex2", KEYS, {}, "?rom=other&bios=none&args=-nosound"),
     sfex2 + "&args=-nosound",
   );
   assertEquals(
