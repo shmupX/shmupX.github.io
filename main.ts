@@ -7,6 +7,7 @@ import {
   cloudLevelKeys,
   cloudShelfSlugs,
   subdomainRedirect,
+  withBuiltinAliases,
 } from "./lib/level-subdomain.ts";
 import { join } from "@std/path";
 import { launcherDataDir } from "./lib/desktop-browser.ts";
@@ -123,7 +124,7 @@ app.use(async (ctx) => {
   return subdomainRedirect(
     ctx.req,
     keys,
-    aliases ?? {},
+    withBuiltinAliases(aliases),
     undefined,
     shelf ?? [],
   ) ?? ctx.next();

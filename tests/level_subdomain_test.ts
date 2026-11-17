@@ -18,6 +18,7 @@ import {
   subdomainOf,
   subdomainRedirect,
   subdomainTarget,
+  withBuiltinAliases,
 } from "../lib/level-subdomain.ts";
 import { createLevelLoaderPlugin } from "../static/phaser-plugins/level-loader.js";
 
@@ -563,5 +564,37 @@ Deno.test("an arcade subdomain boots its board in cmg's arcade player, before an
   assertEquals(
     planAliases("2019-PS2", ["sfex2"], KEYS, {}).errors,
     ['"sfex2" opens an arcade board (ARCADE_SUBDOMAINS)'],
+  );
+});
+
+Deno.test("psiop and 2028 are built-in aliases of foo, the 2028.Ai game; the cloud index wins a name", () => {
+  // KEYS has a level called 2028 of its own; the live site has none.
+  const keys = [...KEYS.filter((k) => k !== "2028"), "foo"];
+  const foo = "/games/2028-ai?level=foo";
+  for (const label of ["psiop", "2028"]) {
+    assertEquals(subdomainTarget(label, keys, withBuiltinAliases({})), foo);
+    assertEquals(subdomainTarget(label, null, withBuiltinAliases(null)), foo);
+    assertEquals(
+      subdomainRedirect(
+        new Request("http://x/", {
+          headers: { host: `${label}.codemonkey.games` },
+        }),
+        keys,
+        withBuiltinAliases({}),
+      )!.headers.get("location"),
+      foo,
+    );
+  }
+  assertEquals(
+    subdomainTarget("psiop", keys, withBuiltinAliases({ psiop: "2019-PS2" })),
+    "/games/2028-ai?level=2019-PS2",
+  );
+  assertEquals(
+    subdomainTarget("2028", [...keys, "2028"], withBuiltinAliases({})),
+    "/games/2028-ai?level=2028",
+  );
+  assertEquals(
+    withBuiltinAliases({ "2019": "2019-PS2" })["2019"],
+    "2019-PS2",
   );
 });
