@@ -19,8 +19,17 @@
 // and Diamond Eyes. They are AAC in an MP4 container under an .mp3 name; a
 // browser that cannot decode that reports an error, which leaves the game
 // its own music.
+//
+// A track can be locked: the row offers it only once a game has unlocked it.
+// bgm.mp3 (3:00, a plain MP3) is 2028.Ai's loop 2 — the runs after one that
+// beat its bonus level, RonaGun — where it is the stage music in 1.mp3's
+// place (game.bundle.js, unlockLoop2). The game says so with
+// { type: 'cmg-bgm-unlock', urls }; a URL there only ever unlocks a track of
+// this list, matched exactly, and what is kept (BGM_UNLOCKED_KEY) is the
+// track's id, never the URL.
 
 export const BGM_CHOICE_KEY = 'cmg-bgm-track';
+export const BGM_UNLOCKED_KEY = 'cmg-bgm-unlocked';
 
 /** No pick: the running game plays its own music. */
 export const BGM_GAME = '';
@@ -32,13 +41,25 @@ export const BGM_TRACKS = Object.freeze([
   Object.freeze({ id: '2', label: '2.mp3', url: BGM_BASE + '2.mp3' }),
   Object.freeze({ id: '4', label: '4.mp3', url: BGM_BASE + '4.mp3' }),
   Object.freeze({ id: 'diamond-eyes', label: 'Diamond Eyes', url: BGM_BASE + 'diamond-eyes.mp3' }),
+  Object.freeze({ id: 'bgm', label: 'bgm.mp3', url: BGM_BASE + 'bgm.mp3', locked: true }),
 ]);
 
-/** What the Guide's row steps through: the game's own music, then the tracks. */
-export const BGM_OPTIONS = Object.freeze([
-  Object.freeze({ value: BGM_GAME, label: 'Game' }),
-  ...BGM_TRACKS.map((t) => Object.freeze({ value: t.id, label: t.label })),
-]);
+/**
+ * What the Guide's row steps through: the game's own music, then the tracks
+ * — a locked one only when `unlocked` names it.
+ * @param {readonly string[]} [unlocked]
+ */
+export function bgmOptions(unlocked = []) {
+  return Object.freeze([
+    Object.freeze({ value: BGM_GAME, label: 'Game' }),
+    ...BGM_TRACKS
+      .filter((t) => !t.locked || unlocked.includes(t.id))
+      .map((t) => Object.freeze({ value: t.id, label: t.label })),
+  ]);
+}
+
+/** The row before anything is unlocked. */
+export const BGM_OPTIONS = bgmOptions();
 
 /**
  * The track an id names, or null — for BGM_GAME and for anything unknown.
@@ -63,23 +84,72 @@ function defaultStorage() {
 }
 
 /**
- * The remembered pick, or BGM_GAME when nothing (or nothing known) is stored.
+ * The locked tracks unlocked so far, by id: only ids of locked tracks of
+ * BGM_TRACKS, whatever else is stored.
+ * @param {BgmStorage | null} [storage]
+ * @returns {string[]}
+ */
+export function loadBgmUnlocks(storage = defaultStorage()) {
+  try {
+    const list = JSON.parse(storage?.getItem(BGM_UNLOCKED_KEY) || '[]');
+    if (!Array.isArray(list)) return [];
+    return BGM_TRACKS.filter((t) => t.locked && list.includes(t.id)).map((t) => t.id);
+  } catch (_) { return []; }
+}
+
+/**
+ * Unlock the locked tracks whose URL is in `urls` (what a game sent with
+ * cmg-bgm-unlock) and keep them. Returns every track unlocked now, by id;
+ * anything that is not one of BGM_TRACKS' own URLs unlocks nothing.
+ * @param {unknown} urls
+ * @param {BgmStorage | null} [storage]
+ * @returns {string[]}
+ */
+export function unlockBgmTracks(urls, storage = defaultStorage()) {
+  const had = loadBgmUnlocks(storage);
+  const asked = Array.isArray(urls) ? urls.filter((u) => typeof u === 'string').slice(0, 16) : [];
+  const now = BGM_TRACKS
+    .filter((t) => t.locked && (had.includes(t.id) || asked.includes(t.url)))
+    .map((t) => t.id);
+  if (now.length !== had.length) {
+    try { storage?.setItem(BGM_UNLOCKED_KEY, JSON.stringify(now)); } catch (_) { /* the unlock lasts the session */ }
+  }
+  return now;
+}
+
+/**
+ * Whether the row may offer the track an id names: an open track, or a
+ * locked one that `unlocked` names.
+ * @param {unknown} id
+ * @param {readonly string[]} unlocked
+ */
+function offered(id, unlocked) {
+  const t = bgmTrack(id);
+  return !!t && (!t.locked || unlocked.includes(t.id));
+}
+
+/**
+ * The remembered pick, or BGM_GAME when nothing (or nothing on offer) is
+ * stored.
  * @param {BgmStorage | null} [storage]
  */
 export function loadBgmChoice(storage = defaultStorage()) {
   try {
     const id = storage?.getItem(BGM_CHOICE_KEY);
-    return bgmTrack(id) ? id : BGM_GAME;
+    return offered(id, loadBgmUnlocks(storage)) ? id : BGM_GAME;
   } catch (_) { return BGM_GAME; }
 }
 
 /**
- * Remember a pick; BGM_GAME (or an unknown id) clears it. Returns what was kept.
+ * Remember a pick; BGM_GAME (or an id not on offer) clears it. Returns what
+ * was kept. `unlocked` is what the row offers, which outlasts a storage that
+ * would not keep the unlock.
  * @param {string} id
  * @param {BgmStorage | null} [storage]
+ * @param {readonly string[]} [unlocked]
  */
-export function saveBgmChoice(id, storage = defaultStorage()) {
-  const kept = bgmTrack(id) ? id : BGM_GAME;
+export function saveBgmChoice(id, storage = defaultStorage(), unlocked = loadBgmUnlocks(storage)) {
+  const kept = offered(id, unlocked) ? id : BGM_GAME;
   try {
     if (kept) storage?.setItem(BGM_CHOICE_KEY, kept);
     else storage?.removeItem(BGM_CHOICE_KEY);

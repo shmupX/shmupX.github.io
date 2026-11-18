@@ -57,7 +57,9 @@ const CUT = (minutes: 1 | 2 | 4) => `https://easierbycode.com/${minutes}.mp3`;
  * `boss2_bgm` is the fight with the third boss, from his arrival, and
  * `stage4_bgm` the secret stage's own track, the two-minute cut, whatever its
  * length (the stage after the fourth, reached by finishing every boss with
- * the CA bomb and no continue).
+ * the CA bomb and no continue). `stage_bgm_loop2` is the new track loop 2
+ * unlocks — the runs after one that beat the bonus level, RonaGun — and on
+ * that loop it plays in `stage_bgm`'s place (game.bundle.js `loop2BgmKey`).
  */
 export const SOUNDTRACK: Readonly<Record<string, string>> = {
   boss2_bgm: "https://easierbycode.com/boss.mp3",
@@ -69,6 +71,7 @@ export const SOUNDTRACK: Readonly<Record<string, string>> = {
   boss_vega_bgm: CUT(1),
   stage4_bgm: CUT(2),
   stage_bgm: CUT(1),
+  stage_bgm_loop2: "https://easierbycode.com/bgm.mp3",
   stage_bgm_2min: CUT(2),
   stage_bgm_4min: CUT(4),
   title_bgm: CUT(4),

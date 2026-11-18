@@ -211,14 +211,24 @@ async function broadcaster() {
   );
   const src = functionSource(js, "cmgBroadcastMusicAlbum") +
     functionSource(js, "cmgMusicTitle") +
-    functionSource(js, "gameForLevelResult");
+    functionSource(js, "gameForLevelResult") +
+    // A loop-2 track is left out until the loop is unlocked.
+    'var LOOP2_BGM_SUFFIX = "_loop2";' +
+    functionSource(js, "isLoop2BgmKey") +
+    functionSource(js, "onLoop2");
   const make = new Function(
     "window",
     "RESOURCE_PATHS",
     "ASSET_BASE",
+    "gameState",
     src + "\nreturn cmgBroadcastMusicAlbum;",
   );
-  return (result: unknown, sourceURLs: unknown, embedded = true) => {
+  return (
+    result: unknown,
+    sourceURLs: unknown,
+    embedded = true,
+    loop2 = false,
+  ) => {
     const posted: { type: string; album: Album }[] = [];
     const parent = {
       postMessage: (m: { type: string; album: Album }) => posted.push(m),
@@ -228,12 +238,17 @@ async function broadcaster() {
       location: { href: "https://codemonkey.games/games/2028-ai?level=foo" },
     };
     if (!embedded) win.parent = win;
-    make(win, {
-      boss_bison_bgm: "assets/sounds/boss_bison_bgm.mp3",
-      boss_goki_bgm: "assets/sounds/boss_goki_bgm.mp3",
-      bgm_continue: "assets/sounds/scene_continue/bgm_continue.mp3",
-      se_decision: "assets/sounds/se_decision.mp3",
-    }, "/games/2028-ai/")(result, sourceURLs);
+    make(
+      win,
+      {
+        boss_bison_bgm: "assets/sounds/boss_bison_bgm.mp3",
+        boss_goki_bgm: "assets/sounds/boss_goki_bgm.mp3",
+        bgm_continue: "assets/sounds/scene_continue/bgm_continue.mp3",
+        se_decision: "assets/sounds/se_decision.mp3",
+      },
+      "/games/2028-ai/",
+      { loop2 },
+    )(result, sourceURLs);
     return posted;
   };
 }
@@ -267,6 +282,29 @@ Deno.test("the runtime hands the launcher its BGM: stock tracks, the level's ove
   assertEquals(album.tracks[1].title, "Continue");
   assertEquals(album.tracks[2].title, "Custom BGM 7apIEB");
   assertEquals(album.tracks[2].id, "bgm7apIEBrXWAzw2TQggIQGK6FMLbRyaH");
+});
+
+Deno.test("a loop-2 track joins the album only once the loop is unlocked", async () => {
+  const js = await read(BUNDLE);
+  assert(
+    js.indexOf("syncLoop2(game);") <
+      js.indexOf("cmgBroadcastMusicAlbum(result, result.bgmSourceURLs);"),
+    "the album is sent before the boot knows the loop",
+  );
+  const post = await broadcaster();
+  const urls = {
+    stage_bgm: "https://easierbycode.com/1.mp3",
+    stage_bgm_loop2: "https://easierbycode.com/bgm.mp3",
+  };
+  const hrefs = (loop2: boolean) =>
+    post({ levelName: "foo" }, urls, true, loop2)[0].album.tracks
+      .map((t) => t.url)
+      .filter((u) => u.includes("easierbycode.com"));
+  assertEquals(hrefs(false), ["https://easierbycode.com/1.mp3"]);
+  assertEquals(hrefs(true), [
+    "https://easierbycode.com/1.mp3",
+    "https://easierbycode.com/bgm.mp3",
+  ]);
 });
 
 Deno.test("with no overrides the album is the stock BGM, named for the stock game", async () => {

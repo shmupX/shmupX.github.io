@@ -155,11 +155,13 @@
   // it is remembered, and the looping <audio> that plays it (see "Sound: the
   // background-music pick" below).
   import {
-    BGM_OPTIONS,
+    bgmOptions,
     bgmTrack,
     createBgmPlayer,
     loadBgmChoice,
+    loadBgmUnlocks,
     saveBgmChoice,
+    unlockBgmTracks,
   } from '../static/osd-bgm.js';
   // The touch controller: laid over the game when the machine has a
   // touchscreen and no pad, or shown on the built-in screen while the game is
@@ -3609,6 +3611,10 @@
   // time the game is told its volume, so the game's music never blips back.
   let bgmChoice = $state(loadBgmChoice());
   let bgmHolding = $state(false);
+  // The locked tracks a game has unlocked (2028.Ai's loop 2 unlocks bgm.mp3):
+  // ids out of static/osd-bgm.js, kept under cmg-bgm-unlocked, and offered
+  // by the row from then on.
+  let bgmUnlocked = $state(loadBgmUnlocks());
   const bgmPlayer = createBgmPlayer({
     onstate: () => { bgmHolding = bgmPlayer.holding; },
   });
@@ -3622,7 +3628,7 @@
     untrack(syncBgm);
   });
   function setBgmChoice(id) {
-    bgmChoice = saveBgmChoice(id);
+    bgmChoice = saveBgmChoice(id, undefined, bgmUnlocked);
     // Now, not on the effect's turn: the tap that picked the track is the
     // gesture some browsers want play() called inside.
     syncBgm();
@@ -5435,7 +5441,7 @@
       addSection('Sound', [
         // What the BGM is: the game's own, or a track picked here to play in
         // its place (static/osd-bgm.js).
-        { key: 'bgm-track', kind: 'select', label: 'BGM track', value: bgmChoice, options: BGM_OPTIONS },
+        { key: 'bgm-track', kind: 'select', label: 'BGM track', value: bgmChoice, options: bgmOptions(bgmUnlocked) },
         { key: 'vol-bgm', kind: 'slider', label: 'BGM', value: volBgm, min: 0, max: 100, step: 5, unit: '%' },
         { key: 'vol-sfx', kind: 'slider', label: 'SFX', value: volSfx, min: 0, max: 100, step: 5, unit: '%' },
       ]);
@@ -8584,6 +8590,15 @@
       // bounded) and only ever reaches the deck, which plays nothing until
       // asked.
       onGameMusicAlbum(d.album);
+      return;
+    }
+    if (d.type === 'cmg-bgm-unlock') {
+      // The running game has unlocked music for the Guide's BGM track row
+      // (the 2028-ai runtime does on loop 2, and again each boot after).
+      // Benign from our own frame at any origin: a URL only ever unlocks a
+      // track of static/osd-bgm.js's own list, matched exactly, and nothing
+      // plays until the player picks it.
+      bgmUnlocked = unlockBgmTracks(d.urls);
       return;
     }
     if (d.type === 'cmg-music-autostart') {

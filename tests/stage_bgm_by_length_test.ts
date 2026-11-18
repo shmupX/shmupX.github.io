@@ -65,6 +65,7 @@ async function helpers(): Promise<Helpers> {
     "stageBgmMinutes",
     "stageBgmTrack",
     "stagePlaysAudioKey",
+    "isLoop2BgmKey",
   ];
   const consts = [
     "MAX_STAGE_ID",
@@ -73,6 +74,7 @@ async function helpers(): Promise<Helpers> {
     "STAGE_WAVE_TICKS",
     "STAGE_BOSS_SECONDS",
     "STAGE_BGM_KEY",
+    "LOOP2_BGM_SUFFIX",
   ];
   return new Function(
     consts.map((c) => constSource(js, c)).join("") +
@@ -169,7 +171,12 @@ Deno.test("the loader is told to fetch only the cuts some stage plays", async ()
   const boss = { boss0: {}, boss1: {} };
   const wanted = (recipe: Recipe) =>
     TRACKS.filter((k) => h.stagePlaysAudioKey(k, recipe, TRACKS));
-  const always = TRACKS.filter((k) => h.stageBgmMinutes(k) < 0);
+  // Loop 2's track comes down behind the game, once the loop is on
+  // (tests/loop2_bgm_test.ts), never with the level.
+  const always = TRACKS.filter((k) =>
+    h.stageBgmMinutes(k) < 0 && !k.endsWith("_loop2")
+  );
+  assertEquals(h.stagePlaysAudioKey("stage_bgm_loop2", {}, TRACKS), false);
   // 2028.Ai itself: every stage about a minute, so neither longer cut.
   const base = JSON.parse(await read("static/games/2028-ai/assets/game.json"));
   assertEquals(wanted(base), [...always, "stage_bgm"].sort());
@@ -231,6 +238,9 @@ Deno.test("a stage's own track, stage<N>_bgm, wins over the length cuts", async 
     "stagePlaysAudioKey",
     "recipeData",
     "stageBgmKey",
+    "isLoop2BgmKey",
+    "onLoop2",
+    "loop2BgmKey",
   ];
   const consts = [
     "MAX_STAGE_ID",
@@ -239,6 +249,7 @@ Deno.test("a stage's own track, stage<N>_bgm, wins over the length cuts", async 
     "STAGE_WAVE_TICKS",
     "STAGE_BOSS_SECONDS",
     "STAGE_BGM_KEY",
+    "LOOP2_BGM_SUFFIX",
   ];
   const { stageBgmKey, stagePlaysAudioKey } = new Function(
     "gameState",
@@ -285,7 +296,7 @@ Deno.test("the game scene plays the stage track, starts it over each stage, and 
   );
   assert(
     flat.includes(
-      "return stageBgmTrack(keys, seconds) || themeKey;",
+      "return loop2BgmKey(keys, stageBgmTrack(keys, seconds) || themeKey);",
     ),
     "stageBgmKey does not fall back on the theme",
   );
@@ -298,7 +309,7 @@ Deno.test("the game scene plays the stage track, starts it over each stage, and 
   // A theme two stages share still pauses and resumes; a stage track does not.
   assert(
     flat.includes(
-      "var sameBgm = stageBgmMinutes(nextKey) < 0 && sameBgmTrack(currentKey, nextKey);",
+      "var sameBgm = stageBgmMinutes(loop1BgmKey(nextKey)) < 0 && sameBgmTrack(currentKey, nextKey);",
     ),
     "a stage track carries over into the next stage",
   );
