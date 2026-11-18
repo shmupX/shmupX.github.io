@@ -369,7 +369,20 @@ Deno.test("the editor hands a version on as the shelf's own word", async () => {
   // plays a mod as MOD when no card chose for it.
   assert(
     editor.includes(
-      "shelf.versionParams(shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : ''))",
+      "const picked = shelf.normalizeVersion(version) || (lineageForked() ? 'mod' : '');",
+    ),
+  );
+  assert(editor.includes("const flags = shelf.versionParams(picked);"));
+  // The one part it adds by name: a web game's own export keeps its story
+  // when it plays as OG, unless its author turned NO STORY on.
+  assert(
+    editor.includes(
+      "if (picked !== 'mod' && lineageActive() && lineage.ownStory &&",
+    ),
+  );
+  assert(
+    editor.includes(
+      "gameData && gameData.storyData && !gameData.noStory) flags.story = 1;",
     ),
   );
   assert(editor.includes("${await versionPlayParams()}"));

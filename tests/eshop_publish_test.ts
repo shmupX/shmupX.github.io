@@ -77,9 +77,11 @@ Deno.test("eshop:publish builds the cart, shoots the cover and writes save, cove
     // The cart carries the eShop name as its own.
     assertEquals(got.sav.fileName, "Dez 2 - dezaFoo.sav");
     assertEquals((await Deno.stat(got.sav.outPath)).size, 1114112);
-    // foo carries a story, and the cart opens its stages on it.
+    // foo carries a story, and the cart opens its stage on it. foo is a
+    // one-stage record (levelStages), so the line names the story's other
+    // stages as having no stage on the cart.
     assert(
-      log.some((m) => /^story: \d+ stages? open on a panel/.test(m)),
+      log.some((m) => /^story: opens stage0 picture \d+x\d+ \+ words/.test(m)),
       log.filter((m) => m.startsWith("story")).join("\n") || "no story line",
     );
     // The listing that goes is read first and named.
