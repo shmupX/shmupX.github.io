@@ -7298,9 +7298,10 @@ site. They behave like any other alias (the level must exist, a level's own
 name beats them), and an entry for the same name in `shmupX/levelAliases` wins.
 
 **Arcade boards.** A few labels open a MAME board instead of a level:
-`sfex2.codemonkey.games/` → cmg's arcade player with `?rom=sfex2` (Street
-Fighter EX2). They live in `ARCADE_SUBDOMAINS` in `lib/level-subdomain.ts`
-(label → romset), are asked before any level, alias or shelf game, and need no
+`sfex2.codemonkey.games/` → cmg's arcade player with `?rom=sfex2` and
+`&bios=coh3002c,qsound_hle` (Street Fighter EX2; a ZN-2 board stalls at
+"Loading Machine" without its BIOS sets). They live in `ARCADE_SUBDOMAINS` in
+`lib/level-subdomain.ts` (label → romset and BIOS sets), are asked before any level, alias or shelf game, and need no
 listing. The redirect goes to cmg's own copy of the player
 (`ARCADE_PLAYER_URL`), not this origin's `/arcade/`: that path is only mirrored
 by `static/emu-sw.js` in a browser that has installed the Arcade core, so a

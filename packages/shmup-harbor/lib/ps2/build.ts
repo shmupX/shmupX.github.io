@@ -15,7 +15,11 @@ import { ensureDir } from "@std/fs";
 import { resolveAthenaElf } from "./athena.ts";
 import { type LevelRecord, stageAssets, type StagedFile } from "./assets.ts";
 import { PS2_STORY_JSON } from "./story.ts";
-import { buildIso } from "./iso9660.ts";
+import { buildIso, readIsoFiles } from "./iso9660.ts";
+import {
+  FREEDVDBOOT_AUDSRV_PREAMBLE,
+  resolveFreeDvdBootBase,
+} from "./freedvdboot.ts";
 import { patchRuntime } from "./runtime-patches.ts";
 import { decodeDataUrl, decodePng, type Raster } from "./png.ts";
 import {
@@ -152,6 +156,13 @@ export interface BuildPs2Options {
    * names, one file to hand to a browser download or copy onto a stick.
    */
   zip?: boolean;
+  /**
+   * Also write `<App>-freedvdboot.iso`: the game laid over a FreeDVDBoot
+   * image, the disc a stock console boots through its DVD player. The value
+   * is the console's DVD player version ("2.10", "2.12", "3.04", "3.10",
+   * "3.11" or "slim") or the path to a FreeDVDBoot image. See freedvdboot.ts.
+   */
+  freedvdboot?: string | null;
   /** SNDPAC.BIN to render the tone bank from; default: search dev-fixtures/. */
   sndpac?: string | null;
   /**
@@ -198,6 +209,8 @@ export interface BuildPs2Result {
   appDir: string | null;
   /** The disc image, when --iso asked for one. */
   isoPath: string | null;
+  /** The FreeDVDBoot disc, when --freedvdboot asked for one. */
+  freedvdbootPath: string | null;
   /** The zipped folder, when --zip asked for one. */
   zipPath: string | null;
   artifacts: string[];
@@ -892,6 +905,51 @@ export async function buildPs2(
     log(`  iso: ${(iso.length / 1048576).toFixed(1)}MB`);
   }
 
+  let freedvdbootPath: string | null = null;
+  let freedvdbootConsoles: string | null = null;
+  if (options.freedvdboot) {
+    const base = await resolveFreeDvdBootBase(
+      options.freedvdboot,
+      cacheDir,
+      log,
+    );
+    log(`  FreeDVDBoot image: ${base.source}`);
+    const fdvdMainJs = hasAudio
+      ? new Uint8Array([
+        ...encoder.encode(FREEDVDBOOT_AUDSRV_PREAMBLE + "\n"),
+        ...uncappedMainJs,
+      ])
+      : uncappedMainJs;
+    const disc = buildIso({
+      volumeId: app,
+      base: base.bytes,
+      // The image's own VIDEO_TS (and the uLaunchELF in it) stay listed.
+      placed: readIsoFiles(base.bytes),
+      // At the root, so every way of starting AthenaEnv finds main.js beside
+      // it: uLaunchELF passes `cdfs:/ATHENA.ELF` (or `cdrom0:\ATHENA.ELF;1`),
+      // and AthenaEnv runs from the folder that names or, for any cdrom0
+      // path, from `cdfs:/`. No SYSTEM.CNF: the boot ROM never reads this
+      // disc as a PS2 disc, and uLaunchELF launches the ELF by name.
+      files: payload.flatMap((file) => {
+        if (file.path === "SYSTEM.CNF") return [];
+        if (file.path === "athena.ini") {
+          return [{ ...file, path: "ATHENA.INI" }];
+        }
+        if (file.path === "athena.elf") {
+          return [{ ...file, path: "ATHENA.ELF" }];
+        }
+        if (file.path === "main.js") return [{ ...file, data: fdvdMainJs }];
+        return [file];
+      }),
+      date: BUILD_DATE,
+    });
+    freedvdbootPath = join(dir, `${app}-freedvdboot.iso`);
+    await Deno.writeFile(freedvdbootPath, disc);
+    freedvdbootConsoles = base.consoles;
+    artifacts.push(freedvdbootPath);
+    log(`  FreeDVDBoot disc: ${(disc.length / 1048576).toFixed(1)}MB`);
+  }
+
   // The exact command that produced this, so the folder is self-describing
   // once it is off the machine that built it.
   const task = options.zip
@@ -908,6 +966,9 @@ export async function buildPs2(
     // build:ps2:zip pre-sets only --zip, so a build that asked for both still
     // has to name the disc.
     options.zip && options.iso ? "--iso" : "",
+    options.freedvdboot
+      ? `--freedvdboot ${JSON.stringify(options.freedvdboot)}`
+      : "",
   ].filter(Boolean).join(" ");
 
   await Deno.writeTextFile(
@@ -916,7 +977,7 @@ export async function buildPs2(
       sfx: !!(sfx && sfx.files.length),
       bgm: !!(bgm && bgm.files.length),
       toneBank: !!toneBank,
-    }),
+    }, freedvdbootConsoles),
   );
 
   return {
@@ -924,6 +985,7 @@ export async function buildPs2(
     dir,
     appDir: options.zip ? null : appDir,
     isoPath,
+    freedvdbootPath,
     zipPath,
     artifacts,
     notes,
@@ -937,6 +999,7 @@ function readme(
   zipped: boolean,
   rebuild: string,
   audio: { sfx: boolean; bgm: boolean; toneBank: boolean },
+  freedvdbootConsoles: string | null = null,
 ): string {
   return [
     `${name} — PlayStation 2 build`,
@@ -973,7 +1036,22 @@ function readme(
         '    BIOS)". The log should say: ELF Loading: cdrom0:\\ATHENA.ELF;1',
         "    It also runs in the launcher's own in-browser PS2 player;",
         "    burning it for real hardware needs a modchip or FMCB, as with",
-        "    any homebrew disc.",
+        '    any homebrew disc. A stock console shows its red "Please',
+        '    insert a PlayStation or PlayStation 2 format disc" screen for',
+        "    it: use the FreeDVDBoot disc below instead.",
+        "",
+      ]
+      : []),
+    ...(freedvdbootConsoles
+      ? [
+        `${app}-freedvdboot.iso`,
+        "    The disc for a STOCK console, through FreeDVDBoot",
+        "    (github.com/CTurt/FreeDVDBoot): FreeDVDBoot's own DVD Video",
+        "    image with this game added. Made for",
+        `    ${freedvdbootConsoles}.`,
+        "    Burn it to a DVD (DVD-R preferred) at the lowest speed and",
+        "    finalise it. Boot it like a movie; FreeDVDBoot opens",
+        "    uLaunchELF. In uLaunchELF open cdfs:/ and run ATHENA.ELF.",
         "",
       ]
       : []),
