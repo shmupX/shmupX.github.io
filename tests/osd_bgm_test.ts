@@ -1,5 +1,6 @@
-// The Guide's background-music selector (static/osd-bgm.js): the four tracks
-// on offer, the pick as it is remembered, and the looping player behind it —
+// The Guide's background-music selector (static/osd-bgm.js): the tracks on
+// offer, the one a game unlocks, the pick as it is remembered, and the
+// looping player behind it —
 // what it holds the game's own BGM for, and what it does not. No browser: the
 // <audio> is a stand-in that says what was asked of it. The launcher's wiring
 // is a Svelte component bundled at build time, so it is pinned by source.
@@ -12,10 +13,14 @@ import {
   BGM_GAME,
   BGM_OPTIONS,
   BGM_TRACKS,
+  BGM_UNLOCKED_KEY,
+  bgmOptions,
   bgmTrack,
   createBgmPlayer,
   loadBgmChoice,
+  loadBgmUnlocks,
   saveBgmChoice,
+  unlockBgmTracks,
 } from "../static/osd-bgm.js";
 
 const read = async (p: string) =>
@@ -97,22 +102,27 @@ const URL_2 = "https://easierbycode.com/2.mp3";
 
 // ── The tracks ──────────────────────────────────────────────────────────────
 
-Deno.test("four tracks, each an https file on easierbycode.com", () => {
+Deno.test("five tracks, each an https file on easierbycode.com, one of them locked", () => {
   assertEquals(BGM_TRACKS.map((t) => t.url), [
     "https://easierbycode.com/1.mp3",
     "https://easierbycode.com/2.mp3",
     "https://easierbycode.com/4.mp3",
     "https://easierbycode.com/diamond-eyes.mp3",
+    "https://easierbycode.com/bgm.mp3",
   ]);
+  assertEquals(
+    BGM_TRACKS.filter((t) => "locked" in t && t.locked).map((t) => t.id),
+    ["bgm"],
+  );
   assertEquals(new Set(BGM_TRACKS.map((t) => t.id)).size, BGM_TRACKS.length);
   for (const t of BGM_TRACKS) assert(t.id && t.label);
 });
 
-Deno.test("the row offers the game's own music first, then the tracks", () => {
+Deno.test("the row offers the game's own music first, then the open tracks", () => {
   assertEquals(BGM_OPTIONS[0], { value: BGM_GAME, label: "Game" });
   assertEquals(
     BGM_OPTIONS.slice(1).map((o) => o.value),
-    BGM_TRACKS.map((t) => t.id),
+    BGM_TRACKS.filter((t) => !("locked" in t && t.locked)).map((t) => t.id),
   );
   assertEquals(BGM_OPTIONS.map((o) => o.label), [
     "Game",
@@ -121,6 +131,78 @@ Deno.test("the row offers the game's own music first, then the tracks", () => {
     "4.mp3",
     "Diamond Eyes",
   ]);
+});
+
+Deno.test("a locked track joins the row once it is unlocked, last", () => {
+  assertEquals(bgmOptions(), BGM_OPTIONS);
+  assertEquals(bgmOptions(["bgm"]).map((o) => o.label), [
+    "Game",
+    "1.mp3",
+    "2.mp3",
+    "4.mp3",
+    "Diamond Eyes",
+    "bgm.mp3",
+  ]);
+  // An open track's id unlocks nothing that was not on offer already.
+  assertEquals(bgmOptions(["4", "nope"]), BGM_OPTIONS);
+});
+
+Deno.test("a game unlocks a track by its URL, and only a locked track of the list", () => {
+  const storage = fakeStorage();
+  assertEquals(loadBgmUnlocks(storage), []);
+  // Anything else a frame might send unlocks nothing and stores nothing.
+  for (
+    const urls of [
+      null,
+      "https://easierbycode.com/bgm.mp3",
+      [{ url: "https://easierbycode.com/bgm.mp3" }],
+      ["https://evil.example/bgm.mp3", "https://easierbycode.com/bgm.mp3?x"],
+      // An open track is not unlocked by being named.
+      ["https://easierbycode.com/1.mp3"],
+    ]
+  ) {
+    assertEquals(unlockBgmTracks(urls, storage), [], JSON.stringify(urls));
+  }
+  assertEquals(storage.kept.has(BGM_UNLOCKED_KEY), false);
+  // 2028.Ai's loop 2.
+  assertEquals(
+    unlockBgmTracks(["https://easierbycode.com/bgm.mp3"], storage),
+    ["bgm"],
+  );
+  // Kept by id, never the URL, and read back.
+  assertEquals(storage.kept.get(BGM_UNLOCKED_KEY), '["bgm"]');
+  assertEquals(loadBgmUnlocks(storage), ["bgm"]);
+  // Again, or with nothing new: still unlocked.
+  assertEquals(
+    unlockBgmTracks(["https://easierbycode.com/bgm.mp3"], storage),
+    ["bgm"],
+  );
+  assertEquals(unlockBgmTracks([], storage), ["bgm"]);
+  // A stored list is read only for ids of locked tracks.
+  const odd = fakeStorage({
+    [BGM_UNLOCKED_KEY]: '["https://evil.example/x.mp3","1","bgm"]',
+  });
+  assertEquals(loadBgmUnlocks(odd), ["bgm"]);
+  assertEquals(
+    loadBgmUnlocks(fakeStorage({ [BGM_UNLOCKED_KEY]: "{bad json" })),
+    [],
+  );
+});
+
+Deno.test("a locked track can be picked once unlocked, and not before", () => {
+  const storage = fakeStorage();
+  assertEquals(saveBgmChoice("bgm", storage), BGM_GAME);
+  assertEquals(storage.kept.has(BGM_CHOICE_KEY), false);
+  // A pick stored while the track was locked does not come back.
+  storage.kept.set(BGM_CHOICE_KEY, "bgm");
+  assertEquals(loadBgmChoice(storage), BGM_GAME);
+  unlockBgmTracks(["https://easierbycode.com/bgm.mp3"], storage);
+  assertEquals(loadBgmChoice(storage), "bgm");
+  assertEquals(saveBgmChoice("bgm", storage), "bgm");
+  assertEquals(bgmTrack(loadBgmChoice(storage))?.url, BGM_TRACKS[4].url);
+  // A storage that would not keep the unlock: the row's own list decides.
+  const full = fakeStorage();
+  assertEquals(saveBgmChoice("bgm", full, ["bgm"]), "bgm");
 });
 
 Deno.test("an id names a track; the game's own music and anything else name none", () => {
@@ -312,7 +394,7 @@ Deno.test("the Guide's Sound section carries the selector, and the pick holds th
   assert(svelte.includes("from '../static/osd-bgm.js'"));
   assert(
     svelte.includes(
-      "{ key: 'bgm-track', kind: 'select', label: 'BGM track', value: bgmChoice, options: BGM_OPTIONS }",
+      "{ key: 'bgm-track', kind: 'select', label: 'BGM track', value: bgmChoice, options: bgmOptions(bgmUnlocked) }",
     ),
   );
   assert(
@@ -359,9 +441,29 @@ Deno.test("the Guide renders a select row: arrows either way, a tap steps on", a
   );
 });
 
+Deno.test("the launcher takes a game's unlock from its own frame, and offers what it unlocked", async () => {
+  const svelte = await read("svelte-src/Dashboard.svelte");
+  assert(svelte.includes("let bgmUnlocked = $state(loadBgmUnlocks());"));
+  assert(svelte.includes("options: bgmOptions(bgmUnlocked) },"));
+  assert(
+    svelte.includes("bgmChoice = saveBgmChoice(id, undefined, bgmUnlocked);"),
+  );
+  // Handled in onWindowMessage, behind its own-frame check.
+  const handler = svelte.indexOf("function onWindowMessage(e) {");
+  const guard = svelte.indexOf(
+    "if (!iframe || e.source !== iframe.contentWindow) return;",
+    handler,
+  );
+  const unlock = svelte.indexOf("if (d.type === 'cmg-bgm-unlock') {", handler);
+  assert(handler > 0 && guard > handler && unlock > guard);
+  assert(svelte.includes("bgmUnlocked = unlockBgmTracks(d.urls);"));
+});
+
 Deno.test("the built bundle carries the selector", async () => {
   const bundle = await read("static/dashboard.bundle.js");
   assert(bundle.includes("bgm-track"));
   assert(bundle.includes("https://easierbycode.com/"));
   assert(bundle.includes("diamond-eyes"));
+  assert(bundle.includes("cmg-bgm-unlock"));
+  assert(bundle.includes("cmg-bgm-unlocked"));
 });

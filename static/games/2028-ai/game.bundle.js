@@ -4130,12 +4130,202 @@
   // never play. (Its four-minute one comes down all the same, as the hidden
   // boss's theme.)
   function stagePlaysAudioKey(key, recipe, keys) {
+    // A loop-2 track is fetched behind the game, and only once the loop is
+    // unlocked (loadLoop2Bgm): a run that never gets there never downloads it.
+    if (isLoop2BgmKey(key)) return false;
     if (stageBgmMinutes(key) < 0) return true;
     var ids = recipeStageIds(recipe);
     for (var i = 0; i < ids.length; i++) {
       if (stageBgmTrack(keys, stageRunSeconds(recipe, ids[i])) === key) return true;
     }
     return false;
+  }
+  // ---- Loop 2: the runs after a game's bonus level -----------------------
+  // A game that names a secret level (secretSpan — foo's is RonaGun, its
+  // bonus level) goes on to its second loop once a run has beaten that
+  // level: the ending that follows the secret level's last stage unlocks it
+  // (unlockLoop2), for good, in this browser — LOOP2_STORAGE_KEY holds the
+  // ids of the games that have it. A music key the level also names with
+  // LOOP2_BGM_SUFFIX is the new track that loop unlocks, and from then on it
+  // is the default in that key's place (stageBgmKey): 2028.Ai's stage track,
+  // stage_bgm (1.mp3), becomes stage_bgm_loop2 (bgm.mp3). Nothing downloads
+  // it before then (stagePlaysAudioKey); once the loop is on it is fetched
+  // behind the game (loadLoop2Bgm), and a stage that opens before it lands
+  // plays the track it replaces until it does (loop2TakeOver). This is not
+  // gameState.secondLoop, the original game's flag for the run after a game
+  // over, which aims soldier B's shots.
+  var LOOP2_BGM_SUFFIX = "_loop2";
+  var LOOP2_STORAGE_KEY = "cmg-loop2";
+  function isLoop2BgmKey(key) {
+    var k = String(key);
+    return k.length > LOOP2_BGM_SUFFIX.length && k.slice(-LOOP2_BGM_SUFFIX.length) === LOOP2_BGM_SUFFIX;
+  }
+  // The key a loop-2 track stands in for; any other key as it is.
+  function loop1BgmKey(key) {
+    var k = String(key);
+    return isLoop2BgmKey(k) ? k.slice(0, -LOOP2_BGM_SUFFIX.length) : k;
+  }
+  // The ids of the games this browser has beaten through their bonus level.
+  function readLoop2Games() {
+    try {
+      var list = JSON.parse(localStorage.getItem(LOOP2_STORAGE_KEY) || "[]");
+      return Array.isArray(list) ? list.filter(function(id) {
+        return typeof id === "string" && id;
+      }) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  function onLoop2() {
+    return gameState.loop2 === true;
+  }
+  // `key` on loop 1; on loop 2 its loop-2 track instead, where the level
+  // names one and it has landed in `keys` (the audio cache's).
+  function loop2BgmKey(keys, key) {
+    if (!onLoop2() || !key || isLoop2BgmKey(key)) return key;
+    var next = key + LOOP2_BGM_SUFFIX;
+    return keys.indexOf(next) >= 0 ? next : key;
+  }
+  // The level's loop-2 tracks, key -> URL (gameState.bgmSourceURLs, the
+  // level's customAudioURLs).
+  function loop2BgmURLs() {
+    var urls = gameState.bgmSourceURLs;
+    var out = {};
+    if (!urls || typeof urls !== "object") return out;
+    for (var key in urls) {
+      if (isLoop2BgmKey(key) && typeof urls[key] === "string" && urls[key]) out[key] = urls[key];
+    }
+    return out;
+  }
+  // Tell the launcher which tracks the loop unlocked: the Guide's Sound → BGM
+  // track row offers the ones of its own list (static/osd-bgm.js) it is told
+  // of, and nothing else. Only http(s) URLs, only to a parent frame.
+  function cmgAnnounceLoop2Bgm() {
+    if (typeof window === "undefined" || window.parent === window) return;
+    var urls = [];
+    var own = loop2BgmURLs();
+    for (var key in own) {
+      if (/^https?:\/\//.test(own[key]) && urls.indexOf(own[key]) < 0) urls.push(own[key]);
+    }
+    if (!urls.length) return;
+    try {
+      window.parent.postMessage({ type: "cmg-bgm-unlock", urls: urls }, "*");
+    } catch (e) {
+    }
+  }
+  // The loop-2 tracks, decoded behind the game, as the secret level's own
+  // music is (loadSecretAudio): the deploy's downloaded copy where its
+  // custom-bgm manifest has one, else the source URL. One that fails leaves
+  // its stage on the track it would have replaced.
+  var loop2BgmLoading = {};
+  function loadLoop2Bgm(game) {
+    if (!onLoop2() || gameState.lowModeFlg || typeof fetch !== "function") return;
+    var ctx = game && game.sound && game.sound.context;
+    if (!ctx || typeof ctx.decodeAudioData !== "function" || !game.cache || !game.cache.audio) return;
+    var manifest = {};
+    try {
+      manifest = game.cache.json.exists(DEFAULTS.audio.manifestKey) ? game.cache.json.get(DEFAULTS.audio.manifestKey) || {} : {};
+    } catch (e) {
+    }
+    var downloaded = {};
+    for (var mk in manifest) downloaded[manifest[mk]] = true;
+    var baseEl = typeof document !== "undefined" ? document.getElementById(DEFAULTS.audio.baseUrlElementId) : null;
+    var baseUrl = baseEl ? baseEl.textContent.trim() : "./";
+    var byUrl = {};
+    var own = loop2BgmURLs();
+    for (var key in own) {
+      if (loop2BgmLoading[key] || game.cache.audio.exists(key)) continue;
+      loop2BgmLoading[key] = true;
+      (byUrl[own[key]] = byUrl[own[key]] || []).push(key);
+    }
+    Object.keys(byUrl).forEach(function(url) {
+      var keys = byUrl[url];
+      var file = customBgmFileName(url);
+      var sources = downloaded[file] ? [baseUrl + DEFAULTS.audio.customBgmDir + file, url] : [url];
+      var fetchFrom = function(i) {
+        return fetch(sources[i]).then(function(res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.arrayBuffer();
+        }).catch(function(err) {
+          if (i + 1 < sources.length) return fetchFrom(i + 1);
+          throw err;
+        });
+      };
+      fetchFrom(0).then(function(bytes) {
+        return ctx.decodeAudioData(bytes);
+      }).then(function(buffer) {
+        for (var i = 0; i < keys.length; i++) game.cache.audio.add(keys[i], buffer);
+        for (var j = 0; j < keys.length; j++) loop2TakeOver(game, keys[j]);
+      }).catch(function(err) {
+        console.warn("Loop 2 audio failed to load (" + url + "):", err);
+        for (var i = 0; i < keys.length; i++) delete loop2BgmLoading[keys[i]];
+      });
+    });
+  }
+  // A loop-2 track that lands while the stage is playing the track it stands
+  // in for takes over at once, from the top, so a run that opened straight
+  // onto a stage (the Guide's Start Stage, before the track was in) does not
+  // play the whole stage on the old one. A boss's own track, a paused game or
+  // a cleared stage is left alone. True when it took over.
+  function loop2TakeOver(game, key) {
+    var scene;
+    try {
+      scene = game.scene.getScene("PhaserGameScene");
+    } catch (e) {
+      return false;
+    }
+    if (!scene || !scene.sys || !scene.sys.settings.active || scene.stageCleared) return false;
+    var was = scene.stageBgmName;
+    if (!was || was === key || loop1BgmKey(key) !== was) return false;
+    var playing;
+    try {
+      playing = scene.sound.get(was);
+    } catch (e) {
+      return false;
+    }
+    if (!playing || !playing.isPlaying) return false;
+    var base = playing.__cmgBgmBase || 0.4;
+    playing.stop();
+    scene.stageBgmName = key;
+    scene.playBgm(key, base);
+    return true;
+  }
+  // Once the game is known (the boot, startGameScores): whether this browser
+  // has beaten it through its bonus level already, and if so its loop-2
+  // tracks, fetched and announced.
+  function syncLoop2(game) {
+    var id = gameState.gameId;
+    if (!onLoop2()) gameState.loop2 = !!id && readLoop2Games().indexOf(id) >= 0;
+    if (!onLoop2()) return;
+    loadLoop2Bgm(game);
+    cmgAnnounceLoop2Bgm();
+  }
+  // A run has beaten the game's bonus level: the loop is on from here, and
+  // kept for the game where it has an id (a PLAY of a game never saved keeps
+  // it for the page). True when this run is the one that unlocked it.
+  function unlockLoop2(game) {
+    var first = !onLoop2();
+    gameState.loop2 = true;
+    var id = gameState.gameId;
+    if (id) {
+      var games = readLoop2Games();
+      if (games.indexOf(id) < 0) {
+        games.push(id);
+        try {
+          localStorage.setItem(LOOP2_STORAGE_KEY, JSON.stringify(games));
+        } catch (e) {
+        }
+      }
+    }
+    loadLoop2Bgm(game);
+    cmgAnnounceLoop2Bgm();
+    return first;
+  }
+  // Whether the run that reached the ending beat the game's bonus level: it
+  // is past the secret level's last stage.
+  function beatBonusLevel(recipe) {
+    var secret = secretSpan(recipe);
+    return !!secret && Number(gameState.stageId) > secret.last;
   }
 
   // ../2019-es7/src/phaser/BootScene.js
@@ -18296,9 +18486,11 @@
       var secretTrack = stageBgmTrack(secretKeys, seconds) || (secretKeys.indexOf(themeKey) >= 0 ? themeKey : null);
       if (secretTrack) return SECRET_AUDIO_PREFIX + secretTrack;
     }
+    // On loop 2 the track picked gives way to its loop-2 track, where the
+    // level names one (loop2BgmKey): the game's, never the secret level's.
     var own = "stage" + String(stageId) + "_bgm";
-    if (keys.indexOf(own) >= 0) return own;
-    return stageBgmTrack(keys, seconds) || themeKey;
+    if (keys.indexOf(own) >= 0) return loop2BgmKey(keys, own);
+    return loop2BgmKey(keys, stageBgmTrack(keys, seconds) || themeKey);
   }
   // The key a secret level's own sound is cached under (the loader's
   // loadSecretAudio), for a key that level names. Null for a key it does not
@@ -19230,11 +19422,12 @@
         var nextBossName = bossNames[nextStageId] || "";
         // What the next stage will play (stageBgmKey). A theme it shares
         // with this one pauses here and the next stage resumes it. A stage
-        // track is cut to its stage, so it starts over with every stage.
+        // track is cut to its stage, so it starts over with every stage, and
+        // so does the loop-2 track that stands in for one (loop1BgmKey).
         var nextKey = nextBossName ? stageBgmKey(self, nextStageId, "boss_" + nextBossName + "_bgm") : "";
         var recipeNow = gameState._phaserRecipe;
         var lastStage = recipeNow ? lastStageId(recipeNow) : 4;
-        var sameBgm = stageBgmMinutes(nextKey) < 0 && sameBgmTrack(currentKey, nextKey);
+        var sameBgm = stageBgmMinutes(loop1BgmKey(nextKey)) < 0 && sameBgmTrack(currentKey, nextKey);
         if (sameBgm) {
           try {
             var sounds = self.sound.getAll();
@@ -21348,6 +21541,24 @@
           }, 50);
         });
       });
+      // A run that beat the game's bonus level puts the game on loop 2
+      // (unlockLoop2), and the track that loop unlocks is the stage music
+      // from the next run on. The run that unlocked it is told so, once the
+      // score card is up (_startCongrats).
+      var loop2First = beatBonusLevel(gameState._phaserRecipe) && unlockLoop2(game);
+      this.loop2Text = null;
+      if (loop2First && Object.keys(loop2BgmURLs()).length) {
+        this.loop2Text = this.add.text(GCX8, this.gotoTitleBtn.y - 14, "NEW BGM UNLOCKED", {
+          fontFamily: "Arial",
+          fontSize: "11px",
+          fontStyle: "bold",
+          color: "#ffd24a",
+          stroke: "#000000",
+          strokeThickness: 3
+        });
+        this.loop2Text.setOrigin(0.5);
+        this.loop2Text.setAlpha(0);
+      }
       // A Dezaemon cart's ending is its staff roll: the author's role labels
       // and credit strips over the stages' scenery. It runs first; the score
       // card follows, as the hardware's ranking screen does.
@@ -21458,6 +21669,18 @@
           ease: "Elastic.easeOut"
         });
       });
+      // Loop 2's new track, unlocked by this run (create).
+      if (this.loop2Text) {
+        t += 500;
+        this.time.delayedCall(t, function() {
+          self.playSound("se_correct", 0.7);
+          self.tweens.add({
+            targets: self.loop2Text,
+            alpha: 1,
+            duration: 300
+          });
+        });
+      }
     }
     createFrameButton(x, y, framePrefix) {
       var button = this.add.sprite(x, y, "game_ui", framePrefix + "0.gif");
@@ -22527,6 +22750,8 @@
       for (key in sourceURLs) {
         // A level can override any sound; only its music is an album track.
         if (!/bgm/.test(key)) continue;
+        // A loop-2 track is the loop's to unlock (syncLoop2 has run).
+        if (isLoop2BgmKey(key) && !onLoop2()) continue;
         if (typeof sourceURLs[key] === "string" && sourceURLs[key]) urls[key] = sourceURLs[key];
       }
     }
@@ -22701,6 +22926,9 @@
         if (result.bgmSourceURLs) {
           gameState.bgmSourceURLs = result.bgmSourceURLs;
         }
+        // A game this browser has beaten through its bonus level is on loop
+        // 2: its loop-2 music, fetched behind the title.
+        syncLoop2(game);
         cmgBroadcastCheats(gameState._phaserRecipe);
         cmgBroadcastLevelEditor(result, gameState._phaserRecipe);
         cmgBroadcastMusicAlbum(result, result.bgmSourceURLs);

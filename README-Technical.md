@@ -222,6 +222,27 @@ they are written out in full.
     2028.Ai uses all five: see
     [the soundtrack converter](#a-soundtrack-off-the-tone-bank).
     `tests/stage_bgm_by_length_test.ts` runs the helpers out of the bundle.
+  - **Loop 2: a track the bonus level unlocks.** A game that names a secret
+    level is on its second loop once a run has beaten that level: the ending
+    that follows the secret level's last stage (`beatBonusLevel`) calls
+    `unlockLoop2`, which keeps the game's id under `cmg-loop2` in
+    localStorage, and the boot reads it back (`syncLoop2`, once
+    `startGameScores` has named the game). A music key the level also names
+    with `_loop2` (`stage_bgm_loop2`) is the track that loop unlocks, and on
+    loop 2 `stageBgmKey` plays it in the key's place (`loop2BgmKey`) — the
+    stage track or a `stage<N>_bgm`, never the secret level's own music. It
+    restarts with every stage, as the stage track it replaces does
+    (`loop1BgmKey` at the clear). The loader never downloads a `_loop2` key
+    (`stagePlaysAudioKey` says no); `loadLoop2Bgm` fetches it behind the game
+    once the loop is on — the downloaded copy in `assets/custom-bgm/` where
+    the manifest has the file, else the URL — and a stage still on the old
+    track when it lands switches to it from the top (`loop2TakeOver`). The
+    run that unlocks it gets a NEW BGM UNLOCKED line under the score card,
+    the launcher a `{ type: "cmg-bgm-unlock", urls }` (again at every boot on
+    loop 2), and the docked deck's album leaves the track out until then.
+    This is not `gameState.secondLoop`, the original game's flag for the run
+    after a game over. `tests/loop2_bgm_test.ts` runs the helpers out of the
+    bundle.
   - **A level's custom music is its own.** The site keeps a folder of
     downloaded tracks, `assets/custom-bgm/`, which the build fills from
     2028.Ai's `foo.json` (`deno task 2028-ai:bgm`) and lists in a manifest of
@@ -3666,7 +3687,12 @@ track of his own from the moment he arrives (`boss2_bgm`,
 `https://easierbycode.com/boss.mp3`, 1:29: an MP4 with a 720x720 video stream
 beside its audio, of which the runtime decodes only the audio). The secret
 stage, the fifth (reached by finishing every boss with the CA bomb and no
-continue), plays the two-minute cut as its own track (`stage4_bgm`). `title_bgm` is
+continue), plays the two-minute cut as its own track (`stage4_bgm`). Loop 2 —
+every run after one that beat the bonus level, RonaGun, in that browser —
+unlocks a new stage track, `stage_bgm_loop2`
+(`https://easierbycode.com/bgm.mp3`, 3:00, a plain MP3), which is the stage
+music from then on in `stage_bgm`'s place (the bundle's hand edits, above).
+`title_bgm` is
 the four-minute cut too, where the title played the transcription's opening
 tape, and the five stage themes name the first cut for what reads a level's
 music by its boss (the
@@ -3676,14 +3702,17 @@ cannot plays the stock themes.
 
 `static/games/2028-ai/foo.json`, which a plain visit bakes, carries those
 entries in place of the Sol Invicto mp3 it still named, so
-`deno task 2028-ai:bgm` now downloads 10 MB for the deploy where it downloaded
-41. The cloud record is changed by
+`deno task 2028-ai:bgm` now downloads 23 MB for the deploy (Diamond Eyes,
+`boss.mp3` and `bgm.mp3` among it) where it downloaded 41. The cloud record is changed by
 [`scripts/2028-ai/stage-bgm.ts`](scripts/2028-ai/stage-bgm.ts)
 (`deno task 2028-ai:stage-bgm`, a dry run unless `--apply`): it lays the same
 entries over the record's `customAudioURLs` and removes `dezaemonBgm`, since a
 level that carries a tone-bank soundtrack plays it and never its recording.
 Run it once the runtime that reads the stage tracks is deployed: an older one
 would download all three cuts and play the first under the themes alone. The
+same holds for `stage_bgm_loop2`, which the script lays over a record that
+already has the rest: a runtime from before loop 2 would download it at every
+boot and never play it. The
 transcription is kept as it was in `scripts/2028-ai/bgm/foo-tone-bank.json`
 and `--revert` puts it back, which a new Saturn cart of foo needs first:
 `build:sav` writes a cart's music from `dezaemonBgm`.
@@ -3730,7 +3759,12 @@ smaller thing than the deck: a selector that steps through _Game_ (the default,
 the running game's own music) and four recordings — `1.mp3`, `2.mp3`, `4.mp3`
 and Diamond Eyes (`diamond-eyes.mp3`), the files 2028.Ai's soundtrack is cut
 from, at `https://easierbycode.com/` — and loops the pick in place of the game's
-music, whatever the game. The launcher plays it itself
+music, whatever the game. A fifth, `bgm.mp3`, is locked: the row offers it once
+a game has unlocked it, which 2028.Ai does on loop 2 (the runs after one that
+beat its bonus level) by posting `{ type: "cmg-bgm-unlock", urls }` from the
+game frame. A URL there only ever unlocks a locked track of the module's own
+list, matched exactly; the launcher keeps the track's id (`cmg-bgm-unlocked`),
+never the URL. The launcher plays it itself
 ([`static/osd-bgm.js`](static/osd-bgm.js): one looping `<audio>` in the top
 document, at the BGM slider's volume) while a game is on, and holds the game's
 BGM factor at 0 over `cmg-volume` for as long as the pick is sounding or on its
@@ -6889,7 +6923,9 @@ whichever ending the run reached: the normal one, or the secret stage.
 - **Editing.** The editor keeps `secretLevel` through a cloud load and SAVE.
 
 It replaced the bonus stage of PRs 99-102, which played RonaGun only after the
-secret stage. `tests/secret_level_test.ts` pins it.
+secret stage. `tests/secret_level_test.ts` pins it. A run that beats the secret
+level puts the game on loop 2, which unlocks a new stage track (the bundle's
+hand edits, under **Layout**: "Loop 2").
 
 ## Evil Invaders as a cloud game
 
