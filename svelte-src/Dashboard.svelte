@@ -151,6 +151,16 @@
     watchMusic,
     watchMusicEnabled,
   } from '../static/watch-music.js';
+  // The Guide's background-music selector: the tracks on offer, the pick as
+  // it is remembered, and the looping <audio> that plays it (see "Sound: the
+  // background-music pick" below).
+  import {
+    BGM_OPTIONS,
+    bgmTrack,
+    createBgmPlayer,
+    loadBgmChoice,
+    saveBgmChoice,
+  } from '../static/osd-bgm.js';
   // The touch controller: laid over the game when the machine has a
   // touchscreen and no pad, or shown on the built-in screen while the game is
   // on a monitor (see "Touch Controller" below).
@@ -3581,18 +3591,59 @@
   }
   let volBgm = $state(loadVolPct(VOL_BGM_KEY, 100));
   let volSfx = $state(loadVolPct(VOL_SFX_KEY, 13));
+
+  // ── Sound: the background-music pick ──────────────────────────────────────
+  // The Guide's Sound → BGM track row picks one of static/osd-bgm.js's tracks
+  // to play in place of the running game's own music; "Game" picks none. The
+  // launcher plays it — one looping <audio> up here, at the BGM slider's
+  // volume — while a game is on, and holds the game's BGM at zero over
+  // cmg-volume for as long as it sounds. Three things can be the music, in
+  // this order: the docked deck while it plays, then this pick, then the game.
+  // A pick that cannot play (the page not yet tapped, the file out of reach)
+  // holds nothing, so the game is never left silent waiting on it.
+  //
+  // bgmChoice is '' for the game's own music, else an id out of
+  // static/osd-bgm.js; bgmHolding is true while that pick is sounding or on
+  // its way to. The effect below is declared ahead of postVolume's on
+  // purpose: when the deck stops, the pick is already holding again by the
+  // time the game is told its volume, so the game's music never blips back.
+  let bgmChoice = $state(loadBgmChoice());
+  let bgmHolding = $state(false);
+  const bgmPlayer = createBgmPlayer({
+    onstate: () => { bgmHolding = bgmPlayer.holding; },
+  });
+  function syncBgm() {
+    const track = bgmTrack(bgmChoice);
+    const wanted = !!track && gameOn && !editorFrameActive && !musicDucked;
+    bgmPlayer.set(wanted ? track.url : null, volBgm / 100);
+  }
+  $effect(() => {
+    void bgmChoice; void gameOn; void editorFrameActive; void musicDucked; void volBgm;
+    untrack(syncBgm);
+  });
+  function setBgmChoice(id) {
+    bgmChoice = saveBgmChoice(id);
+    // Now, not on the effect's turn: the tap that picked the track is the
+    // gesture some browsers want play() called inside.
+    syncBgm();
+  }
+  // A phone that backgrounds the tab pauses the track; coming back resumes it.
+  function onBgmVisibility() { if (!document.hidden) syncBgm(); }
+
   // targetOrigin '*' for the same reason as setPlugin: the payload is benign
   // numbers and a volume-capable game could load cross-origin.
   // While the docked music player plays, the game's BGM factor goes out as 0 —
   // the deck is the music then — and the stored volume is left alone, so it
-  // comes straight back when the deck pauses or stops (musicDucked).
+  // comes straight back when the deck pauses or stops (musicDucked). The
+  // Guide's own BGM pick holds it the same way (bgmHolding).
   function postVolume() {
     const iframe = document.getElementById('gameframe');
-    try { iframe?.contentWindow?.postMessage({ type: 'cmg-volume', bgm: (musicDucked ? 0 : volBgm) / 100, sfx: volSfx / 100 }, '*'); }
+    try { iframe?.contentWindow?.postMessage({ type: 'cmg-volume', bgm: (musicDucked || bgmHolding ? 0 : volBgm) / 100, sfx: volSfx / 100 }, '*'); }
     catch (_) { /* ignore */ }
   }
   $effect(() => {
     void musicDucked;
+    void bgmHolding;
     untrack(postVolume);
   });
   function setVolume(key, pct) {
@@ -5382,6 +5433,9 @@
     // frame plays no audio, so the section hides while it is the active frame.
     if (gameOn && !editorFrameActive) {
       addSection('Sound', [
+        // What the BGM is: the game's own, or a track picked here to play in
+        // its place (static/osd-bgm.js).
+        { key: 'bgm-track', kind: 'select', label: 'BGM track', value: bgmChoice, options: BGM_OPTIONS },
         { key: 'vol-bgm', kind: 'slider', label: 'BGM', value: volBgm, min: 0, max: 100, step: 5, unit: '%' },
         { key: 'vol-sfx', kind: 'slider', label: 'SFX', value: volSfx, min: 0, max: 100, step: 5, unit: '%' },
       ]);
@@ -5459,6 +5513,7 @@
     // Plugin rows carry a `plugin` id — flip it live in the running game.
     if (it.plugin) { setPlugin(it.plugin, !!v); return; }
     if (it.key === 'vol-bgm' || it.key === 'vol-sfx') { setVolume(it.key, v); return; }
+    if (it.key === 'bgm-track') { setBgmChoice(v); return; }
     if (it.key === 'hue') setTweak('hue', v);
     else if (it.key === 'breathe') setTweak('breatheSpeed', Math.round(v * 10) / 10);
     else if (it.key === 'scanlines') setTweak('scanlines', !!v);
@@ -5488,6 +5543,10 @@
     } else if (it.kind === 'color') {
       const idx = Math.max(0, it.options.findIndex((o) => o.hue === it.value));
       setOsdValue(i, it.options[(idx + dir + it.options.length) % it.options.length].hue); sfx.nav();
+    } else if (it.kind === 'select') {
+      // Steps through the options and wraps, like the color chips.
+      const idx = Math.max(0, it.options.findIndex((o) => o.value === it.value));
+      setOsdValue(i, it.options[(idx + dir + it.options.length) % it.options.length].value); sfx.nav();
     } else if (it.kind === 'toggle') {
       setOsdValue(i, dir > 0); sfx.nav();
     }
@@ -5496,7 +5555,7 @@
     const it = osdItems[i]; if (!it) return;
     if (it.kind === 'section') { toggleSection(it.section); return; }
     if (it.kind === 'toggle') { setOsdValue(i, !it.value); sfx.nav(); return; }
-    if (it.kind === 'color' || it.kind === 'slider') { adjustOsd(i, 1); return; }
+    if (it.kind === 'color' || it.kind === 'slider' || it.kind === 'select') { adjustOsd(i, 1); return; }
     // Game-advertised action button: relay it into the frame and hand focus back
     // so the game's own UI (e.g. shmup's Controls remapper) receives input.
     if (it.action) {
@@ -7857,13 +7916,13 @@
         osdNav.hDir = h;
         if (justPressed(0)) { lastInput = 'pad'; activateOsd(osdSel); }  // FBTN_BOTTOM
         else if (justPressed(1) || justPressed(8)) osdBack(); // FBTN_RIGHT or Select (Cheats → root → close)
-        // FBTN_LEFT / FBTN_TOP (X/Y) adjust the focused slider/color row down/up.
+        // FBTN_LEFT / FBTN_TOP (X/Y) adjust the focused slider/color/select row down/up.
         // On Android Chrome + SNES the D-pad doesn't report and axes[0] is dead,
         // so without these a slider could only ever increase (A clamps at max).
         // X/Y exist on every SNES-class pad and are otherwise unused in the Guide.
         if (justPressed(2) || justPressed(3)) {
           const it = osdItems[osdSel];
-          if (it && (it.kind === 'slider' || it.kind === 'color')) {
+          if (it && (it.kind === 'slider' || it.kind === 'color' || it.kind === 'select')) {
             adjustOsd(osdSel, justPressed(2) ? -1 : 1);
           }
         }
@@ -8734,6 +8793,7 @@
 
     sfx.boot();
     document.addEventListener('click', unlockAudio, { once: true });
+    document.addEventListener('visibilitychange', onBgmVisibility);
     bootTimer = setTimeout(() => { bootGone = true; }, 1600);
 
     window.addEventListener('keydown', onKey);
@@ -8980,6 +9040,8 @@
     rowPressCancel();
     if (padRaf) cancelAnimationFrame(padRaf);
     document.removeEventListener('click', unlockAudio);
+    document.removeEventListener('visibilitychange', onBgmVisibility);
+    bgmPlayer.set(null);
     window.removeEventListener('keydown', onKey);
     window.removeEventListener('pointerdown', onPointerDown, true);
     window.removeEventListener('message', onWindowMessage);

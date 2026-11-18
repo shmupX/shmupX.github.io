@@ -319,6 +319,10 @@ Deno.test("the launcher checks the album, docks the deck and ducks the game", as
     svelte.includes("url.protocol !== 'http:' && url.protocol !== 'https:'"),
   );
   assert(svelte.includes("const MUSIC_PLAYER_URL = '/music-player/';"));
-  assert(svelte.includes("bgm: (musicDucked ? 0 : volBgm) / 100"));
+  // The Guide's own BGM pick holds the game's music the same way
+  // (tests/osd_bgm_test.ts).
+  assert(
+    svelte.includes("bgm: (musicDucked || bgmHolding ? 0 : volBgm) / 100"),
+  );
   assert(svelte.includes("from '../static/watch-music.js'"));
 });

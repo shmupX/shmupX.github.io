@@ -1038,6 +1038,12 @@ they are written out in full.
   a paired watchAmp lists the deck's albums and switches the song. Same
   database and pairing code as `watch-launch.js`, its own `music` subtree;
   tested in `tests/watch_music_test.ts`.
+- `static/osd-bgm.js` — the Guide's **background-music selector** (Sound → BGM
+  track): the four recordings on offer, the pick as it is remembered, and the
+  looping `<audio>` that plays it in place of the running game's own music.
+  Bundled into the dashboard; the player's states and what each holds the game's
+  BGM for are tested in `tests/osd_bgm_test.ts`. See **A track picked in the
+  Guide** under the music player, below.
 - `tools/watchamp/` — **watchAmp**, the Wear OS MP3 player whose ♪ Desktop
   music screen is that remote's wrist end, vendored from
   [shmupX/watchAmp](https://github.com/shmupX/watchAmp) so the two halves live
@@ -3719,6 +3725,26 @@ its own can instead route BGM through the deck with
 the album onto the `azlegend-music` channel the editor's Audio panel already
 offers as BGM replacements.
 
+**A track picked in the Guide.** The Guide's **Sound → BGM track** row is a
+smaller thing than the deck: a selector that steps through _Game_ (the default,
+the running game's own music) and four recordings — `1.mp3`, `2.mp3`, `4.mp3`
+and Diamond Eyes (`diamond-eyes.mp3`), the files 2028.Ai's soundtrack is cut
+from, at `https://easierbycode.com/` — and loops the pick in place of the game's
+music, whatever the game. The launcher plays it itself
+([`static/osd-bgm.js`](static/osd-bgm.js): one looping `<audio>` in the top
+document, at the BGM slider's volume) while a game is on, and holds the game's
+BGM factor at 0 over `cmg-volume` for as long as the pick is sounding or on its
+way to. The deck outranks it: while the deck plays the pick is paused, and it
+resumes where it stopped when the deck does, so what is heard is the deck, else
+the pick, else the game. The pick is remembered (`cmg-bgm-track`: an id from the
+module's list, never a URL) and comes back with the next game. A pick that
+cannot play holds nothing, so the game keeps its music instead of going silent:
+a page nobody has tapped yet, where the browser refuses `play()` and the player
+asks again every two seconds, or a file that will not load or decode. The row is
+a `select`, a row kind the Guide gained for it — ◂ value ▸, stepped with left
+and right (X and Y on a pad whose D-pad does not report), A or a tap for the
+next, wrapping.
+
 **The watch.** [watchAmp](tools/watchamp/README.md) — the Wear OS player built
 for the Pixel Watch 5, vendored at `tools/watchamp/` — has a **♪ Desktop music**
 screen that lists the deck's albums and switches the song, with previous / pause
@@ -3753,7 +3779,7 @@ frame after every connect is history and is never acted on, which is what keeps
 a reconnect from replaying the last press.
 
 ```
-deno test tests/watch_music_test.ts tests/music_player_test.ts
+deno test tests/watch_music_test.ts tests/music_player_test.ts tests/osd_bgm_test.ts
 deno task watchamp:test        # the watch end's JVM tests (JDK 17+, Android SDK)
 ```
 

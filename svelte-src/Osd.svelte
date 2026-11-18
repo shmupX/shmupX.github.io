@@ -12,8 +12,9 @@
   // 360 Guide reference. Navigation is unchanged: the expanded (center) panel
   // simply follows the group that owns the selected index.
   //
-  // Item shape: { key, kind:'button'|'toggle'|'slider'|'color', label,
-  //   section?, value?, options?(color), min?,max?,step?,unit?(slider) }
+  // Item shape: { key, kind:'button'|'toggle'|'slider'|'color'|'select', label,
+  //   section?, value?, options?(color: [{hue,hex}], select: [{value,label}]),
+  //   min?,max?,step?,unit?(slider) }
   let {
     open = false,
     items = [],
@@ -45,8 +46,9 @@
 
   function rowClick(it, i) {
     onselect(i);
-    // Buttons + toggles act on the row tap; slider/color have their own controls.
-    if (it.kind === 'button' || it.kind === 'toggle') onactivate(i);
+    // Buttons + toggles act on the row tap, and a select steps to its next
+    // option; slider/color have their own controls.
+    if (it.kind === 'button' || it.kind === 'toggle' || it.kind === 'select') onactivate(i);
   }
   // Keyboard twin of rowClick: a row is click-focusable (tabindex="-1"), and a
   // role="menuitem" div synthesizes no click on Enter/Space. stopPropagation so
@@ -191,6 +193,26 @@
             onclick={() => { onselect(i); onsetvalue(i, opt.hue); }}
           ></button>
         {/each}
+      </span>
+    {:else if it.kind === 'select'}
+      <!-- One of a short list, shown as ◂ value ▸: the arrows step either way
+           and wrap, a tap anywhere else on the row steps forward. -->
+      {@const n = it.options.length}
+      {@const at = Math.max(0, it.options.findIndex((o) => o.value === it.value))}
+      <span class="osd-pick" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          class="osd-pick-btn"
+          aria-label="Previous {it.label}"
+          onclick={() => { onselect(i); onsetvalue(i, it.options[(at - 1 + n) % n].value); }}
+        >◂</button>
+        <span class="osd-pick-val" aria-live="polite">{it.options[at]?.label ?? ''}</span>
+        <button
+          type="button"
+          class="osd-pick-btn"
+          aria-label="Next {it.label}"
+          onclick={() => { onselect(i); onsetvalue(i, it.options[(at + 1) % n].value); }}
+        >▸</button>
       </span>
     {/if}
   </div>
@@ -389,6 +411,24 @@
   .osd-chip:hover { transform: translateY(-1px); }
   .osd-chip.on { box-shadow: 0 0 0 2px var(--ink-hi), 0 0 10px color-mix(in srgb, var(--ink-hi) 60%, transparent); }
 
+  /* select: ◂ value ▸ — the value in the mono face like a slider's reading. */
+  .osd-pick { display: flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0; }
+  .osd-pick-val {
+    font-family: var(--font-mono); font-size: var(--t-body-fixed); text-align: center;
+    min-width: 7.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.85);
+  }
+  .osd-pick-btn {
+    appearance: none; border: 0; background: transparent; cursor: pointer; padding: 0;
+    width: 26px; height: 26px; border-radius: 6px; flex-shrink: 0;
+    font-size: var(--t-body-fixed); line-height: 1;
+    color: oklch(0.957 0.103 calc(var(--h) - 1) / 0.6);
+  }
+  .osd-pick-btn:hover { background: oklch(0.892 0.236 calc(var(--h) + 10) / 0.14); color: oklch(0.973 0.063 calc(var(--h) - 2)); }
+  .osd-row.sel .osd-pick-val { color: var(--select-ink); }
+  .osd-row.sel .osd-pick-btn { color: color-mix(in srgb, var(--select-ink) 65%, transparent); }
+  .osd-row.sel .osd-pick-btn:hover { background: color-mix(in srgb, var(--select-ink) 14%, transparent); color: var(--select-ink); }
+
   .osd-toggle { position: relative; width: 34px; height: 19px; border-radius: 999px; background: oklch(0.902 0.212 calc(var(--h) + 10) / 0.22); transition: background .15s ease; flex-shrink: 0; }
   .osd-toggle[data-on="1"] { background: oklch(0.763 0.182 calc(var(--h) + 18)); }
   .osd-toggle i { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: oklch(0.973 0.063 calc(var(--h) - 2)); box-shadow: 0 1px 2px color-mix(in srgb, var(--shade) 40%, transparent); transition: transform .15s ease; }
@@ -538,6 +578,12 @@
   .osd-blades .osd-slider::-webkit-slider-thumb { background: #eef2f5; border: 1px solid rgba(30, 40, 50, .8); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
   .osd-blades .osd-slider::-moz-range-thumb { background: #eef2f5; border: 1px solid rgba(30, 40, 50, .8); }
   .osd-blades .osd-row.sel .osd-slider { background: rgba(33, 51, 10, .28); }
+  .osd-blades .osd-pick-val { color: rgba(230, 238, 245, .9); }
+  .osd-blades .osd-pick-btn { color: rgba(230, 238, 245, .6); }
+  .osd-blades .osd-pick-btn:hover { background: rgba(255, 255, 255, .12); color: #eef2f5; }
+  .osd-blades .osd-row.sel .osd-pick-val { color: #21330a; }
+  .osd-blades .osd-row.sel .osd-pick-btn { color: rgba(33, 51, 10, .7); }
+  .osd-blades .osd-row.sel .osd-pick-btn:hover { background: rgba(33, 51, 10, .14); color: #21330a; }
   .osd-blades .osd-toggle { background: rgba(255, 255, 255, .22); }
   .osd-blades .osd-toggle[data-on="1"] { background: #5aa832; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .35); }
   .osd-blades .osd-toggle i { background: #eef2f5; }
