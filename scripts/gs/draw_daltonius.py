@@ -368,6 +368,397 @@ def render(name, ghosted=False):
     return img
 
 
+# --- the death scene ---------------------------------------------------------
+#
+# When his HP runs out he does not explode: he swells up (bulge0-2), froths at
+# the mouth (froth0-2), lets it all out in three toots that let him down
+# (toot0-3) and ends as an empty suit on the floor (flat). Every frame is
+# 128x128 with his feet on the same line as the poses above, so the scene can
+# swap them in place; the toots carry their own gas cloud.
+
+FLUSH = (250, 206, 206, 255)    # a face going red
+FLUSH_SH = (222, 160, 168, 255)
+GAS = (168, 204, 70, 255)       # the cloud
+GAS_SH = (124, 160, 44, 255)
+GAS_INK = (60, 96, 22, 255)
+FOAM_LINE = (150, 170, 205, 255)
+VEIN = (214, 40, 52, 255)
+TONGUE = (226, 92, 120, 255)
+
+
+def s_ellipse(c, cx, cy, rx, ry, s, ang=0.0):
+    return ellipse(c, cx, cy, rx * s, ry * s, ang)
+
+
+def death_eyes(c, hx, hy, s, kind, size):
+    """Both eyes, left smaller as drawn, in one of the death scene's states."""
+    eyes = ((hx - 9.0 * s, hy - 3.0 * s, 4.6, 5.6), (hx + 7.5 * s, hy - 4.5 * s, 5.6, 6.6))
+    for i, (ex, ey, rx, ry) in enumerate(eyes):
+        rx, ry = rx * size, ry * size
+        if kind in ("shut", "x", "spiral"):
+            r = 3.2 * size if kind != "shut" else 3.6 * size
+            if kind == "shut":
+                # squeezed shut: a > and a <, pointing at the nose
+                d = 1 if i == 0 else -1
+                c.poly([(ex - d * r, ey - r * 0.8), (ex + d * r * 0.6, ey), (ex - d * r, ey + r * 0.8)], INK_DK)
+                c.poly([(ex - d * r + d, ey - r * 0.8), (ex + d * r * 0.6 + d, ey), (ex - d * r + d, ey + r * 0.8)], INK_DK)
+            elif kind == "x":
+                for dx in (0, 1):
+                    c.line(ex - r + dx, ey - r, ex + r + dx, ey + r, INK_DK)
+                    c.line(ex - r + dx, ey + r, ex + r + dx, ey - r, INK_DK)
+            else:
+                # dazed: a little spiral, wound the other way in each eye
+                pts = []
+                for k in range(0, 40):
+                    a = k * 0.42 * (1 if i == 0 else -1)
+                    rr = 0.4 + k * r / 40.0
+                    pts.append((ex + math.cos(a) * rr, ey + math.sin(a) * rr))
+                c.poly(pts, INK_DK)
+            continue
+        ball = ellipse(c, ex, ey, rx, ry)
+        blob(c, ball, fill=TOOTH, shade=False)
+        if kind == "bulge":
+            # bloodshot: a few red veins creeping in from the rim
+            for a in (0.4, 1.9, 3.3, 4.6):
+                x0, y0 = ex + math.cos(a) * rx * 0.92, ey + math.sin(a) * ry * 0.92
+                x1, y1 = ex + math.cos(a + 0.3) * rx * 0.55, ey + math.sin(a + 0.3) * ry * 0.55
+                c.line(x0, y0, x1, y1, VEIN)
+            c.put(ellipse(c, ex + 0.5, ey + 0.5, 1.2, 1.2), INK_DK)
+        elif kind == "roll":
+            # rolled back: only the bottom of each pupil still shows
+            c.put(ellipse(c, ex, ey - ry + 1.2, 2.4, 1.6) & ball, INK_DK)
+        else:
+            c.put(ellipse(c, ex + 1, ey + 0.5, 1.5, 1.8), INK_DK)
+        c.put(edge(ball), INK)
+
+
+def death_mouth(c, hx, my, s, kind, seed):
+    """The mouth, plus anything spilling out of it; returns the mouth mask."""
+    if kind == "puff":
+        # cheeks blown out, lips pressed into a tiny o
+        m = ellipse(c, hx + 0.5, my + 1, 2.6, 2.2)
+        c.put(m, INK_DK)
+        c.put(edge(m), INK)
+        for side in (-1, 1):
+            cx = hx + side * 15 * s
+            c.poly([(cx - 3, my - 2), (cx - 1, my - 4), (cx + 2, my - 4), (cx + 4, my - 2)], INK_LT)
+        return m
+    if kind == "grit":
+        # clenched: a bar of teeth, the strain of the toot
+        w = 11 * s
+        m = polygon(c, [(hx - w, my - 1), (hx + w, my - 2), (hx + w - 1, my + 5), (hx - w + 1, my + 5)])
+        c.put(m, TOOTH)
+        c.line(hx - w + 1, my + 2, hx + w - 1, my + 1.5, INK)
+        for tx in range(int(-w) + 3, int(w), 3):
+            c.line(hx + tx, my - 1, hx + tx, my + 4, INK)
+        c.put(edge(m), INK)
+        return m
+    if kind == "o":
+        m = ellipse(c, hx + 0.5, my + 3, 5.0 * s, 6.0 * s)
+        c.put(m, INK_DK)
+        c.put(edge(m), INK)
+        return m
+    if kind == "tongue":
+        m = ellipse(c, hx, my + 2, 8.0 * s, 4.0 * s)
+        c.put(m, INK_DK)
+        t = ellipse(c, hx + 3, my + 7, 3.4, 5.0)
+        c.put(t, TONGUE)
+        c.put(edge(t), INK)
+        c.line(hx + 3, my + 4, hx + 3, my + 9, INK)
+        c.put(edge(m), INK)
+        return m
+    # froth: the grin forced wide open, foam welling over the lip
+    w = 13 * s
+    m = polygon(c, [(hx - w, my - 1), (hx - w * 0.4, my), (hx + w * 0.4, my), (hx + w, my - 3),
+                    (hx + w * 0.8, my + 7), (hx + w * 0.3, my + 12), (hx - w * 0.3, my + 12), (hx - w * 0.8, my + 8)])
+    c.put(m, INK_DK)
+    for tx in range(-10, 12, 3):
+        c.put(polygon(c, [(hx + tx * s - 1, my), (hx + tx * s + 2, my), (hx + tx * s + 0.5, my + 3)]), TOOTH)
+    c.put(edge(m), INK)
+    return m
+
+
+def foam(c, hx, my, s, seed, drip):
+    """Froth: a puffy bank of foam over the lower lip, drips running off it."""
+    rng = np.random.default_rng(seed)
+    w = 13 * s
+    bubbles = [(hx + x * w, my + 7 + rng.uniform(-1.5, 2.5), rng.uniform(3.0, 4.6))
+               for x in np.linspace(-1, 1, 7)]
+    for _ in range(6):
+        bubbles.append((hx + rng.uniform(-w, w), my + 11 + rng.uniform(0, 3), rng.uniform(2.2, 3.6)))
+    for d in range(3):
+        x = hx + (-8 + d * 8) * s + rng.uniform(-2, 2)
+        length = drip * rng.uniform(0.6, 1.0)
+        for k in range(int(length // 3) + 1):
+            bubbles.append((x + rng.uniform(-0.6, 0.6), my + 14 + k * 3, max(1.4, 2.8 - k * 0.22)))
+    mass = np.zeros((c.h, c.w), dtype=bool)
+    for x, y, r in bubbles:
+        mass |= ellipse(c, x, y, r, r)
+    c.put(mass, TOOTH)
+    c.put(mass & ~shift(mass, -1, -1) & ~edge(mass), (226, 232, 244, 255))
+    # bubble rims inside the mass, so it reads as foam and not a white blob
+    for x, y, r in bubbles[::2]:
+        ring = edge(ellipse(c, x, y, r * 0.55, r * 0.55))
+        c.put(ring & mass & ~edge(mass), FOAM_LINE)
+    c.put(edge(mass), FOAM_LINE)
+    # flecks spat clear of the face
+    for _ in range(6):
+        a = rng.uniform(-math.pi * 0.95, -math.pi * 0.05)
+        rr = rng.uniform(16, 24) * s
+        x, y, r = hx + math.cos(a) * rr * 1.25, my + 4 + math.sin(a) * rr * 0.45, rng.uniform(1.0, 1.7)
+        m = ellipse(c, x, y, r, r)
+        c.put(m, TOOTH)
+        c.put(edge(m), FOAM_LINE)
+
+
+def death_head(c, hx, hy, s, eyes="normal", eye_size=1.0, mouth="froth", flush=False,
+               hair_up=False, seed=0, drip=0):
+    fill = FLUSH if flush else FILL
+    blob(c, s_ellipse(c, hx - 23.5 * s, hy - 2.5 * s, 3.9, 4.6, 1.0), fill=fill)
+    blob(c, s_ellipse(c, hx + 23.0 * s, hy - 5.0 * s, 3.9, 4.6, 1.0), fill=fill)
+    knot = polygon(c, [(hx - 7, hy - 35 * s), (hx - 3, hy - 40 * s), (hx + 2, hy - 37 * s),
+                       (hx + 1, hy - 31 * s), (hx + 3, hy - 25 * s), (hx - 5, hy - 24 * s), (hx - 9, hy - 29 * s)])
+    blob(c, knot)
+    if hair_up:
+        # the topknot quivering with the pressure
+        ky = hy - 34 * s
+        for side in (-1, 1):
+            c.line(hx - 2 + side * 9, ky - 2, hx - 2 + side * 13, ky - 4, INK_LT)
+            c.line(hx - 2 + side * 9, ky + 2, hx - 2 + side * 14, ky + 2, INK_LT)
+    h = s_ellipse(c, hx, hy, 22.5, 25.0, s)
+    if mouth == "puff":
+        # cheeks blown out past the jaw
+        for side in (-1, 1):
+            h |= s_ellipse(c, hx + side * 15.5 * s, hy + 8 * s, 8.5, 8.0, s)
+    h = blob(c, h, fill=fill)
+    if flush:
+        c.put(h & ~shift(h, -2, -2) & ~edge(h), FLUSH_SH)
+    c.clip = h & ~edge(h)
+    strands = [(-15, -16, -18, -9), (-12, -20, -13, -12), (-8, -22, -10, -15), (-5, -23, -3, -16),
+               (-1, -24, -2, -19), (2, -24, 5, -18), (6, -23, 4, -15), (9, -21, 12, -15),
+               (12, -19, 16, -12), (16, -15, 18, -10), (-10, -15, -6, -13), (7, -15, 10, -13)]
+    for x0, y0, x1, y1 in strands:
+        if hair_up:
+            # every hair on end
+            c.line(hx + x0 * s, hy + y0 * s, hx + x0 * s * 1.05, hy + (y0 - 6) * s, INK)
+        else:
+            c.line(hx + x0 * s, hy + y0 * s, hx + x1 * s, hy + y1 * s, INK)
+    c.clip = None
+    death_eyes(c, hx, hy, s, eyes, eye_size)
+    c.poly([(hx - 1.5, hy + 2 * s), (hx - 1.5, hy + 4 * s), (hx - 0.5, hy + 5 * s), (hx + 1, hy + 5 * s), (hx + 2, hy + 3 * s)], INK)
+    my = hy + 9 * s
+    death_beard(c, hx, hy, s)
+    death_mouth(c, hx, my, s, mouth, seed)
+    if mouth == "froth":
+        foam(c, hx, my, s, seed, drip)
+    return h
+
+
+def death_beard(c, hx, hy, s):
+    pts = [(-15, 15), (-10, 19), (-4, 19), (3, 19), (9, 17), (15, 12), (15, 20), (12, 27), (9, 25), (7, 32),
+           (3, 28), (0, 34), (-3, 29), (-6, 33), (-9, 27), (-12, 29), (-14, 22)]
+    m = polygon(c, [(hx + x * s, hy + y * s) for x, y in pts])
+    c.put(m, INK_DK)
+    rng = np.random.default_rng(3)
+    ys, xs = np.nonzero(m)
+    for i in rng.choice(len(xs), size=max(1, len(xs) // 9), replace=False):
+        c.dot(xs[i], ys[i], INK)
+
+
+def death_torso(c, tx, ty, sx, sy, strain=0, popped=False, sag=False):
+    t = blob(c, ellipse(c, tx, ty, 18.5 * sx, 17.5 * sy))
+    c.put(t & (c.Y > ty + 2) & (c.Y < ty + 4.2), INK)
+    # the buckle, sprung off when he is fullest
+    bx = tx - 6 * sx
+    if popped:
+        c.put(t & (c.X > bx) & (c.X < bx + 5) & (c.Y > ty + 1) & (c.Y < ty + 5.5), FILL)
+        bk = (tx + 20 * sx, ty - 2)
+        c.poly([(bk[0], bk[1]), (bk[0] + 5, bk[1] - 1), (bk[0] + 6, bk[1] + 3), (bk[0] + 1, bk[1] + 4), (bk[0], bk[1])], INK)
+        c.line(bk[0] - 4, bk[1] + 1, bk[0] - 9, bk[1] + 2, INK_LT)
+        c.line(bk[0] - 4, bk[1] + 4, bk[0] - 8, bk[1] + 6, INK_LT)
+    else:
+        c.put(polygon(c, [(bx, ty + 1.5), (bx + 5, ty + 1.5), (bx + 5, ty + 5.5), (bx, ty + 5.5)]), FILL)
+        c.poly([(bx, ty + 1.5), (bx + 5, ty + 1.5), (bx + 5, ty + 5.5), (bx, ty + 5.5), (bx, ty + 1.5)], INK)
+    # the DMP badge, stretched with him
+    bw, bh = 17 * min(sx, 1.3), 8
+    bxl, byt = tx + 1, ty - 12.5 - (sy - 1) * 4
+    c.put(polygon(c, [(bxl, byt), (bxl + bw, byt), (bxl + bw, byt + bh), (bxl, byt + bh)]), TOOTH)
+    c.poly([(bxl, byt), (bxl + bw - 1, byt), (bxl + bw - 1, byt + bh - 1), (bxl, byt + bh - 1), (bxl, byt)], INK)
+    font = {"D": ["XX.", "X.X", "X.X", "XX."], "M": ["X...X", "XX.XX", "X.X.X", "X...X"], "P": ["XX.", "X.X", "XX.", "X.."]}
+    gap = 1 + (1 if bw > 19 else 0)
+    gx0 = int(bxl) + 2
+    for ch in "DMP":
+        for gy, row in enumerate(font[ch]):
+            for gx, on in enumerate(row):
+                if on == "X":
+                    c.dot(gx0 + gx, int(byt) + 2 + gy, INK)
+        gx0 += len(font[ch][0]) + gap
+    # stretch marks where the shirt is fit to burst
+    for k in range(strain):
+        a = math.pi * (0.72 + k * 0.16)
+        x0, y0 = tx + math.cos(a) * 18.5 * sx * 0.95, ty + math.sin(a) * 17.5 * sy * 0.95
+        c.line(x0, y0, x0 + math.cos(a) * -4, y0 + math.sin(a) * -4, INK_LT)
+        a2 = math.pi * (0.28 - k * 0.16)
+        x0, y0 = tx + math.cos(a2) * 18.5 * sx * 0.95, ty + math.sin(a2) * 17.5 * sy * 0.95
+        c.line(x0, y0, x0 + math.cos(a2) * -4, y0 + math.sin(a2) * -4, INK_LT)
+    if sag:
+        # let down: folds hanging off him
+        for k, x in enumerate((-10, -3, 5, 11)):
+            c.poly([(tx + x * sx, ty + 6), (tx + x * sx + 2, ty + 10 + k % 2), (tx + x * sx, ty + 13)], INK_LT)
+    else:
+        c.line(tx - 14 * sx, ty + 9 * sy, tx - 8 * sx, ty + 11 * sy, INK_LT)
+    return t
+
+
+def gas_cloud(c, x, y, size, seed, fade=0):
+    """A puff of gas: lumpy, green, outlined like everything else."""
+    rng = np.random.default_rng(seed)
+    m = np.zeros((c.h, c.w), dtype=bool)
+    lumps = [(0, 0, 1.0)]
+    for _ in range(5 + int(size / 5)):
+        a = rng.uniform(0, 2 * math.pi)
+        rr = rng.uniform(0.35, 0.8) * size
+        lumps.append((math.cos(a) * rr, math.sin(a) * rr * 0.7, rng.uniform(0.45, 0.75)))
+    for dx, dy, r in lumps:
+        m |= ellipse(c, x + dx, y + dy, size * r * 0.62, size * r * 0.52)
+    if fade:
+        # thinning out: a checker of holes eats the body of the cloud
+        holes = ((np.indices((c.h, c.w)).sum(axis=0) % (4 - min(fade, 2))) == 0)
+        body = m & ~edge(m)
+        c.put(body & ~holes, GAS)
+        c.put(edge(m) & ~holes, GAS_INK)
+        return m
+    c.put(m, GAS)
+    c.put(m & ~shift(m, -2, -2), GAS_SH)
+    c.put(edge(m), GAS_INK)
+    # a couple of curls inside
+    for _ in range(2):
+        cx, cy = x + rng.uniform(-size * 0.3, size * 0.3), y + rng.uniform(-size * 0.2, size * 0.2)
+        c.poly([(cx - 2, cy), (cx - 1, cy - 2), (cx + 1, cy - 2), (cx + 2, cy), (cx + 1, cy + 1)], GAS_SH)
+    return m
+
+
+def stink_lines(c, x, y, n=3, h=12):
+    for k in range(n):
+        x0 = x + k * 5
+        pts = [(x0 + (1 if (j // 3) % 2 else -1), y - j) for j in range(h)]
+        c.poly(pts, GAS_INK)
+
+
+DEATH = {}
+
+
+def death(name, **kw):
+    DEATH[name] = kw
+
+
+# swelling: rounder each frame, eyes popping, face going red
+death("bulge0", k=1.12, eyes="bulge", eye_size=1.15, mouth="puff", arms=(-35, 215), flush=False)
+death("bulge1", k=1.30, eyes="bulge", eye_size=1.35, mouth="puff", arms=(-25, 205), flush=True, strain=1)
+death("bulge2", k=1.50, eyes="bulge", eye_size=1.6, mouth="puff", arms=(-12, 192), flush=True, strain=2,
+      popped=True, hair_up=True)
+# frothing: as full as he gets, the grin forced open and foaming over
+death("froth0", k=1.50, eyes="roll", eye_size=1.5, mouth="froth", arms=(-10, 190), flush=True, strain=2,
+      popped=True, hair_up=True, seed=11, drip=6)
+death("froth1", k=1.50, eyes="roll", eye_size=1.5, mouth="froth", arms=(-6, 186), flush=True, strain=2,
+      popped=True, hair_up=True, seed=12, drip=14, bob=1)
+death("froth2", k=1.50, eyes="roll", eye_size=1.5, mouth="froth", arms=(-12, 192), flush=True, strain=2,
+      popped=True, hair_up=True, seed=13, drip=22)
+# tooting: each one lets him down a size, the cloud behind him growing
+death("toot0", k=1.30, eyes="shut", mouth="grit", arms=(20, 160), flush=True, strain=1, popped=True,
+      gas=[(30, 112, 14, 21)], lift=3)
+death("toot1", k=1.16, eyes="shut", mouth="grit", arms=(35, 145), flush=False, gas=[(28, 108, 18, 22),
+      (100, 114, 12, 23)], lift=5, popped=True)
+death("toot2", k=1.02, eyes="spiral", mouth="o", arms=(60, 120), gas=[(24, 104, 22, 24), (104, 110, 16, 25),
+      (64, 122, 12, 26)], lift=2, popped=True, stink=True)
+death("toot3", k=0.92, eyes="spiral", mouth="o", arms=(75, 105), gas=[(20, 98, 22, 27, 1), (108, 104, 16, 28, 1)],
+      sag=True, popped=True, stink=True)
+
+
+def render_death(name):
+    p = DEATH[name]
+    c = Canvas(128, 128)
+    k = p["k"]
+    cx = 64
+    lift = p.get("lift", 0)
+    bob = p.get("bob", 0)
+    s = 1 + (k - 1) * 0.42
+    sy = k if not p.get("sag") else k * 0.9
+    tx, ty = cx - 3, 90.0 - lift + bob + (17.5 - 17.5 * sy) * 0.4
+    hy = 47.0 - lift + bob + (1 - s) * 18
+    if p.get("sag"):
+        hy += 4
+    for g in p.get("gas", []):
+        gas_cloud(c, g[0], g[1], g[2], g[3], fade=g[4] if len(g) > 4 else 0)
+    # stubby legs under a body this round
+    leg_ry = 8.5 - (k - 1) * 6
+    leg_y = min(122.5 - leg_ry, ty + 17.5 * sy - 1)
+    leg(c, tx - 10 * k, leg_y, leg_ry, 4.6, 10 if lift else 0)
+    leg(c, tx + 12 * k, leg_y - 0.5, leg_ry, 4.6, -10 if lift else 0)
+    death_torso(c, tx, ty, k, sy, strain=p.get("strain", 0), popped=p.get("popped", False), sag=p.get("sag", False))
+    death_head(c, cx, hy, s, eyes=p["eyes"], eye_size=p.get("eye_size", 1.0), mouth=p["mouth"],
+               flush=p.get("flush", False), hair_up=p.get("hair_up", False), seed=p.get("seed", 0),
+               drip=p.get("drip", 0))
+    aR, aL = p["arms"]
+    sR = (tx + 16 * k, ty - 4 * k)
+    sL = (tx - 14 * k, ty - 6 * k)
+    mR, _ = arm_shape(c, sR[0], sR[1], aR, 13.0)
+    blob(c, mR, fill=FLUSH if p.get("flush") else FILL)
+    mL, _ = arm_shape(c, sL[0], sL[1], aL, 11.0, 4.2)
+    blob(c, mL, fill=FLUSH if p.get("flush") else FILL)
+    if p.get("stink"):
+        stink_lines(c, 10, 84)
+        stink_lines(c, 104, 92)
+    if lift:
+        # the jolt of it: speed lines under his feet
+        for x in (tx - 14, tx - 4, tx + 8, tx + 18):
+            c.line(x, 124, x, 127, INK_LT)
+    return c.image()
+
+
+def render_flat():
+    """All the air out of him: an empty suit on the floor, face up."""
+    c = Canvas(128, 128)
+    gas_cloud(c, 104, 96, 14, 29, fade=2)
+    body = polygon(c, [(22, 122), (30, 112), (52, 108), (82, 108), (104, 113), (112, 121), (98, 126), (40, 126)])
+    blob(c, body)
+    c.put(body & (c.Y > 116) & (c.Y < 118) & (c.X > 40) & (c.X < 96), INK)
+    for x in (38, 54, 70, 88):
+        c.poly([(x, 112), (x + 3, 116), (x, 121)], INK_LT)
+    # the badge, still on
+    c.put(polygon(c, [(60, 110), (76, 110), (76, 115), (60, 115)]), TOOTH)
+    c.poly([(60, 110), (75, 110), (75, 114), (60, 114), (60, 110)], INK)
+    for x in range(62, 74, 2):
+        c.dot(x, 112, INK)
+    # arms and legs splayed, flat as the rest of him
+    blob(c, ellipse(c, 18, 118, 8, 3.2, math.radians(-12)))
+    blob(c, ellipse(c, 112, 112, 8, 3.2, math.radians(22)))
+    blob(c, ellipse(c, 44, 125, 6, 2.4))
+    blob(c, ellipse(c, 92, 125, 6, 2.4))
+    # the head flopped back on the floor
+    hx, hy = 64, 98
+    blob(c, ellipse(c, hx - 25, hy + 2, 3.6, 3.0))
+    blob(c, ellipse(c, hx + 25, hy, 3.6, 3.0))
+    knot = polygon(c, [(hx - 3, hy - 13), (hx + 4, hy - 17), (hx + 12, hy - 18), (hx + 9, hy - 13), (hx + 2, hy - 10)])
+    blob(c, knot)
+    h = blob(c, ellipse(c, hx, hy, 23, 13))
+    c.clip = h & ~edge(h)
+    for x in range(-14, 16, 5):
+        c.line(hx + x, hy - 12, hx + x + 3, hy - 8, INK)
+    c.clip = None
+    death_eyes(c, hx, hy + 2, 0.8, "x", 1.0)
+    pts = [(-13, 6), (-7, 9), (0, 10), (7, 9), (13, 6), (11, 11), (6, 13), (0, 14), (-6, 13), (-11, 11)]
+    c.put(polygon(c, [(hx + x, hy + y) for x, y in pts]), INK_DK)
+    t = ellipse(c, hx + 3, hy + 13, 3.0, 4.0)
+    c.put(t, TONGUE)
+    c.put(edge(t), INK)
+    # a last bubble of froth
+    m = ellipse(c, hx - 6, hy + 9, 2.2, 2.2)
+    c.put(m, TOOTH)
+    c.put(edge(m), FOAM_LINE)
+    return c.image()
+
+
 # --- the balloon -------------------------------------------------------------
 
 TEAL = (36, 168, 140, 255)
@@ -423,7 +814,10 @@ def main():
         render(name).save(os.path.join(out, f"Daltonius_{name}.png"))
     for i in range(3):
         bubble(i).save(os.path.join(out, f"Daltonius_fired{i}.png"))
-    print(f"wrote {len(POSES) + 3} frames to {out}")
+    for name in DEATH:
+        render_death(name).save(os.path.join(out, f"Daltonius_die_{name}.png"))
+    render_flat().save(os.path.join(out, "Daltonius_die_flat.png"))
+    print(f"wrote {len(POSES) + 3 + len(DEATH) + 1} frames to {out}")
 
 
 if __name__ == "__main__":

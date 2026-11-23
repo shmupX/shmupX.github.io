@@ -6688,6 +6688,67 @@ numbers. → MEDNAFEN CART (`POST /api/saturn-save`, the same code as
 `deno task sav:run`) installs the cart for the desktop emulator, which has the
 512 KB cartridge, and launches it.
 
+## Daltonius's Computer Precinct
+
+[codemonkey.games/daltonius](https://codemonkey.games/daltonius) is a page of
+its own, `static/daltonius/`: SQUAD's stage-2 boss, Daltonius, holding a box
+store's Computer Precinct against the tag (gs's ship, `bby-ship`), as an
+attract mode that loops with nobody at the stick, and his death scene when
+his HP runs out. It is not the game: nothing on it reads or writes the
+database, and the gs level is untouched.
+
+**The room is the LP Warehouse's.** The stage is the CSS-3D technique of
+lp-os's warehouse (`apps/shell/static/warehouse.css`/`.js`, the scene
+`thirsty.store?kiosk=1` opens): a perspective stage, a wrapper that tilts and
+orbits, a ground plane rotated flat whose children stand up with
+`rotateX(-90deg)`, and billboards that counter-rotate the camera so they
+always face it. Its shelf racks (three wooden levels, the orange lip, X-section
+posts, a name plate) and its monitors (`.screen`: glyph, label, stand, base,
+an orange glow when live) are ported unchanged — `buildRack` and
+`buildScreen` in `precinct.js` build them exactly as `buildRacks` and
+`buildScreens` do there, and `precinct.css` carries their rules as is. The
+work area behind the counter is floored in black square tiles (a conic
+checker of two blacks under a grout grid, `.work-floor`), the store floor
+around it in big-box vinyl.
+
+**The fight is his record's.** The tag weaves in front of him firing
+`beam0/1`; he runs his moves on a loop — `shootA` throws `RAM_0`, `shootB`
+charges his aura and throws three hacked laptops, `syungoku` warps him across
+the floor in afterimages and ends on his back (`LOL`) — and under a quarter of
+his HP (`3500`, his `bossData.hp`) his `dangerBalloon`, "I'm Fired!!!", blinks
+over his head. The tag dodges most of what comes at it and blocks the rest
+with `barrier0`; it can shoot the laptops and RAM down. The monitors keep
+score: Diagnostics reads his HP, Virus Scan goes red when the laptops fly,
+Repair Queue counts the ones fixed, Data Backup turns into a pink slip.
+
+**The death scene** has frames of its own, drawn by
+`scripts/gs/draw_daltonius.py` with the rest of him (`Daltonius_die_*`, all
+128×128 with his feet on the poses' line): `bulge0–2` swell him up, eyes
+popping and cheeks puffed, face going red, belt buckle sprung; `froth0–2`
+have him foaming at the mouth; `toot0–3` let him down a size per toot, each
+with its gas cloud; `flat` is the empty suit on the floor. The page plays them
+with a squash-and-wobble, foam flecks that land on the tiles, green gas
+puffs, `toot` / `TOOT!` / `TOOOOT!!` / `pfffft…`, then every monitor flips to
+💀 FIRED and the tag scores his `8000`. The script still writes his eighteen
+poses byte for byte as before, and `build-stage2.ts` packs only the frames it
+names, so the death frames stay out of the game's atlas.
+
+**Sound** is off until the Sound button (or `M`): everything is synthesized
+with Web Audio — the toots are a sawtooth through a resonant low-pass with its
+amplitude fluttered at ~30 Hz.
+
+**Keys:** `Enter` restarts the demo, `D` (or the Death scene button) skips to
+the death scene, `←`/`→` or a drag turns the camera, `P` pauses. `?scene=death`
+opens on the death scene, `?seed=<n>` fixes the first loop's dice, `?orbit=0`
+holds the camera still, `?speed=<1-8>` runs it faster. `globalThis.precinct`
+gives a capture or a test the phase, tick, HP and frame.
+
+`art/` holds every frame it draws: Daltonius's copied from `scripts/gs/art`,
+and the tag, its beam and barrier, `RAM_0` and the laptops cut from gs's atlas
+(`shmupX/levels/gs/atlasImageDataURL`) at their own rects. `frames.js` lists
+them; `tests/daltonius_precinct_test.ts` fails if the folder and the list
+drift apart, or if a Daltonius frame there differs from the script's.
+
 ## EVIL INVADERS '95 as a cloud game
 
 `95-demo` is [EVIL INVADERS '95](https://github.com/easierbycode/95-demo-sp), a
