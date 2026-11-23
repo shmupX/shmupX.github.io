@@ -6709,7 +6709,12 @@ an orange glow when live) are ported unchanged — `buildRack` and
 `buildScreens` do there, and `precinct.css` carries their rules as is. The
 work area behind the counter is floored in black square tiles (a conic
 checker of two blacks under a grout grid, `.work-floor`), the store floor
-around it in big-box vinyl.
+around it in big-box vinyl. One more rack stands alone in the middle of the
+work area, right behind where he fights: QUARANTINE, his stash, stocked with
+nothing but gs's hacked laptops (`laptop0/1`, the screen flickering between
+the two out of step with its neighbours) and RAM sticks (`RAM_0`, leaning
+every which way) shuffled together — a new mix every visit, the same one for
+a given `?seed=` (`stockQuarantine`).
 
 **The fight is his record's.** The tag weaves in front of him firing
 `beam0/1`; he runs his moves on a loop — `shootA` throws `RAM_0`, `shootB`

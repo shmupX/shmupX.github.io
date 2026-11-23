@@ -133,7 +133,9 @@ function standAt(node, x, y, z, w, h, extra = "") {
 
 // warehouse.js buildRacks, one rack at a time: three wooden levels with a lit
 // orange lip, four X-section posts, stock on every level but the odd gap.
-function buildRack({ x, y, len, stock, plate, idx }) {
+// `stock` is the warehouse's list of emoji, or a function that stocks one
+// level itself (the quarantine shelf's sprites).
+function buildRack({ x, y, len, stock, plate, plateCls = "", idx }) {
   const DEPTH = 22;
   const LEVELS = [0, 26, 52];
   const POST_H = 74;
@@ -155,6 +157,10 @@ function buildRack({ x, y, len, stock, plate, idx }) {
       `transform:translate3d(0px, ${DEPTH - 4}px, ${z}px) rotateX(-90deg);`;
     rack.appendChild(edge);
 
+    if (typeof stock === "function") {
+      stock(rack, z, DEPTH, len);
+      continue;
+    }
     for (let slot = 0; slot < slots; slot++) {
       if ((idx * 7 + slot + z) % 5 === 4) continue; // leave gaps
       const item = document.createElement("div");
@@ -180,12 +186,71 @@ function buildRack({ x, y, len, stock, plate, idx }) {
 
   if (plate) {
     const p = document.createElement("div");
-    p.className = "plate bb";
+    p.className = `plate bb ${plateCls}`.trim();
     p.textContent = plate;
     p.style.cssText = `position:absolute;transform:translate3d(-4px, ${DEPTH}px, ${POST_H + 6}px) ${BILLBOARD};`;
     rack.appendChild(p);
   }
   return rack;
+}
+
+/* ------------------------------------------------ the quarantine shelf ---- */
+
+// One rack in the middle of the work area, between the back wall and where
+// Daltonius stands: his stash, stocked with nothing but hacked laptops and
+// RAM sticks, shuffled differently every visit (fixed by ?seed=). They are
+// gs's own sprites, the ones he throws, shrunk to shelf size; each laptop's
+// HACKED screen flickers between its two frames out of step with the rest.
+const QUARANTINE = { x: 280, y: 150, len: 240 };
+
+function stockQuarantine(rng) {
+  const LAPTOP = { w: 74 * 0.3, h: 58 * 0.3 };
+  const RAM = { w: 32 * 0.62, h: 18 * 0.62 };
+  return (rack, z, depth, len) => {
+    let x = 6 + rng() * 6;
+    for (;;) {
+      const roll = rng();
+      const kind = roll < 0.52 ? "laptop" : roll < 0.92 ? "ram" : "gap";
+      if (kind === "gap") {
+        x += 10 + rng() * 10;
+        continue;
+      }
+      const { w, h } = kind === "laptop" ? LAPTOP : RAM;
+      if (x + w > len - 6) break;
+      const item = document.createElement("div");
+      item.className = `shelf-item stash ${kind}`;
+      item.style.width = w + "px";
+      item.style.height = h + "px";
+      // RAM leans every which way; a laptop sits square to show its screen.
+      const lean = kind === "ram" ? ` rotate(${Math.round((rng() - 0.5) * 50)}deg)` +
+        (rng() < 0.5 ? " scaleX(-1)" : "") : "";
+      item.style.transform =
+        `translate3d(${x}px, ${depth - 4 - h}px, ${z}px) rotateX(-90deg)${lean}`;
+      if (kind === "laptop") {
+        item.innerHTML = `<img class="px" src="${ART}laptop0.png" alt="">` +
+          `<img class="px flicker" src="${ART}laptop1.png" alt="">`;
+        const flick = item.lastElementChild;
+        flick.style.animationDuration = (0.28 + rng() * 0.3).toFixed(2) + "s";
+        flick.style.animationDelay = (-rng()).toFixed(2) + "s";
+      } else {
+        item.innerHTML = `<img class="px" src="${ART}RAM_0.png" alt="">`;
+      }
+      rack.appendChild(item);
+      x += w + 2 + rng() * 5;
+    }
+  };
+}
+
+function buildQuarantine() {
+  const given = Number(PARAMS.get("seed"));
+  const seed = given ? given ^ 0x51a5 : Math.floor(Math.random() * 2 ** 32);
+  buildRack({
+    ...QUARANTINE,
+    stock: stockQuarantine(mulberry32(seed)),
+    plate: "QUARANTINE",
+    plateCls: "alert",
+    idx: 4,
+  });
 }
 
 /* ------------------------------------------------------- the monitors ---- */
@@ -235,6 +300,7 @@ function buildPrecinct() {
   buildRack({ x: 470, y: 44, len: 240, stock: PICKUP, plate: "READY FOR PICKUP", idx: 1 });
   buildRack({ x: 22, y: 528, len: 170, stock: STORE, plate: "LAPTOPS", idx: 2 });
   buildRack({ x: 608, y: 528, len: 170, stock: STORE, plate: "ACCESSORIES", idx: 3 });
+  buildQuarantine();
 
   // Workbenches down both sides of the work area, a monitor on each.
   for (const [x, y] of [[75, 132], [75, 282], [595, 132], [595, 282]]) {

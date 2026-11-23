@@ -263,6 +263,40 @@ body {
   white-space: nowrap;
 }
 
+.plate.alert {
+  color: #ff8a8a;
+  border-color: #ff3b3b88;
+}
+
+/* The quarantine shelf's stock: gs's hacked laptops and RAM sticks. Each
+ * laptop is both its frames stacked, the top one blinking on and off. */
+.stash {
+  position: absolute;
+}
+
+.stash img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.stash .flicker {
+  animation: hacked 0.4s steps(1) infinite;
+}
+
+@keyframes hacked {
+  0% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
 /* The back wall and its sign. */
 .back-wall {
   transform-origin: 50% 100%;
@@ -594,7 +628,8 @@ img.px {
 
 @media (prefers-reduced-motion: reduce) {
   .press-start,
-  .bar.danger i {
+  .bar.danger i,
+  .stash .flicker {
     animation: none;
   }
 }
