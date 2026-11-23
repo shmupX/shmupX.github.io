@@ -379,10 +379,20 @@ img.px {
   pointer-events: none;
 }
 
-.foam {
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff 0 40%, #dfe6f3 70%);
-  border: 1px solid #96aacd;
+/* His drool (precinct.js DROOL): square purple drops and the puddle they
+ * make, the reference death's three purples. */
+.spark.drip {
+  border-radius: 0;
+  background: #9008d8;
+  box-shadow: inset -1px 0 0 #7818b8;
+}
+
+.puddle {
+  pointer-events: none;
+  background: #9008d8;
+  box-shadow: inset 0 0 0 1px #602888, inset 0 1px 0 1px #7818b8;
+  /* a pixel ellipse: square corners stepped in */
+  clip-path: polygon(12% 0, 88% 0, 100% 35%, 100% 65%, 88% 100%, 12% 100%, 0 65%, 0 35%);
 }
 
 .gas {
