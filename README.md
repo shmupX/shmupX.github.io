@@ -119,3 +119,18 @@ Open **Settings** in the launcher:
 
 When the controller screen can't open, you still get the touch controller as an
 overlay on top of the game wherever there's a touchscreen.
+
+## Daltonius's Computer Precinct
+
+[codemonkey.games/daltonius](https://codemonkey.games/daltonius) puts SQUAD's
+stage-2 boss, Daltonius, behind a box store's Computer Precinct counter and lets
+the tag fight him with nobody at the controls, like an arcade cabinet's demo.
+When his HP runs out he swells up, froths at the mouth, toots himself flat, and
+every screen in the precinct calls it: **FIRED**. Behind him stands his stash,
+the QUARANTINE shelf, a fresh jumble of hacked laptops and RAM sticks every
+time you load the page.
+
+- **Death scene** (or `D`) skips straight to his death; `Enter` starts the demo
+  over.
+- **Sound** (or `M`) turns on the sound effects. They're off until you ask.
+- Drag the scene, or use `←` and `→`, to walk the camera around the precinct.

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Daltonius — Computer Precinct</title>
+    <meta name="description" content="Daltonius, SQUAD's stage-2 boss, holds the box store's Computer Precinct against the tag: an attract-mode battle that ends with his death scene.">
+    <link rel="stylesheet" href="/fonts/launcher.css">
+    <link rel="stylesheet" href="precinct.css">
+  </head>
+  <body>
+    <!-- 3D stage: precinct.js builds the precinct and runs the attract mode. -->
+    <div class="stage" id="stage">
+      <div class="wrapper" id="wrapper">
+        <div class="ground" id="ground">
+          <div class="work-floor" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fade" id="fade"></div>
+
+    <header class="hud hud-top">
+      <div class="boss-bar">
+        <div class="boss-name"><span>DALTONIUS</span><span id="hpText">100%</span></div>
+        <div class="bar" id="hpBar"><i id="hpFill"></i></div>
+      </div>
+      <div class="score">THE TAG<b id="score">000000</b></div>
+    </header>
+
+    <div class="hud hud-center" aria-live="polite">
+      <div class="banner" id="banner"></div>
+    </div>
+
+    <footer class="hud hud-bottom">
+      <div class="demo">DEMO PLAY</div>
+      <div class="press-start">PRESS START</div>
+      <div class="keys">
+        <kbd>Enter</kbd> restart · <kbd>D</kbd> death scene · <kbd>←</kbd><kbd>→</kbd> orbit · <kbd>M</kbd> sound
+      </div>
+    </footer>
+
+    <div class="controls">
+      <button type="button" id="deathBtn">Death scene</button>
+      <button type="button" id="soundBtn" aria-pressed="false">Sound off</button>
+    </div>
+
+    <script type="module" src="precinct.js"></script>
+  </body>
+</html>

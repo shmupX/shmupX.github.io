@@ -24,6 +24,9 @@
 // It is build output but committed all the same: Deploy serves only what git
 // carries, and `deno task build` does not make it.
 export const STATIC_INDEXES = [
+  // Daltonius's Computer Precinct: an attract-mode battle, and his death
+  // scene. Its art and modules are relative, so the bare URL would 404 them.
+  "/daltonius",
   "/desktop",
   "/editor",
   "/extension",
