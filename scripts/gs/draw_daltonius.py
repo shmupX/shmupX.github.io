@@ -381,7 +381,12 @@ FLUSH_SH = (222, 160, 168, 255)
 GAS = (168, 204, 70, 255)       # the cloud
 GAS_SH = (124, 160, 44, 255)
 GAS_INK = (60, 96, 22, 255)
-FOAM_LINE = (150, 170, 205, 255)
+# The froth is the reference death's own purple drool (the short's frames:
+# a 1080x1920 capture at ~8.6px a game pixel), its three shades read off them
+# and rounded to the 5-bit steps a console palette keeps.
+DROOL = (144, 8, 216, 255)      # #9008D8, the body of it
+DROOL_SH = (120, 24, 184, 255)  # #7818B8, the strands' shaded side
+DROOL_DK = (96, 40, 136, 255)   # #602888, the edge
 VEIN = (214, 40, 52, 255)
 TONGUE = (226, 92, 120, 255)
 
@@ -467,7 +472,7 @@ def death_mouth(c, hx, my, s, kind, seed):
         c.line(hx + 3, my + 4, hx + 3, my + 9, INK)
         c.put(edge(m), INK)
         return m
-    # froth: the grin forced wide open, foam welling over the lip
+    # froth: the grin forced wide open, the drool welling over the lip
     w = 13 * s
     m = polygon(c, [(hx - w, my - 1), (hx - w * 0.4, my), (hx + w * 0.4, my), (hx + w, my - 3),
                     (hx + w * 0.8, my + 7), (hx + w * 0.3, my + 12), (hx - w * 0.3, my + 12), (hx - w * 0.8, my + 8)])
@@ -478,37 +483,37 @@ def death_mouth(c, hx, my, s, kind, seed):
     return m
 
 
-def foam(c, hx, my, s, seed, drip):
-    """Froth: a puffy bank of foam over the lower lip, drips running off it."""
+def drool(c, hx, my, s, seed, drip):
+    """Froth: purple drool welling over the lower lip and hanging off it in
+    one-pixel strands of uneven length, a drop or two let go below them.
+
+    As in the reference: a solid mass over the mouth, the strands two pixels
+    wide with a shaded side, no outline but its own dark edge, and the drops
+    single pixels, stretched to 1x2 once they are falling.
+    """
     rng = np.random.default_rng(seed)
-    w = 13 * s
-    bubbles = [(hx + x * w, my + 7 + rng.uniform(-1.5, 2.5), rng.uniform(3.0, 4.6))
-               for x in np.linspace(-1, 1, 7)]
-    for _ in range(6):
-        bubbles.append((hx + rng.uniform(-w, w), my + 11 + rng.uniform(0, 3), rng.uniform(2.2, 3.6)))
-    for d in range(3):
-        x = hx + (-8 + d * 8) * s + rng.uniform(-2, 2)
-        length = drip * rng.uniform(0.6, 1.0)
-        for k in range(int(length // 3) + 1):
-            bubbles.append((x + rng.uniform(-0.6, 0.6), my + 14 + k * 3, max(1.4, 2.8 - k * 0.22)))
-    mass = np.zeros((c.h, c.w), dtype=bool)
-    for x, y, r in bubbles:
-        mass |= ellipse(c, x, y, r, r)
-    c.put(mass, TOOTH)
-    c.put(mass & ~shift(mass, -1, -1) & ~edge(mass), (226, 232, 244, 255))
-    # bubble rims inside the mass, so it reads as foam and not a white blob
-    for x, y, r in bubbles[::2]:
-        ring = edge(ellipse(c, x, y, r * 0.55, r * 0.55))
-        c.put(ring & mass & ~edge(mass), FOAM_LINE)
-    c.put(edge(mass), FOAM_LINE)
-    # flecks spat clear of the face
-    for _ in range(6):
-        a = rng.uniform(-math.pi * 0.95, -math.pi * 0.05)
-        rr = rng.uniform(16, 24) * s
-        x, y, r = hx + math.cos(a) * rr * 1.25, my + 4 + math.sin(a) * rr * 0.45, rng.uniform(1.0, 1.7)
-        m = ellipse(c, x, y, r, r)
-        c.put(m, TOOTH)
-        c.put(edge(m), FOAM_LINE)
+    w = 12 * s
+    # the mass over the lip
+    mass = polygon(c, [(hx - w, my + 1), (hx - w * 0.5, my + 3), (hx, my + 2), (hx + w * 0.5, my + 3),
+                       (hx + w, my), (hx + w * 0.9, my + 7), (hx - w * 0.9, my + 8)])
+    # strands, two pixels wide, every other column pair, lengths uneven
+    strands = []
+    for x in range(int(hx - w * 0.8), int(hx + w * 0.8), 3):
+        length = drip * rng.uniform(0.35, 1.0) + rng.uniform(0, 3)
+        if rng.uniform() < 0.25:
+            length *= 0.4
+        top = my + 6
+        mass |= (c.X >= x) & (c.X < x + 2) & (c.Y >= top) & (c.Y < top + length)
+        strands.append((x, top + length))
+    c.put(mass, DROOL)
+    # the shaded side of every strand, the dark rim of the whole
+    c.put(mass & ~shift(mass, -1, 0), DROOL_SH)
+    c.put(edge(mass) & ~shift(mass, 0, -1), DROOL_DK)
+    # drops let go below the longest strands
+    for x, tip in sorted(strands, key=lambda t: -t[1])[:2]:
+        gap = 3 + rng.integers(0, 4)
+        c.dot(x, tip + gap, DROOL)
+        c.dot(x, tip + gap + 1, DROOL_SH)
 
 
 def death_head(c, hx, hy, s, eyes="normal", eye_size=1.0, mouth="froth", flush=False,
@@ -550,7 +555,7 @@ def death_head(c, hx, hy, s, eyes="normal", eye_size=1.0, mouth="froth", flush=F
     death_beard(c, hx, hy, s)
     death_mouth(c, hx, my, s, mouth, seed)
     if mouth == "froth":
-        foam(c, hx, my, s, seed, drip)
+        drool(c, hx, my, s, seed, drip)
     return h
 
 
@@ -657,13 +662,13 @@ death("bulge0", k=1.12, eyes="bulge", eye_size=1.15, mouth="puff", arms=(-35, 21
 death("bulge1", k=1.30, eyes="bulge", eye_size=1.35, mouth="puff", arms=(-25, 205), flush=True, strain=1)
 death("bulge2", k=1.50, eyes="bulge", eye_size=1.6, mouth="puff", arms=(-12, 192), flush=True, strain=2,
       popped=True, hair_up=True)
-# frothing: as full as he gets, the grin forced open and foaming over
+# frothing: as full as he gets, the grin forced open and drooling purple
 death("froth0", k=1.50, eyes="roll", eye_size=1.5, mouth="froth", arms=(-10, 190), flush=True, strain=2,
-      popped=True, hair_up=True, seed=11, drip=6)
+      popped=True, hair_up=True, seed=11, drip=7)
 death("froth1", k=1.50, eyes="roll", eye_size=1.5, mouth="froth", arms=(-6, 186), flush=True, strain=2,
-      popped=True, hair_up=True, seed=12, drip=14, bob=1)
+      popped=True, hair_up=True, seed=12, drip=12, bob=1)
 death("froth2", k=1.50, eyes="roll", eye_size=1.5, mouth="froth", arms=(-12, 192), flush=True, strain=2,
-      popped=True, hair_up=True, seed=13, drip=22)
+      popped=True, hair_up=True, seed=13, drip=17)
 # tooting: each one lets him down a size, the cloud behind him growing
 death("toot0", k=1.30, eyes="shut", mouth="grit", arms=(20, 160), flush=True, strain=1, popped=True,
       gas=[(30, 112, 14, 21)], lift=3)
@@ -752,10 +757,9 @@ def render_flat():
     t = ellipse(c, hx + 3, hy + 13, 3.0, 4.0)
     c.put(t, TONGUE)
     c.put(edge(t), INK)
-    # a last bubble of froth
-    m = ellipse(c, hx - 6, hy + 9, 2.2, 2.2)
-    c.put(m, TOOTH)
-    c.put(edge(m), FOAM_LINE)
+    # the last of the drool, run out of his mouth onto the floor
+    c.put((c.X >= hx - 7) & (c.X < hx - 5) & (c.Y >= hy + 9) & (c.Y < hy + 15), DROOL)
+    c.put((c.X == hx - 6) & (c.Y >= hy + 9) & (c.Y < hy + 15), DROOL_SH)
     return c.image()
 
 

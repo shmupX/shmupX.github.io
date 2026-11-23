@@ -125,7 +125,7 @@ overlay on top of the game wherever there's a touchscreen.
 [codemonkey.games/daltonius](https://codemonkey.games/daltonius) puts SQUAD's
 stage-2 boss, Daltonius, behind a box store's Computer Precinct counter and lets
 the tag fight him with nobody at the controls, like an arcade cabinet's demo.
-When his HP runs out he swells up, froths at the mouth, toots himself flat, and
+When his HP runs out he swells up, drools purple, toots himself flat, and
 every screen in the precinct calls it: **FIRED**. Behind him stands his stash,
 the QUARANTINE shelf, a fresh jumble of hacked laptops and RAM sticks every
 time you load the page.

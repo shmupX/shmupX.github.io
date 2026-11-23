@@ -567,6 +567,7 @@ let loopCount = 0;
 function newLoop({ death = false, seed } = {}) {
   if (S) {
     for (const list of [S.beams, S.shots, S.fx]) for (const o of list) o.node.remove();
+    S.puddle?.node.remove();
     S.boss.sprite.remove();
     S.boss.shadow.remove();
     S.boss.balloon.remove();
@@ -639,11 +640,53 @@ function addFx(fx) {
   return fx;
 }
 
-// A round particle: a spark, a fleck of foam, a puff of gas, a speck of dust.
-function particle(cls, { x, y, z, vx = 0, vy = 0, vz = 0, g = 0, size = 6, grow = 0, life = 30, color, floor = false }) {
+// A round particle: a spark, a puff of gas, a speck of dust.
+function particle(cls, { x, y, z, vx = 0, vy = 0, vz = 0, g = 0, size = 6, grow = 0, life = 30, color }) {
   const node = el(`spark ${cls}`);
   if (color) node.style.background = color;
-  return addFx({ node, x, y, z, vx, vy, vz, g, size, grow, life, max: life, floor });
+  return addFx({ node, x, y, z, vx, vy, vz, g, size, grow, life, max: life });
+}
+
+/* ------------------------------------------------------------ the drool ---- */
+
+// His froth is the reference death's purple drool (draw_daltonius.py DROOL):
+// square drops, not round flecks, that let go of the strands under his mouth,
+// fall straight down under gravity, stretch into a streak as they speed up
+// (1x1, then 1x2, then 1x4, as the reference's do), and splash on the tiles
+// into a puddle that stays under him to the end.
+const DROOL = { main: "#9008d8", shade: "#7818b8", dark: "#602888" };
+const DROP = { size: 2, g: 0.12, streak: 1.2 };
+
+function drip(x, y, z) {
+  const node = el("spark drip");
+  return addFx({ node, x, y, z, vx: 0, vy: 0, vz: 0, g: DROP.g, size: DROP.size, grow: 0, life: 240, max: 240, drip: true });
+}
+
+function puddleAt(x, y) {
+  if (!S.puddle) {
+    const node = el("puddle");
+    S.puddle = { node, x, y, w: 6, d: 2 };
+  }
+  return S.puddle;
+}
+
+// A drop lands: the puddle takes it, and a couple of specks bounce off.
+function splash(f) {
+  const p = puddleAt(S.boss.x, S.boss.y + 3);
+  p.w = Math.min(70, p.w + 1.1);
+  p.d = Math.max(2, p.w * 0.26);
+  p.node.style.width = p.w + "px";
+  p.node.style.height = p.d + "px";
+  p.node.style.transform = `translate3d(${p.x - p.w / 2}px, ${p.y - p.d / 2}px, 1.6px)`;
+  const rng = S.rng;
+  for (let i = 0; i < 2; i++) {
+    const node = el("spark drip");
+    addFx({
+      node, x: f.x, y: f.y, z: 0.5,
+      vx: (i ? 1 : -1) * (0.4 + rng() * 0.9), vy: (rng() - 0.2) * 0.8, vz: 0.5 + rng() * 0.6,
+      g: DROP.g, size: DROP.size, grow: 0, life: 40, max: 40, drip: true, speck: true,
+    });
+  }
 }
 
 function sparks(x, y, z, n, colors, speed = 2.2, life = 16) {
@@ -677,6 +720,7 @@ function afterimage(spr, x, y, z) {
 }
 
 function stepFx() {
+  const landed = [];
   for (let i = S.fx.length - 1; i >= 0; i--) {
     const f = S.fx[i];
     f.life--;
@@ -693,20 +737,38 @@ function stepFx() {
     f.x += f.vx;
     f.y += f.vy;
     f.z += f.vz;
-    if (f.z <= 0 && !f.g) {
-      f.z = 0;
-      f.vz = 0;
-    } else if (f.z <= 0) {
-      // landed: foam sticks to the tiles and spreads a little
-      f.z = 0;
-      f.vx *= 0.3;
-      f.vy *= 0.3;
-      f.vz = 0;
-      if (f.floor && !f.landed) {
-        f.landed = true;
-        f.life = Math.min(f.life, 70);
-        f.max = f.life;
+    if (f.z <= 0 && f.drip && f.speck) {
+      // A speck off a splash settles on the tiles around the puddle.
+      if (!f.rest) {
+        f.rest = true;
+        f.life = f.max = 90;
       }
+      f.z = f.vx = f.vy = f.vz = f.g = 0;
+      f.node.style.width = f.size + "px";
+      f.node.style.height = f.size / 2 + "px";
+      f.node.style.transform = `translate3d(${f.x - f.size / 2}px, ${f.y}px, 1.8px)`;
+      continue;
+    }
+    if (f.z <= 0) {
+      if (f.drip) {
+        // A drop goes into the puddle. The splash waits for the loop: it
+        // adds effects, and may drop the oldest.
+        landed.push(f);
+        f.node.remove();
+        S.fx.splice(i, 1);
+        continue;
+      }
+      f.z = 0;
+      f.vz = 0;
+    }
+    if (f.drip) {
+      // A square drop, drawn longer the faster it falls.
+      const w = f.size;
+      const h = f.size + Math.abs(f.vz) * DROP.streak;
+      f.node.style.width = w + "px";
+      f.node.style.height = h + "px";
+      f.node.style.transform = `translate3d(${f.x - w / 2}px, ${f.y - h / 2}px, ${f.z}px) ${BILLBOARD}`;
+      continue;
     }
     f.size += f.grow;
     const k = f.life / f.max;
@@ -717,14 +779,13 @@ function stepFx() {
         `translate3d(${f.x}px, ${f.y}px, ${f.z}px) ${BILLBOARD} translateX(-50%) scale(${0.4 + 0.6 * pop})`;
       continue;
     }
-    const s = f.landed ? f.size * 1.3 : f.size;
+    const s = f.size;
     f.node.style.width = s + "px";
-    f.node.style.height = (f.landed ? s * 0.5 : s) + "px";
+    f.node.style.height = s + "px";
     f.node.style.opacity = String(Math.min(1, k * 1.6));
-    f.node.style.transform = f.landed
-      ? `translate3d(${f.x - s / 2}px, ${f.y - s / 4}px, 1.5px)`
-      : `translate3d(${f.x - s / 2}px, ${f.y - s / 2}px, ${f.z}px) ${BILLBOARD}`;
+    f.node.style.transform = `translate3d(${f.x - s / 2}px, ${f.y - s / 2}px, ${f.z}px) ${BILLBOARD}`;
   }
+  for (const f of landed) splash(f);
 }
 
 /* ------------------------------------------------------------ shooting ---- */
@@ -1010,9 +1071,12 @@ function* bossBrain() {
 
 /* ---------------------------------------------------- the death scene ---- */
 
-function mouthZ() {
-  // The froth frames' mouth sits 74px up the 128px frame.
-  return 74 * BOSS_SCALE + S.boss.z;
+// Where the froth frames' drool strands hang: the strands' x off his centre
+// line, and how far up the 128px frame their tips end (they run from 60 to
+// 77px down it, so 51 to 68px up).
+const STRANDS = [-9, -6, -3, 0, 3, 6, 9];
+function strandTipZ() {
+  return (51 + S.rng() * 17) * BOSS_SCALE + S.boss.z;
 }
 
 function* deathScene() {
@@ -1048,26 +1112,16 @@ function* deathScene() {
   }
   boss.sx = boss.sy = 1;
 
-  // Froth: foaming at the mouth, flecks raining onto the black tiles.
+  // Froth: purple drool, dripping off the strands onto the black tiles.
   screens.diag.el.classList.add("alarm");
   screens.diag.glyph.textContent = "⚠️";
   screens.diag.label.textContent = "Pressure!";
   for (let k = 0; k < 140; k++) {
     boss.frame = `Daltonius_die_froth${Math.floor(k / 7) % 3}`;
     boss.jx = (rng() - 0.5) * 1.8;
-    if (k % 2 === 0) {
-      particle("foam", {
-        x: boss.x + (rng() - 0.5) * 22,
-        y: boss.y + 2 + rng() * 4,
-        z: mouthZ() - 8,
-        vx: (rng() - 0.5) * 2.2,
-        vy: 0.2 + rng() * 0.9,
-        vz: 0.6 + rng() * 1.6,
-        g: 0.11,
-        size: 4 + rng() * 6,
-        life: 160,
-        floor: true,
-      });
+    if (k % 3 === 0) {
+      const strand = STRANDS[Math.floor(rng() * STRANDS.length)];
+      drip(boss.x + boss.jx + strand * BOSS_SCALE, boss.y + 1, strandTipZ());
     }
     if (k % 10 === 0) sfx.blip(300 + rng() * 600, 0.05, 0.1);
     yield;

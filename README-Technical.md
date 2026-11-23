@@ -6730,13 +6730,26 @@ Repair Queue counts the ones fixed, Data Backup turns into a pink slip.
 `scripts/gs/draw_daltonius.py` with the rest of him (`Daltonius_die_*`, all
 128×128 with his feet on the poses' line): `bulge0–2` swell him up, eyes
 popping and cheeks puffed, face going red, belt buckle sprung; `froth0–2`
-have him foaming at the mouth; `toot0–3` let him down a size per toot, each
-with its gas cloud; `flat` is the empty suit on the floor. The page plays them
-with a squash-and-wobble, foam flecks that land on the tiles, green gas
-puffs, `toot` / `TOOT!` / `TOOOOT!!` / `pfffft…`, then every monitor flips to
-💀 FIRED and the tag scores his `8000`. The script still writes his eighteen
+have him drooling purple; `toot0–3` let him down a size per toot, each with
+its gas cloud; `flat` is the empty suit on the floor. The page plays them with
+a squash-and-wobble, the drool dripping onto the tiles, green gas puffs,
+`toot` / `TOOT!` / `TOOOOT!!` / `pfffft…`, then every monitor flips to 💀
+FIRED and the tag scores his `8000`. The script still writes his eighteen
 poses byte for byte as before, and `build-stage2.ts` packs only the frames it
 names, so the death frames stay out of the game's atlas.
+
+**The froth follows the reference death** (the short this scene was asked to
+match; its colours and texture are read off its frames, a 1080×1920 capture
+at ~8.6px a game pixel). It is purple drool, not foam: a solid mass over his
+lip in `#9008D8`, hanging off it in two-pixel strands of uneven length with a
+`#7818B8` shaded side and a `#602888` edge (`DROOL`, `drool()` in the script).
+On the page (`DROOL`, `drip`, `splash`) the drops are square, let go of the
+strand tips one every three ticks, fall straight down under gravity
+(0.12px/tick²) and stretch into a streak as they speed up, 1×1 to 1×2 to 1×4
+as the reference's do; each lands in a stepped purple puddle at his feet and
+throws two specks that settle on the tiles around it. The puddle stays under
+him through the toots and the flat frame, as the reference's does. The fall
+rate is estimated from the reference's streaks: a still can't time it.
 
 **Sound** is off until the Sound button (or `M`): everything is synthesized
 with Web Audio — the toots are a sawtooth through a resonant low-pass with its
