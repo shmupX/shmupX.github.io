@@ -6730,11 +6730,12 @@ Repair Queue counts the ones fixed, Data Backup turns into a pink slip.
 `scripts/gs/draw_daltonius.py` with the rest of him (`Daltonius_die_*`, all
 128×128 with his feet on the poses' line): `bulge0–2` swell him up, eyes
 popping and cheeks puffed, face going red, belt buckle sprung; `froth0–2`
-have him drooling purple; `toot0–3` let him down a size per toot, each with
-its gas cloud; `flat` is the empty suit on the floor. The page plays them with
-a squash-and-wobble, the drool dripping onto the tiles, green gas puffs,
-`toot` / `TOOT!` / `TOOOOT!!` / `pfffft…`, then every monitor flips to 💀
-FIRED and the tag scores his `8000`. The script still writes his eighteen
+have him drooling purple; `toot0–3` have him face down with his rear in the
+air, a size let out of him per toot; `flat` is all the air out of him, face
+down on the floor. The page plays them with a squash-and-wobble, the drool
+dripping onto the tiles, a white jet out of him per toot, `toot` / `TOOT!` /
+`TOOOOT!!` / `pfffft…` beside it, then every monitor flips to 💀 FIRED and the
+tag scores his `8000`. The script still writes his eighteen
 poses byte for byte as before, and `build-stage2.ts` packs only the frames it
 names, so the death frames stay out of the game's atlas.
 
@@ -6750,6 +6751,24 @@ as the reference's do; each lands in a stepped purple puddle at his feet and
 throws two specks that settle on the tiles around it. The puddle stays under
 him through the toots and the flat frame, as the reference's does. The fall
 rate is estimated from the reference's streaks: a still can't time it.
+
+**So do the toots**, read off five screenshots of the reference's (~2.75px a
+game pixel). It toots face down with its rear in the air, so he does too
+(`PRONE`, `render_prone()`: his head on its chin at the front, his rear
+standing up behind it, the cleft between the cheeks where each toot comes
+out; `prone_cleft()` says where, and the page's `REAR_Z` keeps those heights).
+Each toot is a white jet (`fireToot`, `stepJets`, `drawJet`), drawn on a canvas
+of its own in the reference's pixels, one of them `GAME_PX` (1.45) of his, and
+stood up over the cleft: a thin bright column straight up with `+` glints off
+it, one gold; its head balls into a puff round a solid core; the puff breaks
+off over a dotted trail of single pixels and dashes, then scatters and is
+gone. The colours are the frames': nearly all `#F8F8F8`, some `#E8E8EC` and
+`#D8D8E0`, the glint `#D8B070`. `JET` is in the reference's units, measured off
+the frames: the column's head 12px up at the first and 26 at the second, the
+puff 12px across and ~32 up at the third, 18 across and ~48 up, scattering, at
+the fourth. The screenshots carry no timestamps, so the speeds put them 8
+ticks apart: the column 3px/tick for 4 ticks, the puff 1.6px/tick after. Toot
+sizes scale it: 0.85, 1, 1.25, and a 0.45 `pfffft`.
 
 **Sound** is off until the Sound button (or `M`): everything is synthesized
 with Web Audio — the toots are a sawtooth through a resonant low-pass with its

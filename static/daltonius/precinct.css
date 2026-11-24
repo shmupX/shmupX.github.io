@@ -395,9 +395,13 @@ img.px {
   clip-path: polygon(12% 0, 88% 0, 100% 35%, 100% 65%, 88% 100%, 12% 100%, 0 65%, 0 35%);
 }
 
-.gas {
-  border-radius: 50%;
-  background: radial-gradient(circle at 40% 40%, #c4e07a 0 35%, #a8cc46 60%, rgba(124, 160, 44, 0) 72%);
+/* His toots (precinct.js GAS, JET): each a canvas in the reference's own
+ * pixels, scaled up whole, so every pixel stays a hard-edged square. */
+.jet {
+  pointer-events: none;
+  transform-origin: 50% 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .pop-text {
@@ -411,8 +415,9 @@ img.px {
 }
 
 .pop-text.toot {
-  color: #b9e650;
-  text-shadow: 0 3px 0 #3c6016;
+  color: #f8f8f8;
+  text-shadow: 0 3px 0 #8a8aa0;
+  -webkit-text-stroke-color: #2c2c3a;
 }
 
 .pop-text.score {
