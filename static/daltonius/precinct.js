@@ -568,6 +568,7 @@ function newLoop({ death = false, seed } = {}) {
   if (S) {
     for (const list of [S.beams, S.shots, S.fx]) for (const o of list) o.node.remove();
     S.puddle?.node.remove();
+    for (const jet of S.jets) jetRemove(jet);
     S.boss.sprite.remove();
     S.boss.shadow.remove();
     S.boss.balloon.remove();
@@ -584,6 +585,7 @@ function newLoop({ death = false, seed } = {}) {
     beams: [],
     shots: [],
     fx: [],
+    jets: [],
     shake: 0,
     cam: { rx: -24, ry: -34, z: -170, y: 40, fx: 400, fy: 290 },
     camGoal: { rx: -24, z: -120, y: 40, fx: 400, fy: 270 },
@@ -706,11 +708,12 @@ function sparks(x, y, z, n, colors, speed = 2.2, life = 16) {
   }
 }
 
-function popText(text, cls, x, y, z, { size = 22, life = 60, rise = 0.6 } = {}) {
+// anchor: 0 centres the text on x, -1 ends it there, 1 starts it there.
+function popText(text, cls, x, y, z, { size = 22, life = 60, rise = 0.6, anchor = 0 } = {}) {
   const node = el(`pop-text ${cls}`);
   node.textContent = text;
   node.style.fontSize = size + "px";
-  return addFx({ node, x, y, z, vx: 0, vy: 0, vz: rise, g: 0, life, max: life, text: true });
+  return addFx({ node, x, y, z, vx: 0, vy: 0, vz: rise, g: 0, life, max: life, text: true, anchor });
 }
 
 function afterimage(spr, x, y, z) {
@@ -776,7 +779,8 @@ function stepFx() {
       const pop = Math.min(1, (f.max - f.life) / 6);
       f.node.style.opacity = String(Math.min(1, k * 2.2));
       f.node.style.transform =
-        `translate3d(${f.x}px, ${f.y}px, ${f.z}px) ${BILLBOARD} translateX(-50%) scale(${0.4 + 0.6 * pop})`;
+        `translate3d(${f.x}px, ${f.y}px, ${f.z}px) ${BILLBOARD} ` +
+        `translateX(${[-100, -50, 0][f.anchor + 1]}%) scale(${0.4 + 0.6 * pop})`;
       continue;
     }
     const s = f.size;
@@ -786,6 +790,202 @@ function stepFx() {
     f.node.style.transform = `translate3d(${f.x - s / 2}px, ${f.y - s / 2}px, ${f.z}px) ${BILLBOARD}`;
   }
   for (const f of landed) splash(f);
+}
+
+/* ------------------------------------------------------------ the toots ---- */
+
+// Each toot is the reference death's own (its frames, ~2.75px a game pixel):
+// face down, rear up, a thin white column shoots straight up out of the
+// cleft with "+" glints off it; its head balls up into a puff that breaks
+// off and keeps rising over a dotted trail of single pixels, then scatters
+// and is gone. The colours are the frames': nearly all #F8F8F8, some #E8E8EC
+// and #D8D8E0, one gold glint, #D8B070.
+//
+// Each jet is drawn on a canvas of its own in the reference's pixels (one of
+// them is GAME_PX of his, since his rear stands ~1.45x the reference's) and
+// stood up over his rear like any billboard: the reference's pixel art at
+// his size, a colour a pixel. So JET is in the reference's own units, as
+// measured off its frames: the column's head 12px up at the first, 26 at the
+// second; the puff 12px across and ~32px up at the third; 18px across and
+// ~48px up, scattering, at the fourth. The screenshots carry no timestamps,
+// so the speeds put them at even steps 8 ticks apart (ticks 4, 12, 20, 28).
+const GAS = ["#f8f8f8", "#f8f8f8", "#f8f8f8", "#e8e8ec", "#d8d8e0"];
+const GAS_GOLD = "#d8b070";
+const GAME_PX = 1.45;
+const JET = {
+  w: 40, // the canvas, in reference pixels
+  h: 96,
+  burst: 3, // px/tick, the column's head for its first `burstFor` ticks
+  burstFor: 4,
+  rise: 1.6, // px/tick, the puff after that
+  column: 14, // ticks the column feeds the puff (there at the second, gone by the third)
+  scatterAt: 22, // the puff breaks up
+  life: 50, // ticks to the last pixel gone
+  r0: 2, // the puff's radius as it forms ...
+  r1: 6, // ... and as it breaks off
+  puff: 70, // its pixels, round a solid core
+};
+// Where each toot frame opens the cleft, px up its 128px frame
+// (draw_daltonius.py prints them: 128 - prone_cleft).
+const REAR_Z = {
+  Daltonius_die_toot0: 75,
+  Daltonius_die_toot1: 69,
+  Daltonius_die_toot2: 63,
+  Daltonius_die_toot3: 57,
+};
+
+const gasColor = () => GAS[Math.floor(S.rng() * GAS.length)];
+
+function fireToot(size) {
+  const b = S.boss;
+  const node = document.createElement("canvas");
+  node.className = "jet";
+  node.width = JET.w;
+  node.height = JET.h;
+  const w = JET.w * GAME_PX;
+  const h = JET.h * GAME_PX;
+  node.style.width = w + "px";
+  node.style.height = h + "px";
+  ground.appendChild(node);
+  // its bottom row on the cleft, just behind him
+  standAt(node, b.x, b.y - 1, (REAR_Z[b.frame] ?? 60) * BOSS_SCALE + b.z, w, h);
+  S.jets.push({ t: 0, node, ctx: node.getContext("2d"), size, col: [], ball: [], trail: [], glints: [] });
+}
+
+function jetRemove(jet) {
+  jet.node.remove();
+}
+
+function stepJets() {
+  const rng = S.rng;
+  for (let j = S.jets.length - 1; j >= 0; j--) {
+    const jet = S.jets[j];
+    const t = jet.t++;
+    const sz = jet.size;
+    const climb = 0.6 + 0.4 * sz; // a small toot doesn't carry as high
+    const head = (t < JET.burstFor ? JET.burst * t : JET.burst * JET.burstFor + JET.rise * (t - JET.burstFor)) *
+      climb;
+    const r = sz * (JET.r0 + (JET.r1 - JET.r0) * Math.min(1, t / 20));
+    const feedFor = Math.round(JET.column * sz);
+    const feeding = t < feedFor;
+
+    // The column: a bright core streak, puffed out with pixels that run up
+    // it faster than the puff rises, into it, and are gone.
+    if (feeding) {
+      for (let i = 0; i < 4; i++) {
+        // fatter up the middle, as the reference's is by its second frame
+        const fat = Math.min(1, t / 10);
+        jet.col.push({
+          dx: (rng() - 0.5) * (2 + 5 * fat) * sz,
+          dz: 0,
+          vz: JET.burst * (0.85 + rng() * 0.3),
+          c: gasColor(),
+        });
+      }
+    }
+    for (let i = jet.col.length - 1; i >= 0; i--) {
+      const p = jet.col[i];
+      p.dz += p.vz;
+      if (t >= JET.burstFor - 1 && p.dz >= head - r * 0.5) jet.col.splice(i, 1);
+    }
+
+    // The puff: a boil of pixels round a solid core at the column's head; it
+    // breaks off, keeps rising, then scatters.
+    if (t === JET.burstFor - 1) {
+      for (let i = 0, n = Math.round(JET.puff * sz); i < n; i++) jet.ball.push({ c: gasColor() });
+    }
+    const scattering = t >= JET.scatterAt;
+    for (const p of jet.ball) {
+      if (!scattering) {
+        if (p.ox === undefined || rng() < 0.33) {
+          // re-boil: a new spot and shade in the puff, so it sparkles
+          const a = rng() * Math.PI * 2;
+          const d = Math.sqrt(rng());
+          p.ox = Math.cos(a) * d;
+          p.oz = Math.sin(a) * d;
+          p.c = gasColor();
+        }
+        p.dx = p.ox * r;
+        p.dz = head + p.oz * r;
+      } else {
+        if (p.vx === undefined) {
+          const out = 0.3 + rng() * 0.4;
+          p.vx = p.ox * out * 1.6 * sz;
+          p.vz = JET.rise * 0.5 * climb + p.oz * out * sz;
+        }
+        p.dx += p.vx;
+        p.dz += p.vz;
+      }
+    }
+
+    // The trail it leaves once the column's done: single pixels, a dash
+    // here and there, rising slowly.
+    if (!feeding && t < JET.scatterAt + 6 && t % 2 === 0 && head - r - 2 > 3) {
+      jet.trail.push({
+        dx: Math.round((rng() - 0.5) * 1.5),
+        dz: 3 + rng() * (head - r - 5),
+        long: rng() < 0.3,
+        life: 14,
+        c: gasColor(),
+      });
+    }
+    for (let i = jet.trail.length - 1; i >= 0; i--) {
+      const p = jet.trail[i];
+      p.dz += 0.8;
+      if (--p.life <= 0) jet.trail.splice(i, 1);
+    }
+
+    // "+" glints off the column, one of them gold.
+    for (const [at, dx, dz] of [[1, -3, 5], [3, 2, 9], [5, -3, 14]]) {
+      if (t === at) jet.glints.push({ dx: dx * sz, dz: dz * climb, life: 5, c: GAS[0] });
+    }
+    if (t === 9) jet.glints.push({ dx: -2 * sz, dz: head - r, life: 5, c: GAS_GOLD });
+    if (t === 11) jet.glints.push({ dx: 3 * sz, dz: head - r * 0.5, life: 5, c: GAS[0] });
+    for (let i = jet.glints.length - 1; i >= 0; i--) if (--jet.glints[i].life <= 0) jet.glints.splice(i, 1);
+
+    drawJet(jet, { head, r, feeding, scattering, t });
+
+    if (t >= JET.life) {
+      jetRemove(jet);
+      S.jets.splice(j, 1);
+    }
+  }
+}
+
+function drawJet(jet, { head, r, feeding, scattering, t }) {
+  const ctx = jet.ctx;
+  ctx.clearRect(0, 0, JET.w, JET.h);
+  const px = (dx, dz, c, h = 1) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(Math.round(JET.w / 2 + dx), Math.round(JET.h - 1 - dz) - (h - 1), 1, h);
+  };
+  // the core streak, up from the cleft while it feeds; once it stops, only
+  // the dotted trail is left of it
+  const top = head - r * 0.5;
+  if (feeding && top > 0) px(0, 0, GAS[0], Math.round(top));
+  for (const p of jet.col) px(p.dx, p.dz, p.c);
+  if (!scattering && jet.ball.length) {
+    // the puff's solid core
+    const core = r * 0.45;
+    for (let dz = -core; dz <= core; dz++) {
+      for (let dx = -core; dx <= core; dx++) if (dx * dx + dz * dz <= core * core) px(dx, head + dz, GAS[0]);
+    }
+  }
+  const gone = scattering ? (t - JET.scatterAt) / (JET.life - JET.scatterAt) : 0;
+  ctx.globalAlpha = Math.max(0, 1 - gone ** 1.5);
+  for (const p of jet.ball) if (p.dz !== undefined && (!scattering || S.rng() > 0.03 + gone * 0.3)) px(p.dx, p.dz, p.c);
+  ctx.globalAlpha = 1;
+  for (const p of jet.trail) {
+    ctx.globalAlpha = Math.min(1, p.life / 6);
+    px(p.dx, p.dz, p.c, p.long ? 2 : 1);
+  }
+  ctx.globalAlpha = 1;
+  for (const g of jet.glints) {
+    for (let k = -2; k <= 2; k++) {
+      px(g.dx + k, g.dz, g.c);
+      px(g.dx, g.dz + k, g.c);
+    }
+  }
 }
 
 /* ------------------------------------------------------------ shooting ---- */
@@ -1127,45 +1327,53 @@ function* deathScene() {
     yield;
   }
 
-  // Toot: each lets a size out of him and kicks him off the floor.
+  // Down: over on his face with his rear in the air, the pose the reference
+  // toots from.
+  boss.frame = "Daltonius_die_toot0";
+  boss.jx = 0;
+  sfx.thud(0.55, 0.35);
+  S.shake = 6;
+  for (let k = 0; k < 30; k++) {
+    // a squash as he lands, settling back
+    const w = Math.max(0, 1 - k / 10);
+    boss.sx = 1 + 0.08 * w;
+    boss.sy = 1 - 0.1 * w;
+    yield;
+  }
+  boss.sx = boss.sy = 1;
+
+  // Toot: a white jet out of him each time, a size let out with each.
+  S.camGoal = { rx: -16, z: 520, y: 95, fx: boss.x, fy: boss.y + 10 };
   const toots = [
-    { f: "toot0", text: "toot", size: 18, hop: 8, dur: 0.38, f0: 190, f1: 120, puffs: 6 },
-    { f: "toot1", text: "TOOT!", size: 26, hop: 14, dur: 0.55, f0: 150, f1: 85, puffs: 10 },
-    { f: "toot2", text: "TOOOOT!!", size: 36, hop: 22, dur: 0.95, f0: 125, f1: 58, puffs: 16 },
-    { f: "toot3", text: "pfffft…", size: 15, hop: 3, dur: 0.6, f0: 240, f1: 160, puffs: 5 },
+    { f: "toot0", text: "toot", size: 0.85, font: 18, dur: 0.38, f0: 190, f1: 120 },
+    { f: "toot1", text: "TOOT!", size: 1, font: 26, dur: 0.55, f0: 150, f1: 85 },
+    { f: "toot2", text: "TOOOOT!!", size: 1.25, font: 36, dur: 0.95, f0: 125, f1: 58 },
+    { f: "toot3", text: "pfffft…", size: 0.45, font: 15, dur: 0.6, f0: 240, f1: 160 },
   ];
   screens.virus.el.classList.add("alarm");
   screens.virus.glyph.textContent = "☣️";
   screens.virus.label.textContent = "Air quality";
   for (const [i, t] of toots.entries()) {
     boss.frame = `Daltonius_die_${t.f}`;
+    fireToot(t.size);
     sfx.toot(t.dur, t.f0, t.f1, t.f === "toot3" ? 0.4 : 0.85);
-    S.shake = Math.round(t.hop / 2);
-    // Out the back of him, off to one side then the other.
-    popText(t.text, "toot", boss.x + (i % 2 ? 58 : -58), boss.y + 10, 24 * BOSS_SCALE, {
-      size: t.size,
+    S.shake = Math.round(2 + t.size * 3);
+    // Beside the jet, one side then the other, never across it.
+    const side = i % 2 ? 1 : -1;
+    popText(t.text, "toot", boss.x + side * 14, boss.y + 10, (REAR_Z[boss.frame] - 4) * BOSS_SCALE, {
+      size: t.font,
       life: 70,
       rise: 0.7,
+      anchor: side,
     });
     for (let k = 0; k < 56; k++) {
-      boss.z = k < 24 ? t.hop * Math.sin((Math.PI * k) / 24) : 0;
-      boss.jx = (rng() - 0.5) * 1.2;
-      if (k < t.puffs) {
-        const side = k % 2 ? 1 : -1;
-        particle("gas", {
-          x: boss.x + side * (18 + rng() * 18),
-          y: boss.y - 4 - rng() * 6,
-          z: 6 + rng() * 16,
-          vx: side * (0.3 + rng() * 0.9),
-          vy: (rng() - 0.5) * 0.4,
-          vz: 0.15 + rng() * 0.35,
-          size: 12 + rng() * 10,
-          grow: 0.45,
-          life: 80 + rng() * 30,
-        });
-      }
+      // the rear clenches as it goes
+      const w = Math.max(0, 1 - k / 8);
+      boss.sx = 1 - 0.04 * w * t.size;
+      boss.sy = 1 + 0.05 * w * t.size;
       yield;
     }
+    boss.sx = boss.sy = 1;
   }
 
   // Flat: all the air out of him.
@@ -1350,6 +1558,7 @@ function tick() {
   stepTag();
   stepShots();
   stepFx();
+  stepJets();
   stepCamera();
 }
 
